@@ -979,17 +979,20 @@ function render(doc) {
     const verticalDist = Math.abs(pTo.y - pFrom.y);
     const skipsIntermediateCard = sameColumn && verticalDist > (pFrom.h + pTo.h) / 2 + 45;
 
+    const lbl = truncate(link.label, 24);
+    const pillW = Math.max(54, lbl.length * 6.2 + 14);
+
     let x1, y1, x2, y2, cx, cy, mx, my;
 
     if (skipsIntermediateCard) {
-      // Route cleanly along the left gutter of the column so it never crosses over intermediate sibling cards
-      x1 = pFrom.x + OFX;
+      // Route cleanly along the right gutter of the column so it never crosses over tree edges or sibling cards
+      x1 = pFrom.x + OFX + pFrom.w;
       y1 = pFrom.y + OFY;
-      x2 = pTo.x + OFX;
+      x2 = pTo.x + OFX + pTo.w;
       y2 = pTo.y + OFY;
-      cx = x1 - 115;
+      cx = x1 + 70;
       cy = (y1 + y2) / 2;
-      mx = x1 - 68;
+      mx = x1 + 35 + pillW / 2;
       my = cy;
     } else if (sameColumn) {
       // Adjacent cards in the same column: connect bottom-center to top-center
@@ -1021,8 +1024,6 @@ function render(doc) {
       <path class="flow-link ${escXml(styleCls)}" marker-end="url(#flow-arrow)" d="M${x1},${y1} Q${cx},${cy} ${x2},${y2}"/>
     `;
 
-    const lbl = truncate(link.label, 24);
-    const pillW = Math.max(54, lbl.length * 6.2 + 14);
     flowLinksSvg += `
       <g>
         <rect class="flow-label-bg" x="${mx - pillW / 2}" y="${my - 9}" width="${pillW}" height="18"/>
