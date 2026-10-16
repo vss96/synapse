@@ -777,7 +777,7 @@ function layoutTree(doc) {
   if (!nodes || !nodes["root"]) return null;
 
   const LEVEL_GAP = 105;
-  const SIBLING_GAP = 20;
+  const SIBLING_GAP = 34;
   const sizes = {};
   const subtreeHeights = {};
 
@@ -975,25 +975,52 @@ function render(doc) {
     const pTo = positions[link.to];
     if (!pFrom || !pTo) continue;
 
-    const x1 = pFrom.x + OFX + pFrom.w / 2;
-    const y1 = pFrom.y + OFY + (pTo.y >= pFrom.y ? pFrom.h / 2 : -pFrom.h / 2);
-    const x2 = pTo.x + OFX + pTo.w / 2;
-    const y2 = pTo.y + OFY + (pTo.y >= pFrom.y ? -pTo.h / 2 : pTo.h / 2);
+    const sameColumn = Math.abs(pFrom.x - pTo.x) < 20;
+    const verticalDist = Math.abs(pTo.y - pFrom.y);
+    const skipsIntermediateCard = sameColumn && verticalDist > (pFrom.h + pTo.h) / 2 + 45;
 
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const curveOffset = Math.max(40, Math.min(110, Math.hypot(dx, dy) * 0.25));
-    const cx = (x1 + x2) / 2 + curveOffset;
-    const cy = (y1 + y2) / 2;
+    let x1, y1, x2, y2, cx, cy, mx, my;
+
+    if (skipsIntermediateCard) {
+      // Route cleanly along the left gutter of the column so it never crosses over intermediate sibling cards
+      x1 = pFrom.x + OFX;
+      y1 = pFrom.y + OFY;
+      x2 = pTo.x + OFX;
+      y2 = pTo.y + OFY;
+      cx = x1 - 115;
+      cy = (y1 + y2) / 2;
+      mx = x1 - 68;
+      my = cy;
+    } else if (sameColumn) {
+      // Adjacent cards in the same column: connect bottom-center to top-center
+      const goingDown = pTo.y >= pFrom.y;
+      x1 = pFrom.x + OFX + pFrom.w / 2;
+      y1 = pFrom.y + OFY + (goingDown ? pFrom.h / 2 : -pFrom.h / 2);
+      x2 = pTo.x + OFX + pTo.w / 2;
+      y2 = pTo.y + OFY + (goingDown ? -pTo.h / 2 : pTo.h / 2);
+      cx = x1;
+      cy = (y1 + y2) / 2;
+      mx = x1;
+      my = cy;
+    } else {
+      x1 = pFrom.x + OFX + pFrom.w / 2;
+      y1 = pFrom.y + OFY + (pTo.y >= pFrom.y ? pFrom.h / 2 : -pFrom.h / 2);
+      x2 = pTo.x + OFX + pTo.w / 2;
+      y2 = pTo.y + OFY + (pTo.y >= pFrom.y ? -pTo.h / 2 : pTo.h / 2);
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const curveOffset = Math.max(40, Math.min(110, Math.hypot(dx, dy) * 0.25));
+      cx = (x1 + x2) / 2 + curveOffset;
+      cy = (y1 + y2) / 2;
+      mx = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
+      my = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
+    }
 
     const styleCls = link.style || "solid";
     flowLinksSvg += `
       <path class="flow-link ${escXml(styleCls)}" marker-end="url(#flow-arrow)" d="M${x1},${y1} Q${cx},${cy} ${x2},${y2}"/>
     `;
 
-    // Midpoint on quadratic bezier: B(0.5) = 0.25*P0 + 0.5*P1 + 0.25*P2
-    const mx = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
-    const my = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
     const lbl = truncate(link.label, 24);
     const pillW = Math.max(54, lbl.length * 6.2 + 14);
     flowLinksSvg += `
