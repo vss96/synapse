@@ -1,0 +1,25 @@
+{
+  "name": "synapse",
+  "version": "1.0.0",
+  "description": "Synapse – MCP mindmap server. Any agent can create, navigate, and visualize structured thoughts.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "viewer": "node viewer/server.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "all": "npm run start & npm run viewer"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
+    "nanoid": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "serve": "^14.2.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

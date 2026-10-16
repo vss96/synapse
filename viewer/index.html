@@ -1,0 +1,1414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synapse – Live Agent Plan & Code Mental Model</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #f5f5f7;
+    --panel: #ffffff;
+    --border: #d2d2d7;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --blue: #007aff;
+    --green: #28a745;
+    --amber: #f59e0b;
+    --red: #dc2626;
+    --purple: #7c3aed;
+    --teal: #0d9488;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    z-index: 20;
+  }
+
+  header h1 {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .badge {
+    font-size: 11px;
+    background: #eef4ff;
+    color: var(--blue);
+    border: 1px solid #bfd7ff;
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-weight: 600;
+  }
+
+  .live-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #ecfdf5;
+    color: #059669;
+    border: 1px solid #a7f3d0;
+  }
+
+  .live-pill.offline {
+    background: #fef2f2;
+    color: #dc2626;
+    border-color: #fecaca;
+  }
+
+  .live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1.8s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  /* ── View Mode Segmented Control ── */
+  .view-switcher {
+    display: inline-flex;
+    background: #f0f0f5;
+    padding: 2px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-left: 6px;
+  }
+
+  .view-switcher button {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border-radius: 6px;
+  }
+
+  .view-switcher button:hover {
+    color: var(--text);
+    background: rgba(255,255,255,0.5);
+  }
+
+  .view-switcher button.active {
+    background: #fff;
+    color: var(--blue);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .progress-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: 4px;
+    padding-left: 12px;
+    border-left: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .progress-bar-wrap {
+    width: 90px;
+    height: 7px;
+    background: #e5e5ea;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #007aff, #28a745);
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  #toolbar {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  select {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12.5px;
+    background: #fff;
+    min-width: 220px;
+    color: var(--text);
+  }
+
+  select:focus {
+    outline: none;
+    border-color: var(--blue);
+  }
+
+  button {
+    background: var(--blue);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  button:hover { background: #0062c4; }
+  button.secondary {
+    background: #f5f5f7;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  button.secondary:hover { background: #e8e8ed; }
+
+  #file-upload { display: none; }
+
+  /* ── Main Workspace Layout ── */
+  .workspace {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+  }
+
+  #viewport {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    cursor: grab;
+    background: radial-gradient(#d2d2d7 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  #viewport:active { cursor: grabbing; }
+
+  #svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* ── SVG Node Styles ── */
+  .node-group { cursor: pointer; }
+
+  .node-rect {
+    fill: #ffffff;
+    stroke: #c7c7cc;
+    stroke-width: 1.5;
+    rx: 10;
+    ry: 10;
+    transition: stroke 0.15s, stroke-width 0.15s, filter 0.15s;
+    filter: drop-shadow(0 2px 5px rgba(0,0,0,0.04));
+  }
+
+  .node-group:hover .node-rect {
+    stroke: var(--blue);
+    stroke-width: 2.2;
+  }
+
+  .node-group.selected .node-rect {
+    stroke: var(--blue);
+    stroke-width: 2.8;
+    filter: drop-shadow(0 0 0 3px rgba(0,122,255,0.2));
+  }
+
+  .node-group.file-highlighted .node-rect {
+    stroke: var(--purple) !important;
+    stroke-width: 3 !important;
+    fill: #f5f3ff !important;
+  }
+
+  .node-group.root .node-rect {
+    fill: #1d1d1f !important;
+    stroke: #1d1d1f !important;
+  }
+
+  .node-group.root .node-title {
+    fill: #ffffff;
+    font-weight: 700;
+  }
+
+  /* Task Status Colors */
+  .node-group.status-in_progress .node-rect {
+    stroke: var(--blue);
+    stroke-width: 2.2;
+    fill: #f0f7ff;
+  }
+
+  .node-group.status-completed .node-rect {
+    stroke: #34c759;
+    fill: #f4fbf6;
+  }
+
+  .node-group.status-blocked .node-rect {
+    stroke: var(--red);
+    fill: #fef2f2;
+  }
+
+  /* Semantic "Thinking" / HLD Node Types */
+  .node-group.type-component .node-rect {
+    stroke: #4f46e5;
+    stroke-width: 2;
+    fill: #eef2ff;
+  }
+  .node-group.type-data_flow .node-rect {
+    stroke: #0d9488;
+    stroke-width: 2;
+    fill: #f0fdfa;
+  }
+  .node-group.type-hypothesis .node-rect {
+    stroke: #d97706;
+    stroke-width: 1.8;
+    stroke-dasharray: 5 3;
+    fill: #fffbeb;
+  }
+  .node-group.type-decision .node-rect {
+    stroke: #7c3aed;
+    stroke-width: 2;
+    fill: #f5f3ff;
+  }
+  .node-group.type-risk .node-rect {
+    stroke: #e11d48;
+    stroke-width: 2;
+    fill: #fff1f2;
+  }
+
+  .node-title {
+    fill: var(--text);
+    font-size: 12.5px;
+    font-weight: 600;
+    pointer-events: none;
+  }
+
+  .node-status-pill {
+    font-size: 10px;
+    font-weight: 600;
+    pointer-events: none;
+  }
+
+  .node-meta-text {
+    fill: var(--muted);
+    font-size: 10.5px;
+    pointer-events: none;
+  }
+
+  .node-file-chip {
+    fill: rgba(255,255,255,0.85);
+    stroke: #c7d2fe;
+    stroke-width: 1;
+    rx: 4;
+    ry: 4;
+  }
+
+  .node-file-text {
+    fill: #3730a3;
+    font-size: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    pointer-events: none;
+  }
+
+  /* Tree Hierarchy Edges */
+  .edge {
+    stroke: #c7c7cc;
+    stroke-width: 1.75;
+    fill: none;
+  }
+
+  .edge.edge-active {
+    stroke: var(--blue);
+    stroke-width: 2.2;
+    stroke-dasharray: 5 3;
+  }
+
+  .edge.edge-completed {
+    stroke: #34c759;
+  }
+
+  /* Directed Concept / Flow Links */
+  .flow-link {
+    stroke: #6366f1;
+    stroke-width: 2;
+    fill: none;
+    opacity: 0.88;
+  }
+
+  .flow-link.dashed {
+    stroke-dasharray: 6 4;
+  }
+
+  .flow-link.animated {
+    stroke: #0d9488;
+    stroke-dasharray: 7 4;
+    animation: flowDash 1s linear infinite;
+  }
+
+  @keyframes flowDash {
+    to { stroke-dashoffset: -22; }
+  }
+
+  .flow-label-bg {
+    fill: #ffffff;
+    stroke: #c7d2fe;
+    stroke-width: 1;
+    rx: 6;
+    ry: 6;
+  }
+
+  .flow-label-text {
+    fill: #4338ca;
+    font-size: 10px;
+    font-weight: 600;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+  }
+
+  /* ── Sidebar Inspector ── */
+  #sidebar {
+    width: 370px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .sidebar-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: #fafafa;
+  }
+
+  .sidebar-tab {
+    flex: 1;
+    text-align: center;
+    padding: 10px 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    background: none;
+    border-radius: 0;
+  }
+
+  .sidebar-tab:hover {
+    color: var(--text);
+    background: #f0f0f5;
+  }
+
+  .sidebar-tab.active {
+    color: var(--blue);
+    border-bottom-color: var(--blue);
+    background: #fff;
+  }
+
+  .sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 8px;
+    margin-top: 16px;
+  }
+
+  .section-title:first-child { margin-top: 0; }
+
+  .inspector-card {
+    background: #f9f9fb;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+
+  .inspector-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .status-tag, .type-tag {
+    display: inline-block;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    text-transform: uppercase;
+  }
+  .status-tag.planned { background: #e5e7eb; color: #374151; }
+  .status-tag.in_progress { background: #dbeafe; color: #1d4ed8; }
+  .status-tag.completed { background: #dcfce7; color: #15803d; }
+  .status-tag.blocked { background: #fee2e2; color: #b91c1c; }
+  .status-tag.none { display: none; }
+
+  .type-tag { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
+  .type-tag.decision { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+  .type-tag.hypothesis { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+  .type-tag.risk { background: #fff1f2; color: #be123c; border-color: #fecdd3; }
+  .type-tag.data_flow { background: #f0fdfa; color: #0f766e; border-color: #99f6e4; }
+
+  .notes-box {
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #3a3a3c;
+    background: #fff;
+    border: 1px solid #e5e5ea;
+    border-radius: 6px;
+    padding: 10px;
+    white-space: pre-wrap;
+  }
+
+  .link-item {
+    font-size: 12px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    cursor: pointer;
+  }
+  .link-item:hover { border-color: var(--blue); }
+
+  .file-item {
+    border: 1px solid #e5e5ea;
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  .file-item:hover {
+    border-color: var(--blue);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+  }
+
+  .file-item.active-highlight {
+    border-color: var(--purple);
+    background: #f5f3ff;
+  }
+
+  .file-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    word-break: break-all;
+  }
+
+  .action-badge {
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .action-badge.create { background: #dcfce7; color: #15803d; }
+  .action-badge.modify { background: #dbeafe; color: #1d4ed8; }
+  .action-badge.read { background: #f3f4f6; color: #4b5563; }
+  .action-badge.delete { background: #fee2e2; color: #b91c1c; }
+
+  .file-summary {
+    font-size: 12px;
+    color: #3a3a3c;
+    margin-top: 5px;
+    line-height: 1.4;
+  }
+
+  .file-meta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .activity-item {
+    border-left: 2px solid #d2d2d7;
+    padding-left: 10px;
+    margin-bottom: 12px;
+    font-size: 12px;
+  }
+
+  .activity-time {
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+
+  /* ── Controls & Legend ── */
+  .controls {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    background: #fff;
+    padding: 6px 10px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    border: 1px solid var(--border);
+  }
+
+  .legend {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    background: rgba(255,255,255,0.94);
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+    max-width: 560px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+  }
+
+  .empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    gap: 10px;
+    pointer-events: none;
+  }
+
+  .empty-state h2 { font-size: 18px; font-weight: 600; color: var(--text); }
+  .empty-state p { font-size: 13px; max-width: 360px; text-align: center; line-height: 1.5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Synapse</h1>
+  <span id="live-indicator" class="live-pill">
+    <span class="live-dot"></span>
+    <span id="live-text">Live</span>
+  </span>
+
+  <div class="view-switcher" id="view-switcher">
+    <button data-mode="all" class="active">Split View (Plan + HLD)</button>
+    <button data-mode="plan">Plan & Tasks</button>
+    <button data-mode="hld">Code Mental Model (HLD)</button>
+  </div>
+
+  <div class="progress-summary" id="progress-summary" style="display:none;">
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="progress-bar-fill"></div>
+    </div>
+    <span id="progress-text">0/0 tasks · 0 files</span>
+  </div>
+
+  <div id="toolbar">
+    <select id="mindmap-select">
+      <option value="">— select a mindmap —</option>
+    </select>
+    <button id="sync-git-btn" class="secondary" title="Sync uncommitted git status & diff into current mindmap">⎇ Sync Git</button>
+    <button id="refresh-btn" class="secondary">↻ Refresh</button>
+    <button id="upload-btn" class="secondary">📁 Open</button>
+    <input type="file" id="file-upload" accept=".json">
+  </div>
+</header>
+
+<div class="workspace">
+  <div id="viewport">
+    <svg id="svg"></svg>
+    <div id="empty-state" class="empty-state">
+      <h2>Waiting for Agent Mindmap…</h2>
+      <p>When your agent calls <code>create_mindmap</code>, <code>map_architecture</code>, or <code>log_file_touch</code>, the plan and code mental model will update here live.</p>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background:#f0f7ff;border:1.5px solid #007aff"></span> In Progress</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#f4fbf6;border:1.5px solid #34c759"></span> Completed</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#eef2ff;border:1.5px solid #4f46e5"></span> 📦 Component</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#f0fdfa;border:1.5px solid #0d9488"></span> ⇄ Data Flow</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#f5f3ff;border:1.5px solid #7c3aed"></span> ⚖️ Decision</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#fffbeb;border:1.5px dashed #d97706"></span> 💡 Hypothesis</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#fff1f2;border:1.5px solid #e11d48"></span> ⚠️ Risk</div>
+    </div>
+    <div class="controls">
+      <button id="zoom-out" class="secondary">−</button>
+      <button id="zoom-reset" class="secondary">Fit / Reset</button>
+      <button id="zoom-in" class="secondary">+</button>
+    </div>
+  </div>
+
+  <aside id="sidebar">
+    <div class="sidebar-tabs">
+      <button class="sidebar-tab active" data-tab="inspector">Inspector</button>
+      <button class="sidebar-tab" data-tab="files" id="tab-files-btn">Files (0)</button>
+      <button class="sidebar-tab" data-tab="activity">Activity</button>
+    </div>
+    <div class="sidebar-content" id="sidebar-content"></div>
+  </aside>
+</div>
+
+<script>
+const STATUS_LABELS = {
+  planned: "○ Planned",
+  in_progress: "◐ In Progress",
+  completed: "✔ Completed",
+  blocked: "✖ Blocked",
+  none: "",
+};
+
+const STATUS_COLORS = {
+  planned: "#6e6e73",
+  in_progress: "#007aff",
+  completed: "#15803d",
+  blocked: "#dc2626",
+  none: "#6e6e73",
+};
+
+const TYPE_BADGES = {
+  component: "📦 Component",
+  data_flow: "⇄ Data Flow",
+  hypothesis: "💡 Hypothesis",
+  decision: "⚖️ Decision",
+  risk: "⚠️ Risk",
+};
+
+const TYPE_COLORS = {
+  component: "#4338ca",
+  data_flow: "#0f766e",
+  hypothesis: "#b45309",
+  decision: "#6d28d9",
+  risk: "#be123c",
+};
+
+const HLD_NODE_TYPES = new Set(["component", "data_flow", "hypothesis", "decision", "risk"]);
+
+let currentId = "";
+let selectedNodeId = "root";
+let highlightedFilePath = null;
+let activeTab = "inspector";
+let viewMode = "all"; // "all" | "plan" | "hld"
+
+function isHldBranchNode(doc, nodeId) {
+  let cur = doc.nodes[nodeId];
+  while (cur) {
+    if (HLD_NODE_TYPES.has(cur.type)) return true;
+    cur = cur.parent ? doc.nodes[cur.parent] : null;
+  }
+  return false;
+}
+
+function shouldShowNodeInView(doc, nodeId) {
+  if (nodeId === "root" || viewMode === "all") return true;
+  const isHld = isHldBranchNode(doc, nodeId);
+  return viewMode === "hld" ? isHld : !isHld;
+}
+
+// ── Calculate Dynamic Node Dimensions & Non-Overlapping Tree Layout ──
+function getNodeSize(node) {
+  const w = 235;
+  const fileCount = (node.files || []).length;
+  const hasNotes = Boolean(node.notes);
+  const hasStatusOrType =
+    node.id !== "root" &&
+    ((node.status && node.status !== "none") || TYPE_BADGES[node.type]);
+  let h = 44;
+  if (hasStatusOrType) h += 16;
+  if (hasNotes) h += 16;
+  if (fileCount > 0) h += Math.min(fileCount, 2) * 20 + 6;
+  return { w, h };
+}
+
+function layoutTree(doc) {
+  const nodes = doc.nodes;
+  if (!nodes || !nodes["root"]) return null;
+
+  const LEVEL_GAP = 105;
+  const SIBLING_GAP = 20;
+  const sizes = {};
+  const subtreeHeights = {};
+
+  function measure(nodeId) {
+    const node = nodes[nodeId];
+    if (!node) return 44;
+    const sz = getNodeSize(node);
+    sizes[nodeId] = sz;
+    const validChildren = (node.children || []).filter(
+      (cid) => nodes[cid] && shouldShowNodeInView(doc, cid)
+    );
+    if (validChildren.length === 0) {
+      subtreeHeights[nodeId] = sz.h;
+      return sz.h;
+    }
+    let totalChildrenH = 0;
+    for (let i = 0; i < validChildren.length; i++) {
+      totalChildrenH += measure(validChildren[i]);
+      if (i > 0) totalChildrenH += SIBLING_GAP;
+    }
+    const h = Math.max(sz.h, totalChildrenH);
+    subtreeHeights[nodeId] = h;
+    return h;
+  }
+
+  measure("root");
+
+  const positions = {};
+  function assign(nodeId, x, centerY, depth) {
+    const node = nodes[nodeId];
+    if (!node) return;
+    const sz = sizes[nodeId];
+    positions[nodeId] = { x, y: centerY, w: sz.w, h: sz.h, depth };
+
+    const validChildren = (node.children || []).filter(
+      (cid) => nodes[cid] && shouldShowNodeInView(doc, cid)
+    );
+    if (validChildren.length === 0) return;
+
+    let totalChildrenH = 0;
+    for (let i = 0; i < validChildren.length; i++) {
+      totalChildrenH += subtreeHeights[validChildren[i]];
+      if (i > 0) totalChildrenH += SIBLING_GAP;
+    }
+
+    let cursorY = centerY - totalChildrenH / 2;
+    for (const cid of validChildren) {
+      const chH = subtreeHeights[cid];
+      const childCenterY = cursorY + chH / 2;
+      assign(cid, x + sz.w + LEVEL_GAP, childCenterY, depth + 1);
+      cursorY += chH + SIBLING_GAP;
+    }
+  }
+
+  assign("root", 60, Math.max(300, subtreeHeights["root"] / 2 + 40), 0);
+  return positions;
+}
+
+function truncate(str, max) {
+  if (!str) return "";
+  return str.length > max ? str.slice(0, max - 1) + "…" : str;
+}
+
+function escXml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ── Render SVG Mindmap & HLD Flow Links ─────────────────────────────────
+function render(doc) {
+  const svg = document.getElementById("svg");
+  const empty = document.getElementById("empty-state");
+
+  updateHeaderProgress(doc);
+  renderSidebar(doc);
+
+  if (!doc || !doc.nodes || !doc.nodes["root"]) {
+    svg.innerHTML = "";
+    empty.style.display = "flex";
+    return;
+  }
+  empty.style.display = "none";
+
+  const nodes = doc.nodes;
+  const positions = layoutTree(doc);
+  if (!positions) {
+    svg.innerHTML = "";
+    return;
+  }
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const id in positions) {
+    const p = positions[id];
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x + p.w);
+    minY = Math.min(minY, p.y - p.h / 2);
+    maxY = Math.max(maxY, p.y + p.h / 2);
+  }
+
+  const PAD = 80;
+  const W = Math.max(850, maxX - minX + PAD * 2);
+  const H = Math.max(520, maxY - minY + PAD * 2);
+  const OFX = PAD - minX;
+  const OFY = PAD - minY;
+
+  let edges = "";
+  let flowLinksSvg = "";
+  let nodeEls = "";
+
+  for (const id in positions) {
+    const p = positions[id];
+    const px = p.x + OFX;
+    const py = p.y + OFY;
+    const node = nodes[id];
+
+    // Draw cubic bezier tree edges to children
+    if (node && node.children) {
+      for (const cid of node.children) {
+        if (!positions[cid]) continue;
+        const cp = positions[cid];
+        const cpx = cp.x + OFX;
+        const cpy = cp.y + OFY;
+        const childNode = nodes[cid];
+        const mx = (px + p.w + cpx) / 2;
+        let edgeCls = "edge";
+        if (childNode?.status === "in_progress") edgeCls += " edge-active";
+        else if (childNode?.status === "completed") edgeCls += " edge-completed";
+        edges += `<path class="${edgeCls}" d="M${px + p.w},${py} C${mx},${py} ${mx},${cpy} ${cpx},${cpy}"/>`;
+      }
+    }
+
+    // Determine node classes
+    const classes = ["node-group"];
+    if (id === "root") classes.push("root");
+    if (node.type) classes.push(`type-${node.type}`);
+    if (node.status && node.status !== "none") classes.push(`status-${node.status}`);
+    if (id === selectedNodeId) classes.push("selected");
+    if (
+      highlightedFilePath &&
+      (node.files || []).some((f) => f.path === highlightedFilePath)
+    ) {
+      classes.push("file-highlighted");
+    }
+
+    const topY = py - p.h / 2;
+    let cursorY = topY + 20;
+
+    let innerContent = `
+      <text class="node-title" x="${px + 12}" y="${cursorY}">${escXml(truncate(node.label, 30))}</text>
+    `;
+
+    // Status or Semantic Thinking Type row
+    const typeLabel = TYPE_BADGES[node.type];
+    const stLabel = node.status && node.status !== "none" ? STATUS_LABELS[node.status] : "";
+    if (id !== "root" && (typeLabel || stLabel)) {
+      cursorY += 16;
+      const combined = [typeLabel, stLabel].filter(Boolean).join("  ·  ");
+      const pillColor = TYPE_COLORS[node.type] || STATUS_COLORS[node.status] || "#6e6e73";
+      innerContent += `<text class="node-status-pill" fill="${pillColor}" x="${px + 12}" y="${cursorY}">${escXml(combined)}</text>`;
+    }
+
+    // Notes preview row
+    if (node.notes) {
+      cursorY += 15;
+      innerContent += `<text class="node-meta-text" x="${px + 12}" y="${cursorY}">💬 ${escXml(truncate(node.notes, 32))}</text>`;
+    }
+
+    // File chips (up to 2 shown directly on the node card)
+    const files = node.files || [];
+    const visibleFiles = files.slice(0, 2);
+    for (let i = 0; i < visibleFiles.length; i++) {
+      cursorY += 20;
+      const f = visibleFiles[i];
+      const chipText = `${f.action ? f.action[0].toUpperCase() + ":" : ""}${f.path.split("/").pop()}${f.lines ? ":" + f.lines : ""}`;
+      const extraCount = i === 1 && files.length > 2 ? ` (+${files.length - 2})` : "";
+      innerContent += `
+        <rect class="node-file-chip" x="${px + 10}" y="${cursorY - 12}" width="${p.w - 20}" height="16"/>
+        <text class="node-file-text" x="${px + 15}" y="${cursorY - 1}">📄 ${escXml(truncate(chipText + extraCount, 30))}</text>
+      `;
+    }
+
+    nodeEls += `
+      <g class="${classes.join(" ")}" data-node-id="${escXml(id)}">
+        <rect class="node-rect" x="${px}" y="${topY}" width="${p.w}" height="${p.h}"/>
+        ${innerContent}
+      </g>`;
+  }
+
+  // Draw directed concept / data-flow links (doc.links)
+  for (const link of doc.links || []) {
+    const pFrom = positions[link.from];
+    const pTo = positions[link.to];
+    if (!pFrom || !pTo) continue;
+
+    const x1 = pFrom.x + OFX + pFrom.w / 2;
+    const y1 = pFrom.y + OFY + (pTo.y >= pFrom.y ? pFrom.h / 2 : -pFrom.h / 2);
+    const x2 = pTo.x + OFX + pTo.w / 2;
+    const y2 = pTo.y + OFY + (pTo.y >= pFrom.y ? -pTo.h / 2 : pTo.h / 2);
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const curveOffset = Math.max(40, Math.min(110, Math.hypot(dx, dy) * 0.25));
+    const cx = (x1 + x2) / 2 + curveOffset;
+    const cy = (y1 + y2) / 2;
+
+    const styleCls = link.style || "solid";
+    flowLinksSvg += `
+      <path class="flow-link ${escXml(styleCls)}" marker-end="url(#flow-arrow)" d="M${x1},${y1} Q${cx},${cy} ${x2},${y2}"/>
+    `;
+
+    // Midpoint on quadratic bezier: B(0.5) = 0.25*P0 + 0.5*P1 + 0.25*P2
+    const mx = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
+    const my = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
+    const lbl = truncate(link.label, 24);
+    const pillW = Math.max(54, lbl.length * 6.2 + 14);
+    flowLinksSvg += `
+      <g>
+        <rect class="flow-label-bg" x="${mx - pillW / 2}" y="${my - 9}" width="${pillW}" height="18"/>
+        <text class="flow-label-text" x="${mx}" y="${my}">${escXml(lbl)}</text>
+      </g>
+    `;
+  }
+
+  svg.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#6366f1"/>
+        </marker>
+      </defs>
+      ${edges}
+      ${nodeEls}
+      ${flowLinksSvg}
+    </svg>`;
+
+  applyTransform();
+
+  document.querySelectorAll(".node-group").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectedNodeId = el.dataset.nodeId;
+      activeTab = "inspector";
+      updateTabUI();
+      render(window._mindmapDoc);
+    });
+  });
+}
+
+// ── Header Progress & Sidebar Rendering ────────────────────────────────
+function collectStats(doc) {
+  if (!doc || !doc.nodes) return { tasks: [], completed: [], inProgress: [], fileMap: new Map() };
+  const allNodes = Object.values(doc.nodes).filter((n) => n.id !== "root");
+  const tasks = allNodes.filter(
+    (n) => !HLD_NODE_TYPES.has(n.type) && n.type !== "file" && n.type !== "note"
+  );
+  const completed = tasks.filter((n) => n.status === "completed");
+  const inProgress = tasks.filter((n) => n.status === "in_progress");
+
+  const fileMap = new Map();
+  for (const n of Object.values(doc.nodes)) {
+    for (const f of n.files || []) {
+      const existing = fileMap.get(f.path);
+      if (existing) {
+        if (!existing.nodes.some((x) => x.id === n.id)) existing.nodes.push(n);
+        if (f.summary) existing.summary = f.summary;
+        if (f.lines) existing.lines = f.lines;
+        if (f.action) existing.action = f.action;
+        if (f.symbols) existing.symbols = f.symbols;
+      } else {
+        fileMap.set(f.path, {
+          path: f.path,
+          action: f.action || "modify",
+          lines: f.lines,
+          symbols: f.symbols || [],
+          summary: f.summary,
+          nodes: [n],
+        });
+      }
+    }
+  }
+  return { tasks, completed, inProgress, fileMap };
+}
+
+function updateHeaderProgress(doc) {
+  const wrap = document.getElementById("progress-summary");
+  const fill = document.getElementById("progress-bar-fill");
+  const txt = document.getElementById("progress-text");
+  const filesTabBtn = document.getElementById("tab-files-btn");
+
+  if (!doc || !doc.nodes) {
+    wrap.style.display = "none";
+    filesTabBtn.textContent = "Files (0)";
+    return;
+  }
+
+  const { tasks, completed, fileMap } = collectStats(doc);
+  wrap.style.display = "flex";
+  const pct = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
+  fill.style.width = `${pct}%`;
+  txt.textContent = `${completed.length}/${tasks.length} tasks (${pct}%) · ${fileMap.size} files`;
+  filesTabBtn.textContent = `Files (${fileMap.size})`;
+}
+
+function renderSidebar(doc) {
+  const container = document.getElementById("sidebar-content");
+  if (!doc || !doc.nodes) {
+    container.innerHTML = `<div style="color:var(--muted);font-size:13px;">Load or create a mindmap to inspect plan tasks, HLD concepts, and touched code.</div>`;
+    return;
+  }
+
+  if (activeTab === "inspector") {
+    const node = doc.nodes[selectedNodeId] || doc.nodes["root"];
+    if (!node) return;
+    const status = node.status || "none";
+    const nodeType = node.type || "task";
+    const files = node.files || [];
+
+    const relatedLinks = (doc.links || []).filter(
+      (l) => l.from === node.id || l.to === node.id
+    );
+
+    let linksHtml = "";
+    if (relatedLinks.length > 0) {
+      linksHtml = `
+        <div class="section-title">Concept & Data Flow Links (${relatedLinks.length})</div>
+        ${relatedLinks
+          .map((l) => {
+            const isOut = l.from === node.id;
+            const otherId = isOut ? l.to : l.from;
+            const otherLabel = doc.nodes[otherId]?.label || otherId;
+            return `
+              <div class="link-item" data-jump-node="${escXml(otherId)}">
+                <div><b>${isOut ? "──[" + escXml(l.label) + "]──▶" : "◀──[" + escXml(l.label) + "]──"}</b> ${escXml(otherLabel)}</div>
+                ${l.notes ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">${escXml(l.notes)}</div>` : ""}
+              </div>
+            `;
+          })
+          .join("")}
+      `;
+    }
+
+    let filesHtml = "";
+    if (files.length === 0) {
+      filesHtml = `<div style="color:var(--muted);font-size:12px;">No files logged on this node yet.</div>`;
+    } else {
+      filesHtml = files
+        .map(
+          (f) => `
+        <div class="file-item ${highlightedFilePath === f.path ? "active-highlight" : ""}" data-file-path="${escXml(f.path)}">
+          <div class="file-header">
+            <span class="action-badge ${escXml(f.action || "modify")}">${escXml(f.action || "modify")}</span>
+            <span>${escXml(f.path)}${f.lines ? `:${escXml(f.lines)}` : ""}</span>
+          </div>
+          ${f.symbols && f.symbols.length ? `<div class="file-meta">Symbols: <code>${escXml(f.symbols.join(", "))}</code></div>` : ""}
+          ${f.summary ? `<div class="file-summary">${escXml(f.summary)}</div>` : ""}
+        </div>`
+        )
+        .join("");
+    }
+
+    container.innerHTML = `
+      <div class="inspector-card">
+        <div class="inspector-title">${escXml(node.label)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;">
+          <span class="type-tag ${escXml(nodeType)}">${escXml(TYPE_BADGES[nodeType] || nodeType)}</span>
+          <span class="status-tag ${escXml(status)}">${escXml(status.replace("_", " "))}</span>
+          <span style="font-size:11px;color:var(--muted);">ID: <code>${escXml(node.id)}</code></span>
+        </div>
+      </div>
+
+      ${
+        node.notes
+          ? `<div class="section-title">Agent Thinking / Notes</div>
+             <div class="notes-box">${escXml(node.notes)}</div>`
+          : ""
+      }
+
+      ${linksHtml}
+
+      <div class="section-title">Touched Files on Node (${files.length})</div>
+      ${filesHtml}
+    `;
+
+    container.querySelectorAll(".link-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        selectedNodeId = el.dataset.jumpNode;
+        render(window._mindmapDoc);
+      });
+    });
+  } else if (activeTab === "files") {
+    const { fileMap } = collectStats(doc);
+    if (fileMap.size === 0) {
+      container.innerHTML = `<div style="color:var(--muted);font-size:12.5px;">No files have been logged yet. Use <code>log_file_touch</code> or click <b>⎇ Sync Git</b>.</div>`;
+      return;
+    }
+
+    const items = Array.from(fileMap.values())
+      .map(
+        (info) => `
+      <div class="file-item ${highlightedFilePath === info.path ? "active-highlight" : ""}" data-file-path="${escXml(info.path)}">
+        <div class="file-header">
+          <span class="action-badge ${escXml(info.action)}">${escXml(info.action)}</span>
+          <span>${escXml(info.path)}${info.lines ? `:${escXml(info.lines)}` : ""}</span>
+        </div>
+        ${info.summary ? `<div class="file-summary">${escXml(info.summary)}</div>` : ""}
+        <div class="file-meta">Referenced in: ${info.nodes.map((n) => `<b>${escXml(n.label)}</b>`).join(", ")}</div>
+      </div>`
+      )
+      .join("");
+
+    container.innerHTML = `
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">
+        Click a file to highlight both the <b>Plan Tasks</b> and <b>HLD Components</b> that touch it.
+      </div>
+      ${items}
+    `;
+  } else if (activeTab === "activity") {
+    const log = doc.activityLog || [];
+    if (log.length === 0) {
+      container.innerHTML = `<div style="color:var(--muted);font-size:12.5px;">No activity recorded yet.</div>`;
+      return;
+    }
+    container.innerHTML = log
+      .map(
+        (entry) => `
+      <div class="activity-item">
+        <div class="activity-time">${new Date(entry.timestamp).toLocaleTimeString()}</div>
+        <div>${escXml(entry.message)}</div>
+      </div>`
+      )
+      .join("");
+  }
+
+  container.querySelectorAll(".file-item").forEach((el) => {
+    el.addEventListener("click", () => {
+      const fp = el.dataset.filePath;
+      highlightedFilePath = highlightedFilePath === fp ? null : fp;
+      render(window._mindmapDoc);
+    });
+  });
+}
+
+function updateTabUI() {
+  document.querySelectorAll(".sidebar-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === activeTab);
+  });
+}
+
+document.querySelectorAll(".sidebar-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    activeTab = btn.dataset.tab;
+    updateTabUI();
+    renderSidebar(window._mindmapDoc);
+  });
+});
+
+// View Mode Switcher (Split / Plan / HLD)
+document.querySelectorAll("#view-switcher button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    viewMode = btn.dataset.mode;
+    document.querySelectorAll("#view-switcher button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.mode === viewMode)
+    );
+    render(window._mindmapDoc);
+  });
+});
+
+// ── Pan & Zoom ──────────────────────────────────────────────────
+const viewport = document.getElementById("viewport");
+const svgEl = document.getElementById("svg");
+
+let scale = 1;
+let tx = 0, ty = 0;
+let panning = false, startX, startY, startTx, startTy;
+
+function applyTransform() {
+  const inner = svgEl.querySelector("svg");
+  if (!inner) return;
+  inner.setAttribute("transform", `translate(${tx}, ${ty}) scale(${scale})`);
+  inner.style.transformOrigin = "0 0";
+}
+
+document.getElementById("zoom-in").onclick = () => { scale = Math.min(4, scale * 1.2); applyTransform(); };
+document.getElementById("zoom-out").onclick = () => { scale = Math.max(0.2, scale / 1.2); applyTransform(); };
+document.getElementById("zoom-reset").onclick = () => { scale = 1; tx = 0; ty = 0; applyTransform(); };
+
+viewport.addEventListener("mousedown", (e) => {
+  if (e.target.closest(".node-group") || e.target.closest(".controls")) return;
+  panning = true;
+  startX = e.clientX; startY = e.clientY;
+  startTx = tx; startTy = ty;
+});
+window.addEventListener("mousemove", (e) => {
+  if (!panning) return;
+  tx = startTx + (e.clientX - startX);
+  ty = startTy + (e.clientY - startY);
+  applyTransform();
+});
+window.addEventListener("mouseup", () => { panning = false; });
+
+viewport.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? 0.92 : 1.08;
+  scale = Math.max(0.2, Math.min(4, scale * delta));
+  applyTransform();
+}, { passive: false });
+
+// ── Load & Refresh Mindmaps ─────────────────────────────────────
+function loadMindmap(doc) {
+  window._mindmapDoc = doc;
+  if (doc && doc.id) currentId = doc.id;
+  if (doc && doc.nodes && !doc.nodes[selectedNodeId]) {
+    selectedNodeId = "root";
+  }
+  render(doc);
+}
+
+async function fetchMindmapById(id) {
+  if (!id) return;
+  const filename = id.endsWith(".json") ? id : `${id}.json`;
+  const res = await fetch(`/data/${encodeURIComponent(filename)}`, { cache: "no-store" });
+  if (res.ok) {
+    const doc = await res.json();
+    loadMindmap(doc);
+  }
+}
+
+async function refreshFileList(autoSelectLatest = false) {
+  const select = document.getElementById("mindmap-select");
+  try {
+    const res = await fetch("/api/mindmaps", { cache: "no-store" });
+    if (!res.ok) throw new Error("Fallback to /data/");
+    const items = await res.json();
+
+    select.innerHTML = '<option value="">— select a mindmap —</option>';
+    for (const item of items) {
+      const opt = document.createElement("option");
+      opt.value = item.id;
+      opt.textContent = `${item.title} (${item.completedTasks}/${item.totalTasks} tasks · ${item.fileCount} files)`;
+      select.appendChild(opt);
+    }
+
+    if (autoSelectLatest && items.length > 0 && !currentId) {
+      currentId = items[0].id;
+    }
+    if (currentId) {
+      select.value = currentId;
+      await fetchMindmapById(currentId);
+    }
+  } catch {
+    // Fallback if opened without /api/mindmaps
+  }
+}
+
+document.getElementById("mindmap-select").onchange = async (e) => {
+  const val = e.target.value;
+  if (!val) return;
+  currentId = val;
+  await fetchMindmapById(val);
+};
+
+document.getElementById("refresh-btn").onclick = () => refreshFileList(false);
+
+document.getElementById("sync-git-btn").onclick = async () => {
+  if (!currentId) {
+    alert("Select or create a mindmap first.");
+    return;
+  }
+  try {
+    const res = await fetch("/api/sync-git", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mindmapId: currentId }),
+    });
+    const data = await res.json();
+    if (data.mindmap) loadMindmap(data.mindmap);
+  } catch (err) {
+    alert("Git sync failed: " + err.message);
+  }
+};
+
+// File upload
+document.getElementById("upload-btn").onclick = () => {
+  document.getElementById("file-upload").click();
+};
+document.getElementById("file-upload").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  try {
+    loadMindmap(JSON.parse(text));
+  } catch (err) {
+    alert("Invalid JSON: " + err.message);
+  }
+  e.target.value = "";
+};
+
+// ── Live Server-Sent Events (SSE) Connection ────────────────────
+function connectSSE() {
+  const indicator = document.getElementById("live-indicator");
+  const liveText = document.getElementById("live-text");
+  const es = new EventSource("/events");
+
+  es.onopen = () => {
+    indicator.classList.remove("offline");
+    liveText.textContent = "Live";
+  };
+
+  es.onmessage = async (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload.type === "mindmap_updated") {
+        currentId = payload.id || currentId;
+        await refreshFileList(false);
+      }
+    } catch {
+      // ignore malformed event
+    }
+  };
+
+  es.onerror = () => {
+    indicator.classList.add("offline");
+    liveText.textContent = "Reconnecting…";
+  };
+}
+
+refreshFileList(true);
+connectSSE();
+</script>
+</body>
+</html>

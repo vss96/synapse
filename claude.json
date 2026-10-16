@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "synapse": {
+      "command": "node",
+      "args": ["/Users/vss/Documents/synapse/dist/index.js"],
+      "env": {
+        "SYNAPSE_DATA_DIR": "/Users/vss/Documents/synapse/data"
+      }
+    }
+  }
+}
