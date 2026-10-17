@@ -313,6 +313,7 @@
     width: 100%;
     height: 100%;
     display: block;
+    overflow: visible;
   }
 
   /* ── SVG Node Styles ── */
@@ -980,7 +981,7 @@ function fileItemHtml(f, { changes = f.changes || [], meta = "" } = {}) {
         <span>${filePathHtml(f)}</span>
       </div>
       ${f.summary ? `<div class="file-summary">${escXml(f.summary)}</div>` : ""}
-      ${changes.length ? `<div class="change-list">${changes.map((c) => changeRowHtml(c, c.via)).join("")}</div>` : ""}
+      ${changes.length ? `<div class="change-list">${changes.map((c) => changeRowHtml(c, c.via && c.via.join(", "))).join("")}</div>` : ""}
       ${!changes.length && f.symbols && f.symbols.length ? `<div class="file-meta">Symbols: <code>${escXml(f.symbols.join(", "))}</code></div>` : ""}
       ${meta}
     </div>`;
@@ -1323,19 +1324,29 @@ function collectStats(doc) {
   const completed = tasks.filter((n) => n.status === "completed");
   const inProgress = tasks.filter((n) => n.status === "in_progress");
 
-  // Aggregate per path across nodes; the most recent touch decides action/summary,
-  // symbol-level changes from every node are kept (tagged with the node they came from).
+  // Aggregate per path across nodes; the most recent touch decides action/summary.
+  // Symbol-level changes merge on kind + symbol (same rule as the server) and remember
+  // every node that logged them.
   const fileMap = new Map();
   for (const n of Object.values(doc.nodes)) {
     for (const f of n.files || []) {
-      const changes = (f.changes || []).map((c) => ({ ...c, via: n.label }));
-      const existing = fileMap.get(f.path);
-      if (!existing) {
-        fileMap.set(f.path, { ...f, action: f.action || "modify", changes, nodes: [n] });
-        continue;
+      let existing = fileMap.get(f.path);
+      const isNew = !existing;
+      if (isNew) {
+        existing = { ...f, action: f.action || "modify", changes: [], nodes: [n] };
+        fileMap.set(f.path, existing);
+      } else if (!existing.nodes.some((x) => x.id === n.id)) {
+        existing.nodes.push(n);
       }
-      if (!existing.nodes.some((x) => x.id === n.id)) existing.nodes.push(n);
-      existing.changes.push(...changes);
+      for (const c of f.changes || []) {
+        const same = existing.changes.find((x) => x.kind === c.kind && x.symbol === c.symbol);
+        if (!same) existing.changes.push({ ...c, via: [n.label] });
+        else {
+          Object.assign(same, { ...c, detail: c.detail ?? same.detail, via: same.via });
+          if (!same.via.includes(n.label)) same.via.push(n.label);
+        }
+      }
+      if (isNew) continue;
       if ((f.timestamp || "") >= (existing.timestamp || "")) {
         Object.assign(existing, {
           action: f.action || existing.action,
@@ -1574,6 +1585,16 @@ function applyTransform() {
 document.getElementById("zoom-in").onclick = () => { scale = Math.min(4, scale * 1.2); applyTransform(); };
 document.getElementById("zoom-out").onclick = () => { scale = Math.max(0.2, scale / 1.2); applyTransform(); };
 document.getElementById("zoom-reset").onclick = () => { scale = 1; tx = 0; ty = 0; applyTransform(); };
+
+// The canvas fits the tree into #svg, so end #svg above the bottom overlays (legend, zoom
+// controls); panned content still shows beneath them because #svg doesn't clip.
+const bottomOverlays = [document.querySelector(".legend"), document.querySelector(".controls")];
+const fitAboveOverlays = () => {
+  const top = Math.min(...bottomOverlays.map((el) => el.offsetTop));
+  svgEl.style.height = `${Math.max(0, top - 8)}px`;
+};
+const overlayObserver = new ResizeObserver(fitAboveOverlays);
+[viewport, ...bottomOverlays].forEach((el) => overlayObserver.observe(el));
 
 viewport.addEventListener("mousedown", (e) => {
   if (e.target.closest(".node-group") || e.target.closest(".controls")) return;

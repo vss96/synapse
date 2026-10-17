@@ -4,6 +4,7 @@ import { render } from "./renderer.js";
 import {
   ensureWorkspaceWatcher,
   inspectGitChanges,
+  mergeChanges,
   resolveTargetNodeForFile,
   upsertNodeFileTouch,
 } from "./watcher.js";
@@ -554,7 +555,7 @@ async function getPlanSummary(input: { mindmapId: string }): Promise<string> {
         if (f.lines) existing.lines = f.lines;
         if (f.action) existing.action = f.action;
         if (f.previousPath) existing.previousPath = f.previousPath;
-        existing.changes.push(...(f.changes || []));
+        existing.changes = mergeChanges(existing.changes, f.changes) ?? [];
       } else {
         fileMap.set(f.path, {
           action: f.action || "modify",

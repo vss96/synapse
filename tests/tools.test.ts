@@ -261,8 +261,22 @@ describe("MCP tools integration", () => {
     assert.equal(renamed.previousPath, "tests/auth-old.test.ts");
     assert.equal(renamed.changes?.[0].kind, "test");
 
+    // The same change logged on a second node (e.g. an HLD component) is counted once
+    const component = JSON.parse(
+      await callTool("add_node", { mindmapId: doc.id, parentId: "root", label: "Auth", type: "component" }),
+    ) as MindmapDocument;
+    const componentId = component.nodes.root.children.at(-1)!;
+    await callTool("log_file_touch", {
+      mindmapId: doc.id,
+      nodeId: componentId,
+      path: "src/auth.ts",
+      changes: [{ kind: "fix", symbol: "validateToken" }],
+    });
+
     const summary = await callTool("get_plan_summary", { mindmapId: doc.id });
     assert.match(summary, /Code Changes: 1 add, 1 fix, 1 rename, 1 test/);
+    assert.equal(summary.match(/fix: `validateToken`/g)?.length, 1);
+    assert.match(summary, /fix: `validateToken` — compare in UTC, inclusive bound/);
     assert.match(summary, /tests\/auth-old\.test\.ts → tests\/auth\.test\.ts/);
     assert.match(summary, /rename: `checkAuth → requireAuth`/);
 

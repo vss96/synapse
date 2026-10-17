@@ -143,7 +143,7 @@ export function resolveTargetNodeForFile(
 }
 
 /** Merge symbol-level changes; a later change with the same kind + symbol replaces the earlier one. */
-function mergeChanges(prev: CodeChange[] | undefined, next: CodeChange[] | undefined): CodeChange[] | undefined {
+export function mergeChanges(prev: CodeChange[] | undefined, next: CodeChange[] | undefined): CodeChange[] | undefined {
   if (!Array.isArray(next) || next.length === 0) return prev;
   const merged = [...(prev ?? [])];
   for (const change of next) {
