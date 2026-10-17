@@ -7,7 +7,10 @@ import {
   resolveTargetNodeForFile,
   upsertNodeFileTouch,
 } from "./watcher.js";
+import { CHANGE_KINDS, FILE_ACTIONS } from "./types.js";
 import type {
+  CodeChange,
+  FileTouch,
   MindmapDocument,
   MindmapNode,
   CreateMindmapInput,
@@ -33,6 +36,49 @@ const NODE_TYPE_ENUM = [
   "decision",
   "risk",
 ];
+
+const CHANGES_SCHEMA = {
+  type: "array",
+  description:
+    "Symbol-level changes in this file, so the user can follow what is being added, fixed, refactored, renamed, removed, or tested",
+  items: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: CHANGE_KINDS },
+      symbol: { type: "string", description: "Function/class/type/test name (for renames, the new name)" },
+      previousSymbol: { type: "string", description: "Old name when kind is 'rename'" },
+      detail: { type: "string", description: "Short description of the change" },
+    },
+    required: ["kind", "symbol"],
+  },
+};
+
+const FILE_TOUCH_PROPERTIES = {
+  path: { type: "string", description: "File path (e.g. 'src/tools.ts')" },
+  action: {
+    type: "string",
+    enum: FILE_ACTIONS,
+    description: "Action performed on the file (default: 'modify')",
+  },
+  previousPath: { type: "string", description: "Old file path when action is 'rename'" },
+  lines: { type: "string", description: "Optional line range touched (e.g. '45-120')" },
+  symbols: {
+    type: "array",
+    items: { type: "string" },
+    description: "Optional list of function/class/type symbols touched",
+  },
+  changes: CHANGES_SCHEMA,
+  summary: { type: "string", description: "Short summary of what changed in this file" },
+};
+
+/** "2 add, 1 fix" style tally, in CHANGE_KINDS order. */
+export function describeChanges(changes: CodeChange[] | undefined): string {
+  if (!changes || changes.length === 0) return "";
+  return CHANGE_KINDS.map((kind) => [kind, changes.filter((c) => c.kind === kind).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([kind, n]) => `${n} ${kind}`)
+    .join(", ");
+}
 
 /* ------------------------------------------------------------------ */
 /*  create_mindmap                                                     */
@@ -383,15 +429,19 @@ async function logFileTouch(input: LogFileTouchInput): Promise<MindmapDocument |
 
   const targetNode = resolveTargetNodeForFile(doc, input.nodeId);
   const action = input.action ?? "modify";
-
-  upsertNodeFileTouch(targetNode, {
+  const now = new Date().toISOString();
+  const touch: FileTouch = {
     path: input.path,
     action,
+    previousPath: input.previousPath,
     lines: input.lines,
     symbols: input.symbols,
+    changes: input.changes,
     summary: input.summary,
-    timestamp: new Date().toISOString(),
-  });
+    timestamp: now,
+  };
+
+  upsertNodeFileTouch(targetNode, touch);
 
   if (input.createChildNode) {
     const existingChild = targetNode.children
@@ -402,14 +452,8 @@ async function logFileTouch(input: LogFileTouchInput): Promise<MindmapDocument |
     if (existingChild) {
       existingChild.label = label;
       existingChild.notes = input.summary ?? existingChild.notes;
-      existingChild.updatedAt = new Date().toISOString();
-      upsertNodeFileTouch(existingChild, {
-        path: input.path,
-        action,
-        lines: input.lines,
-        symbols: input.symbols,
-        summary: input.summary,
-      });
+      existingChild.updatedAt = now;
+      upsertNodeFileTouch(existingChild, touch);
     } else {
       const childId = `n_${nanoid(6)}`;
       doc.nodes[childId] = {
@@ -418,27 +462,20 @@ async function logFileTouch(input: LogFileTouchInput): Promise<MindmapDocument |
         type: "file",
         status: action === "read" ? "none" : "completed",
         notes: input.summary,
-        files: [
-          {
-            path: input.path,
-            action,
-            lines: input.lines,
-            symbols: input.symbols,
-            summary: input.summary,
-            timestamp: new Date().toISOString(),
-          },
-        ],
+        files: [{ ...touch }],
         children: [],
         parent: targetNode.id,
-        updatedAt: new Date().toISOString(),
+        updatedAt: now,
       };
       targetNode.children.push(childId);
     }
   }
 
+  const renamedFrom = action === "rename" && input.previousPath ? `${input.previousPath} → ` : "";
+  const tally = describeChanges(input.changes);
   store.recordActivity(
     doc,
-    `[${action.toUpperCase()}] ${input.path}${input.lines ? `:${input.lines}` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${targetNode.label}")`,
+    `[${action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${targetNode.label}")`,
     { nodeId: targetNode.id, file: input.path },
   );
 
@@ -467,6 +504,7 @@ async function syncGitStatus(input: SyncGitStatusInput): Promise<MindmapDocument
     upsertNodeFileTouch(targetNode, {
       path: ch.path,
       action: ch.action,
+      previousPath: ch.previousPath,
       summary: ch.summary,
       timestamp: new Date().toISOString(),
     });
@@ -503,7 +541,10 @@ async function getPlanSummary(input: { mindmapId: string }): Promise<string> {
   const blocked = tasks.filter((n) => n.status === "blocked");
   const planned = tasks.filter((n) => !n.status || n.status === "planned");
 
-  const fileMap = new Map<string, { action: string; tasks: string[]; summary?: string; lines?: string }>();
+  const fileMap = new Map<
+    string,
+    { action: string; tasks: string[]; summary?: string; lines?: string; previousPath?: string; changes: CodeChange[] }
+  >();
   for (const n of Object.values(doc.nodes)) {
     for (const f of n.files || []) {
       const existing = fileMap.get(f.path);
@@ -512,16 +553,21 @@ async function getPlanSummary(input: { mindmapId: string }): Promise<string> {
         if (f.summary) existing.summary = f.summary;
         if (f.lines) existing.lines = f.lines;
         if (f.action) existing.action = f.action;
+        if (f.previousPath) existing.previousPath = f.previousPath;
+        existing.changes.push(...(f.changes || []));
       } else {
         fileMap.set(f.path, {
           action: f.action || "modify",
           tasks: [n.label],
           summary: f.summary,
           lines: f.lines,
+          previousPath: f.previousPath,
+          changes: [...(f.changes || [])],
         });
       }
     }
   }
+  const allChanges = [...fileMap.values()].flatMap((info) => info.changes);
 
   const pct = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
   const lines: string[] = [
@@ -529,6 +575,7 @@ async function getPlanSummary(input: { mindmapId: string }): Promise<string> {
     `Progress: ${completed.length}/${tasks.length} tasks completed (${pct}%)`,
     `Status Breakdown: ${inProgress.length} in progress · ${planned.length} planned · ${completed.length} completed · ${blocked.length} blocked`,
     `Mental Model / HLD: ${hldNodes.length} concept node(s) · ${(doc.links || []).length} directed flow link(s)`,
+    `Code Changes: ${describeChanges(allChanges) || "none logged"}`,
     "",
   ];
 
@@ -555,7 +602,12 @@ async function getPlanSummary(input: { mindmapId: string }): Promise<string> {
     for (const [filePath, info] of fileMap.entries()) {
       const loc = info.lines ? `:${info.lines}` : "";
       const sum = info.summary ? ` — ${info.summary}` : "";
-      lines.push(`- \`[${info.action.toUpperCase()}]\` **${filePath}${loc}**${sum} _(via: ${info.tasks.join(", ")})_`);
+      const from = info.action === "rename" && info.previousPath ? `${info.previousPath} → ` : "";
+      lines.push(`- \`[${info.action.toUpperCase()}]\` **${from}${filePath}${loc}**${sum} _(via: ${info.tasks.join(", ")})_`);
+      for (const c of info.changes) {
+        const name = c.kind === "rename" && c.previousSymbol ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
+        lines.push(`  - ${c.kind}: \`${name}\`${c.detail ? ` — ${c.detail}` : ""}`);
+      }
     }
   }
 
@@ -834,13 +886,7 @@ export const tools: ToolDefinition[] = [
                 type: "array",
                 items: {
                   type: "object",
-                  properties: {
-                    path: { type: "string" },
-                    action: { type: "string", enum: ["read", "create", "modify", "delete"] },
-                    lines: { type: "string" },
-                    symbols: { type: "array", items: { type: "string" } },
-                    summary: { type: "string" },
-                  },
+                  properties: FILE_TOUCH_PROPERTIES,
                   required: ["path"],
                 },
               },
@@ -895,7 +941,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "log_file_touch",
     description:
-      "Record that a file or code symbol was read, created, modified, or deleted. If nodeId is omitted, attaches to the currently in_progress task node.",
+      "Record that a file was read, created, modified, renamed, or deleted, plus symbol-level `changes` (add, modify, fix, refactor, rename, remove, test) so the user can follow exactly what is changing. If nodeId is omitted, attaches to the currently in_progress task node.",
     inputSchema: {
       type: "object",
       properties: {
@@ -904,19 +950,7 @@ export const tools: ToolDefinition[] = [
           type: "string",
           description: "Optional task or component node ID. If omitted, attaches to the active in_progress task.",
         },
-        path: { type: "string", description: "File path (e.g. 'src/tools.ts')" },
-        action: {
-          type: "string",
-          enum: ["read", "create", "modify", "delete"],
-          description: "Action performed on the file (default: 'modify')",
-        },
-        lines: { type: "string", description: "Optional line range touched (e.g. '45-120')" },
-        symbols: {
-          type: "array",
-          items: { type: "string" },
-          description: "Optional list of function/class/type symbols touched",
-        },
-        summary: { type: "string", description: "Short summary of what changed in this file" },
+        ...FILE_TOUCH_PROPERTIES,
         createChildNode: {
           type: "boolean",
           description: "If true, also creates a visible child file node under the task node in the tree",

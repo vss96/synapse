@@ -53,8 +53,8 @@ npm run viewer
 | `map_architecture` | Batch-record the agent's mental model / HLD (`component`, `data_flow`, `decision`, `hypothesis`, `risk` nodes + directed `links`) |
 | `link_nodes` | Create a directed conceptual or data/control-flow arrow between two nodes (`solid`, `dashed`, or `animated`) |
 | `update_plan_status` | Mark a task node `planned`, `in_progress`, `completed`, or `blocked`, and optionally start `nextNodeId` |
-| `log_file_touch` | Attach a touched file (`path`, `action`, `lines`, `symbols`, `summary`) to the active task or component node |
-| `sync_git_status` | Inspect `git status` & `git diff` in the workspace and auto-attach changed files to the mindmap |
+| `log_file_touch` | Attach a touched file (`path`, `action` incl. `rename` + `previousPath`, `lines`, `summary`) and symbol-level `changes` (`add`, `modify`, `fix`, `refactor`, `rename`, `remove`, `test`) to the active task or component node |
+| `sync_git_status` | Inspect `git status` & `git diff` in the workspace and auto-attach changed files (including staged renames) to the mindmap |
 | `get_plan_summary` | Render a Markdown dashboard of task progress (%), HLD concept count, and all touched files |
 | `add_node` | Add a child task, plan step, HLD concept, file, or note node |
 | `update_node` | Update a node's label, status, semantic type, notes, or files |

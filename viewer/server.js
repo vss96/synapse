@@ -8,12 +8,10 @@
 import { createServer } from "node:http";
 import { readFile, writeFile, readdir, mkdir } from "node:fs/promises";
 import { existsSync, watch } from "node:fs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-const execFileAsync = promisify(execFile);
+import { inspectGitChanges, resolveTargetNodeForFile, upsertNodeFileTouch } from "../dist/watcher.js";
+import { recordActivity } from "../dist/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIEWER_DIR = __dirname;
@@ -51,19 +49,21 @@ function broadcastSSE(eventData) {
   }
 }
 
-let watchDebounce = null;
+// Debounce per file so concurrent sessions don't swallow each other's updates.
+const watchDebounce = new Map();
 try {
   watch(DATA_DIR, (eventType, filename) => {
     if (!filename || !filename.endsWith(".json")) return;
-    if (watchDebounce) clearTimeout(watchDebounce);
-    watchDebounce = setTimeout(() => {
+    clearTimeout(watchDebounce.get(filename));
+    watchDebounce.set(filename, setTimeout(() => {
+      watchDebounce.delete(filename);
       broadcastSSE({
         type: "mindmap_updated",
         id: filename.replace(/\.json$/, ""),
         filename,
         timestamp: new Date().toISOString(),
       });
-    }, 80);
+    }, 80));
   });
 } catch (err) {
   console.error("[synapse viewer] Warning: could not watch data directory:", err);
@@ -101,6 +101,9 @@ async function serveDirectory(res, dirPath, prefix) {
   }
 }
 
+// Mirrors the viewer's task counting: HLD concepts, files and notes are not plan tasks.
+const NON_TASK_TYPES = new Set(["file", "note", "component", "data_flow", "hypothesis", "decision", "risk"]);
+
 async function listMindmapsMetadata() {
   const entries = await readdir(DATA_DIR, { withFileTypes: true });
   const list = [];
@@ -110,8 +113,11 @@ async function listMindmapsMetadata() {
       const raw = await readFile(path.join(DATA_DIR, entry.name), "utf-8");
       const doc = JSON.parse(raw);
       const nodes = Object.values(doc.nodes || {});
-      const tasks = nodes.filter((n) => n.id !== "root" && n.type !== "file" && n.type !== "note");
+      const tasks = nodes.filter((n) => n.id !== "root" && !NON_TASK_TYPES.has(n.type));
       const completedTasks = tasks.filter((n) => n.status === "completed").length;
+      const activeTask = tasks
+        .filter((n) => n.status === "in_progress")
+        .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))[0];
       const fileSet = new Set();
       for (const n of nodes) {
         for (const f of n.files || []) {
@@ -127,6 +133,7 @@ async function listMindmapsMetadata() {
         nodeCount: nodes.length,
         completedTasks,
         totalTasks: tasks.length,
+        activeTask: activeTask ? activeTask.label : null,
         fileCount: fileSet.size,
       });
     } catch {
@@ -155,57 +162,14 @@ async function handleGitSync(req, res) {
   const doc = JSON.parse(await readFile(file, "utf-8"));
   const repoPath = overridePath || doc.workspacePath || path.resolve(__dirname, "..");
 
-  const [{ stdout: statusOut }, { stdout: numstatOut }] = await Promise.all([
-    execFileAsync("git", ["status", "--porcelain"], { cwd: repoPath }).catch(() => ({ stdout: "" })),
-    execFileAsync("git", ["diff", "--numstat", "HEAD"], { cwd: repoPath }).catch(() => ({ stdout: "" })),
-  ]);
-
-  const statsMap = new Map();
-  for (const line of numstatOut.split("\n")) {
-    if (!line.trim()) continue;
-    const [added, removed, fp] = line.split("\t");
-    if (fp) statsMap.set(fp.trim(), `+${added}/-${removed} lines`);
-  }
-
-  const changes = [];
-  for (const line of statusOut.split("\n")) {
-    if (!line.trim() || line.length < 4) continue;
-    const code = line.slice(0, 2);
-    let fp = line.slice(3).trim();
-    if (fp.includes(" -> ")) fp = fp.split(" -> ").pop().trim();
-    if (fp.startsWith("data/") && fp.endsWith(".json")) continue;
-
-    let action = "modify";
-    if (code.includes("?") || code.includes("A")) action = "create";
-    else if (code.includes("D")) action = "delete";
-
-    const stat = statsMap.get(fp);
-    changes.push({
-      path: fp,
-      action,
-      summary: stat ? `Git ${action} (${stat})` : `Git ${action}`,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  // Find active in_progress node or root
-  const nodes = Object.values(doc.nodes || {});
-  const inProgress = nodes.filter((n) => n.status === "in_progress" && n.id !== "root");
-  const target = inProgress[0] || doc.nodes["root"];
-  if (target && changes.length > 0) {
-    if (!target.files) target.files = [];
-    for (const ch of changes) {
-      const idx = target.files.findIndex((f) => f.path === ch.path);
-      if (idx >= 0) target.files[idx] = { ...target.files[idx], ...ch };
-      else target.files.push(ch);
-    }
-    doc.updatedAt = new Date().toISOString();
-    if (!doc.activityLog) doc.activityLog = [];
-    doc.activityLog.unshift({
-      timestamp: doc.updatedAt,
-      message: `Synced ${changes.length} changed file(s) from git into "${target.label}"`,
+  const changes = await inspectGitChanges(repoPath);
+  if (changes.length > 0) {
+    const target = resolveTargetNodeForFile(doc);
+    for (const ch of changes) upsertNodeFileTouch(target, ch);
+    recordActivity(doc, `Synced ${changes.length} changed file(s) from git into "${target.label}"`, {
       nodeId: target.id,
     });
+    doc.updatedAt = new Date().toISOString();
     await writeFile(file, JSON.stringify(doc, null, 2), "utf-8");
   }
 

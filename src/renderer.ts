@@ -1,4 +1,14 @@
-import type { MindmapDocument, NodeStatus, NodeType } from "./types.js";
+import type { ChangeKind, MindmapDocument, NodeStatus, NodeType } from "./types.js";
+
+const CHANGE_GLYPH: Record<ChangeKind, string> = {
+  add: "+",
+  modify: "~",
+  fix: "✱",
+  refactor: "⟲",
+  rename: "↦",
+  remove: "−",
+  test: "✓",
+};
 
 const STATUS_BADGE: Record<NodeStatus, string> = {
   none: "",
@@ -80,10 +90,15 @@ function toIndentedText(doc: MindmapDocument): string {
     if (node.files && node.files.length > 0) {
       for (const f of node.files) {
         const act = f.action ? `[${f.action.toUpperCase()}] ` : "";
+        const from = f.action === "rename" && f.previousPath ? `${f.previousPath} → ` : "";
         const loc = f.lines ? `:${f.lines}` : "";
         const sym = f.symbols && f.symbols.length ? ` (${f.symbols.join(", ")})` : "";
         const sum = f.summary ? ` — ${f.summary}` : "";
-        lines.push(`${indent}   📄 ${act}${f.path}${loc}${sym}${sum}`);
+        lines.push(`${indent}   📄 ${act}${from}${f.path}${loc}${sym}${sum}`);
+        for (const c of f.changes || []) {
+          const name = c.kind === "rename" && c.previousSymbol ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
+          lines.push(`${indent}      ${CHANGE_GLYPH[c.kind] ?? "•"} ${c.kind} ${name}${c.detail ? ` — ${c.detail}` : ""}`);
+        }
       }
     }
 

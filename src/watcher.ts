@@ -4,7 +4,7 @@ import { watch, existsSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import * as store from "./store.js";
-import type { FileAction, FileTouch, MindmapDocument, MindmapNode } from "./types.js";
+import type { CodeChange, FileAction, FileTouch, MindmapDocument, MindmapNode } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -33,6 +33,7 @@ function shouldIgnorePath(relPath: string): boolean {
 export interface GitFileChange {
   path: string;
   action: FileAction;
+  previousPath?: string;
   summary: string;
 }
 
@@ -63,13 +64,18 @@ export async function inspectGitChanges(workspacePath: string): Promise<GitFileC
     if (!line.trim() || line.length < 4) continue;
     const code = line.slice(0, 2);
     let filePath = line.slice(3).trim();
+    let previousPath: string | undefined;
     if (filePath.includes(" -> ")) {
-      filePath = filePath.split(" -> ").pop()!.trim();
+      const [from, to] = filePath.split(" -> ");
+      previousPath = from.trim();
+      filePath = to.trim();
     }
     if (shouldIgnorePath(filePath)) continue;
 
     let action: FileAction = "modify";
-    if (code.includes("?") || code.includes("A")) {
+    if (code.includes("R") && previousPath) {
+      action = "rename";
+    } else if (code.includes("?") || code.includes("A")) {
       action = "create";
     } else if (code.includes("D")) {
       action = "delete";
@@ -80,7 +86,7 @@ export async function inspectGitChanges(workspacePath: string): Promise<GitFileC
       ? `Git ${action} (${diffStat})`
       : `Git ${action}`;
 
-    changes.push({ path: filePath, action, summary });
+    changes.push({ path: filePath, action, summary, ...(action === "rename" ? { previousPath } : {}) });
   }
 
   return changes;
@@ -136,8 +142,21 @@ export function resolveTargetNodeForFile(
   return filesNode;
 }
 
+/** Merge symbol-level changes; a later change with the same kind + symbol replaces the earlier one. */
+function mergeChanges(prev: CodeChange[] | undefined, next: CodeChange[] | undefined): CodeChange[] | undefined {
+  if (!Array.isArray(next) || next.length === 0) return prev;
+  const merged = [...(prev ?? [])];
+  for (const change of next) {
+    const idx = merged.findIndex((c) => c.kind === change.kind && c.symbol === change.symbol);
+    if (idx >= 0) merged[idx] = { ...merged[idx], ...change };
+    else merged.push(change);
+  }
+  return merged;
+}
+
 /**
- * Upsert a FileTouch entry onto a node.
+ * Upsert a FileTouch entry onto a node. A rename with `previousPath` absorbs the
+ * entry previously recorded under the old path.
  */
 export function upsertNodeFileTouch(node: MindmapNode, touch: FileTouch): void {
   if (!node.files) {
@@ -150,13 +169,18 @@ export function upsertNodeFileTouch(node: MindmapNode, touch: FileTouch): void {
     timestamp: touch.timestamp || now,
   };
 
-  const existingIdx = node.files.findIndex((f) => f.path === normalizedTouch.path);
+  let existingIdx = node.files.findIndex((f) => f.path === normalizedTouch.path);
+  if (existingIdx < 0 && normalizedTouch.action === "rename" && normalizedTouch.previousPath) {
+    existingIdx = node.files.findIndex((f) => f.path === normalizedTouch.previousPath);
+  }
   if (existingIdx >= 0) {
     const prev = node.files[existingIdx];
     node.files[existingIdx] = {
       ...prev,
       ...normalizedTouch,
+      previousPath: normalizedTouch.previousPath ?? prev.previousPath,
       symbols: normalizedTouch.symbols ?? prev.symbols,
+      changes: mergeChanges(prev.changes, normalizedTouch.changes),
       lines: normalizedTouch.lines ?? prev.lines,
       summary: normalizedTouch.summary ?? prev.summary,
     };

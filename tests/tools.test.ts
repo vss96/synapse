@@ -206,6 +206,101 @@ describe("MCP tools integration", () => {
     }
   });
 
+  it("records symbol-level changes and file renames, and surfaces them in summaries", async () => {
+    const doc = JSON.parse(
+      await callTool("create_mindmap", {
+        title: "Fix token expiry",
+        initialPlan: [{ label: "Fix expiry check", status: "in_progress" }],
+      }),
+    ) as MindmapDocument;
+    const stepId = doc.nodes.root.children[0];
+
+    await callTool("log_file_touch", {
+      mindmapId: doc.id,
+      path: "src/auth.ts",
+      changes: [
+        { kind: "fix", symbol: "validateToken", detail: "compare in UTC" },
+        { kind: "add", symbol: "isExpired" },
+      ],
+    });
+    // Same kind+symbol replaces; new entries append
+    await callTool("log_file_touch", {
+      mindmapId: doc.id,
+      path: "src/auth.ts",
+      changes: [
+        { kind: "fix", symbol: "validateToken", detail: "compare in UTC, inclusive bound" },
+        { kind: "rename", previousSymbol: "checkAuth", symbol: "requireAuth" },
+      ],
+    });
+    await callTool("log_file_touch", {
+      mindmapId: doc.id,
+      path: "tests/auth-old.test.ts",
+      changes: [{ kind: "test", symbol: "rejects expired tokens" }],
+    });
+    const afterRename = JSON.parse(
+      await callTool("log_file_touch", {
+        mindmapId: doc.id,
+        path: "tests/auth.test.ts",
+        action: "rename",
+        previousPath: "tests/auth-old.test.ts",
+      }),
+    ) as MindmapDocument;
+
+    const files = afterRename.nodes[stepId].files || [];
+    assert.equal(files.length, 2, "rename absorbs the entry logged under the old path");
+
+    const auth = files.find((f) => f.path === "src/auth.ts")!;
+    assert.deepEqual(
+      auth.changes?.map((c) => `${c.kind}:${c.symbol}`),
+      ["fix:validateToken", "add:isExpired", "rename:requireAuth"],
+    );
+    assert.equal(auth.changes?.[0].detail, "compare in UTC, inclusive bound");
+
+    const renamed = files.find((f) => f.path === "tests/auth.test.ts")!;
+    assert.equal(renamed.action, "rename");
+    assert.equal(renamed.previousPath, "tests/auth-old.test.ts");
+    assert.equal(renamed.changes?.[0].kind, "test");
+
+    const summary = await callTool("get_plan_summary", { mindmapId: doc.id });
+    assert.match(summary, /Code Changes: 1 add, 1 fix, 1 rename, 1 test/);
+    assert.match(summary, /tests\/auth-old\.test\.ts → tests\/auth\.test\.ts/);
+    assert.match(summary, /rename: `checkAuth → requireAuth`/);
+
+    const text = await callTool("render_mindmap", { mindmapId: doc.id, format: "text" });
+    assert.match(text, /✱ fix validateToken — compare in UTC, inclusive bound/);
+  });
+
+  it("detects staged renames in sync_git_status", async () => {
+    const repoDir = await mkdtemp(path.join(os.tmpdir(), "synapse-git-rename-"));
+    try {
+      const git = (...args: string[]) => execFileAsync("git", args, { cwd: repoDir });
+      await git("init");
+      await git("config", "user.email", "test@example.com");
+      await git("config", "user.name", "Test User");
+      await writeFile(path.join(repoDir, "old.ts"), "export const a = 1;\n", "utf-8");
+      await git("add", "old.ts");
+      await git("commit", "-m", "initial");
+      await git("mv", "old.ts", "new.ts");
+
+      const doc = JSON.parse(
+        await callTool("create_mindmap", {
+          title: "Git Rename Map",
+          initialPlan: [{ label: "Rename module", status: "in_progress" }],
+        }),
+      ) as MindmapDocument;
+      const synced = JSON.parse(
+        await callTool("sync_git_status", { mindmapId: doc.id, workspacePath: repoDir }),
+      ) as MindmapDocument;
+
+      const file = synced.nodes[synced.nodes.root.children[0]].files?.[0];
+      assert.equal(file?.path, "new.ts");
+      assert.equal(file?.action, "rename");
+      assert.equal(file?.previousPath, "old.ts");
+    } finally {
+      await rm(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("maps HLD mental model concepts and directed flow links via map_architecture and link_nodes", async () => {
     const doc = JSON.parse(
       await callTool("create_mindmap", { title: "Mental Model Test" }),

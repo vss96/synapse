@@ -24,8 +24,13 @@ Instead of only explaining architecture in long walls of text, call `map_archite
 - Connect nodes with `links` (`from`, `to`, `label`, `style`: `"solid" | "dashed" | "animated"`) to show control/data flow (e.g., `"routes JSON-RPC to"`, `"streams SSE to"`, `"mutates"`).
 
 ## 3. Log Touched Files & Code (`log_file_touch` / `sync_git_status`)
-Whenever you read, create, modify, or delete an important file:
-- Call `log_file_touch` (`mindmapId`, `path`, `action`, `lines`, `symbols`, `summary`).
+Whenever you read, create, modify, rename, or delete an important file:
+- Call `log_file_touch` (`mindmapId`, `path`, `action`, `previousPath` for renames, `lines`, `summary`).
+- Include `changes` so the user can follow *what* is changing, one entry per symbol:
+  - `{ kind: "add", symbol: "isExpired", detail: "new helper for TTL check" }`
+  - `{ kind: "fix", symbol: "validateToken", detail: "compare in UTC" }`
+  - `{ kind: "rename", previousSymbol: "checkAuth", symbol: "requireAuth" }`
+  - `{ kind: "refactor" | "modify" | "remove" | "test", symbol: ... }`
 
 ## 4. Advance Plan Status (`update_plan_status`)
 As you complete each step and move to the next, call `update_plan_status` (`mindmapId`, `nodeId`, `status: "completed"`, `nextNodeId`).

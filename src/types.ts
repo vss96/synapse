@@ -38,7 +38,24 @@ export interface MindmapLink {
 }
 
 /** Action performed on a file. */
-export type FileAction = "read" | "create" | "modify" | "delete";
+export type FileAction = "read" | "create" | "modify" | "delete" | "rename";
+
+export const FILE_ACTIONS: FileAction[] = ["read", "create", "modify", "delete", "rename"];
+
+/** What kind of change was made to a symbol inside a file. */
+export const CHANGE_KINDS = ["add", "modify", "fix", "refactor", "rename", "remove", "test"] as const;
+export type ChangeKind = (typeof CHANGE_KINDS)[number];
+
+/** A single symbol-level change inside a file (e.g. "fix validateToken", "rename foo → bar"). */
+export interface CodeChange {
+  kind: ChangeKind;
+  /** Function, class, type, test name, etc. For renames, the new name. */
+  symbol: string;
+  /** Previous name when kind is "rename". */
+  previousSymbol?: string;
+  /** Short description of what changed and why. */
+  detail?: string;
+}
 
 /** Metadata for a file or code region touched by the agent. */
 export interface FileTouch {
@@ -46,10 +63,14 @@ export interface FileTouch {
   path: string;
   /** Type of action performed on the file. */
   action?: FileAction;
+  /** Previous file path when action is "rename". */
+  previousPath?: string;
   /** Optional line range, e.g. "12-48". */
   lines?: string;
   /** Optional code symbols touched (functions, classes, types). */
   symbols?: string[];
+  /** Symbol-level changes made in this file. */
+  changes?: CodeChange[];
   /** Brief description of what was changed or why the file was touched. */
   summary?: string;
   /** ISO timestamp when this file touch was recorded. */
@@ -152,8 +173,10 @@ export interface LogFileTouchInput {
   /** File path (relative to workspace or absolute). */
   path: string;
   action?: FileAction;
+  previousPath?: string;
   lines?: string;
   symbols?: string[];
+  changes?: CodeChange[];
   summary?: string;
   /** If true, also creates a dedicated child node for this file under the target node. */
   createChildNode?: boolean;

@@ -154,21 +154,6 @@
     align-items: center;
   }
 
-  select {
-    padding: 5px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 12.5px;
-    background: #fff;
-    min-width: 220px;
-    color: var(--text);
-  }
-
-  select:focus {
-    outline: none;
-    border-color: var(--blue);
-  }
-
   button {
     background: var(--blue);
     color: #fff;
@@ -201,6 +186,117 @@
     overflow: hidden;
     position: relative;
   }
+
+  /* ── Sessions (left) ── */
+  #sessions {
+    width: 260px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  body.sessions-collapsed #sessions { display: none; }
+
+  .sessions-head {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sessions-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+
+  .sessions-head-row kbd {
+    font-family: inherit;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  #session-search {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+
+  #session-search:focus { outline: none; border-color: var(--blue); }
+
+  #session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px;
+  }
+
+  .session-item {
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    margin-bottom: 4px;
+  }
+
+  .session-item:hover { background: #f5f5f7; }
+
+  .session-item.active {
+    background: #eef4ff;
+    border-color: #bfd7ff;
+  }
+
+  .session-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .session-live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #059669;
+    flex-shrink: 0;
+    animation: pulse 1.8s infinite;
+  }
+
+  .session-sub, .session-task {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .session-task { color: #1d4ed8; }
+
+  .session-progress {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 5px;
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+
+  .session-progress .progress-bar-wrap { width: 60px; height: 5px; }
 
   #viewport {
     flex: 1;
@@ -550,6 +646,66 @@
   .action-badge.modify { background: #dbeafe; color: #1d4ed8; }
   .action-badge.read { background: #f3f4f6; color: #4b5563; }
   .action-badge.delete { background: #fee2e2; color: #b91c1c; }
+  .action-badge.rename { background: #ccfbf1; color: #0f766e; }
+
+  /* ── Symbol-level change kinds ── */
+  .kind-add { --kind: #15803d; --kind-bg: #dcfce7; }
+  .kind-modify { --kind: #1d4ed8; --kind-bg: #dbeafe; }
+  .kind-fix { --kind: #c2410c; --kind-bg: #ffedd5; }
+  .kind-refactor { --kind: #7c3aed; --kind-bg: #ede9fe; }
+  .kind-rename { --kind: #0f766e; --kind-bg: #ccfbf1; }
+  .kind-remove { --kind: #b91c1c; --kind-bg: #fee2e2; }
+  .kind-test { --kind: #0369a1; --kind-bg: #e0f2fe; }
+
+  .kind-badge {
+    display: inline-block;
+    min-width: 66px;
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    color: var(--kind);
+    background: var(--kind-bg);
+    flex-shrink: 0;
+  }
+
+  .kind-tally { font-weight: 700; color: var(--kind); margin-right: 6px; }
+
+  .change-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+
+  .change-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 11.5px;
+    line-height: 1.35;
+  }
+
+  .change-row code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    word-break: break-all;
+  }
+
+  .change-detail { color: var(--muted); }
+
+  .kind-filters { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+
+  .kind-filter {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--kind, var(--text));
+  }
+
+  .kind-filter:hover { background: var(--kind-bg, #f5f5f7); }
+  .kind-filter.active { background: var(--kind-bg, #eef4ff); border-color: var(--kind, var(--blue)); }
+
+  .file-item.read-only { padding: 6px 10px; }
 
   .file-summary {
     font-size: 12px;
@@ -581,8 +737,7 @@
   .controls {
     position: absolute;
     bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
+    right: 16px;
     display: flex;
     gap: 6px;
     background: #fff;
@@ -638,6 +793,7 @@
 </head>
 <body>
 <header>
+  <button id="sessions-toggle" class="secondary" title="Show/hide sessions">☰</button>
   <h1>Synapse</h1>
   <span id="live-indicator" class="live-pill">
     <span class="live-dot"></span>
@@ -658,9 +814,6 @@
   </div>
 
   <div id="toolbar">
-    <select id="mindmap-select">
-      <option value="">— select a mindmap —</option>
-    </select>
     <button id="sync-git-btn" class="secondary" title="Sync uncommitted git status & diff into current mindmap">⎇ Sync Git</button>
     <button id="refresh-btn" class="secondary">↻ Refresh</button>
     <button id="upload-btn" class="secondary">📁 Open</button>
@@ -669,6 +822,17 @@
 </header>
 
 <div class="workspace">
+  <aside id="sessions">
+    <div class="sessions-head">
+      <div class="sessions-head-row">
+        <span id="sessions-count">Sessions</span>
+        <kbd title="Switch session">⌥↑ / ⌥↓</kbd>
+      </div>
+      <input id="session-search" type="search" placeholder="Filter sessions…">
+    </div>
+    <div id="session-list"></div>
+  </aside>
+
   <div id="viewport">
     <svg id="svg"></svg>
     <div id="empty-state" class="empty-state">
@@ -683,6 +847,7 @@
       <div class="legend-item"><span class="legend-swatch" style="background:#f5f3ff;border:1.5px solid #7c3aed"></span> ⚖️ Decision</div>
       <div class="legend-item"><span class="legend-swatch" style="background:#fffbeb;border:1.5px dashed #d97706"></span> 💡 Hypothesis</div>
       <div class="legend-item"><span class="legend-swatch" style="background:#fff1f2;border:1.5px solid #e11d48"></span> ⚠️ Risk</div>
+      <div class="legend-item" id="legend-kinds"></div>
     </div>
     <div class="controls">
       <button id="zoom-out" class="secondary">−</button>
@@ -694,7 +859,7 @@
   <aside id="sidebar">
     <div class="sidebar-tabs">
       <button class="sidebar-tab active" data-tab="inspector">Inspector</button>
-      <button class="sidebar-tab" data-tab="files" id="tab-files-btn">Files (0)</button>
+      <button class="sidebar-tab" data-tab="files" id="tab-files-btn">Changes (0)</button>
       <button class="sidebar-tab" data-tab="activity">Activity</button>
     </div>
     <div class="sidebar-content" id="sidebar-content"></div>
@@ -736,11 +901,90 @@ const TYPE_COLORS = {
 
 const HLD_NODE_TYPES = new Set(["component", "data_flow", "hypothesis", "decision", "risk"]);
 
-let currentId = "";
+// Symbol-level change kinds (order = display order). Colors mirror the .kind-* CSS classes.
+const CHANGE_KINDS = {
+  add: { glyph: "+", label: "Added", color: "#15803d" },
+  modify: { glyph: "~", label: "Modified", color: "#1d4ed8" },
+  fix: { glyph: "✱", label: "Fixed", color: "#c2410c" },
+  refactor: { glyph: "⟲", label: "Refactored", color: "#7c3aed" },
+  rename: { glyph: "↦", label: "Renamed", color: "#0f766e" },
+  remove: { glyph: "−", label: "Removed", color: "#b91c1c" },
+  test: { glyph: "✓", label: "Tested", color: "#0369a1" },
+};
+
+const ACTION_COLORS = {
+  read: "#9ca3af",
+  create: "#15803d",
+  modify: "#1d4ed8",
+  delete: "#b91c1c",
+  rename: "#0f766e",
+};
+
+let currentId = decodeURIComponent(location.hash.slice(1));
 let selectedNodeId = "root";
 let highlightedFilePath = null;
+let changeKindFilter = null;
 let activeTab = "inspector";
 let viewMode = "all"; // "all" | "plan" | "hld"
+let sessions = [];
+let sessionQuery = "";
+
+function kindOf(change) {
+  return CHANGE_KINDS[change.kind] ? change.kind : "modify";
+}
+
+function nodeChanges(node) {
+  return (node.files || []).flatMap((f) => f.changes || []);
+}
+
+/** [[kind, count], ...] in display order, non-zero only. */
+function tallyChanges(changes) {
+  const counts = {};
+  for (const c of changes) counts[kindOf(c)] = (counts[kindOf(c)] || 0) + 1;
+  return Object.keys(CHANGE_KINDS).filter((k) => counts[k]).map((k) => [k, counts[k]]);
+}
+
+function tallySvg(changes) {
+  return tallyChanges(changes)
+    .map(([k, n]) => `<tspan fill="${CHANGE_KINDS[k].color}" font-weight="700">${CHANGE_KINDS[k].glyph}${n} </tspan>`)
+    .join("");
+}
+
+function tallyHtml(changes) {
+  return tallyChanges(changes)
+    .map(([k, n]) => `<span class="kind-tally kind-${k}" title="${CHANGE_KINDS[k].label}">${CHANGE_KINDS[k].glyph}${n}</span>`)
+    .join("");
+}
+
+function changeRowHtml(c, via) {
+  const k = kindOf(c);
+  const name = k === "rename" && c.previousSymbol ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
+  return `
+    <div class="change-row kind-${k}">
+      <span class="kind-badge">${CHANGE_KINDS[k].glyph} ${escXml(c.kind)}</span>
+      <span><code>${escXml(name)}</code>${c.detail ? ` <span class="change-detail">— ${escXml(c.detail)}</span>` : ""}${via ? ` <span class="change-detail">(${escXml(via)})</span>` : ""}</span>
+    </div>`;
+}
+
+function filePathHtml(f) {
+  const from = f.action === "rename" && f.previousPath ? `${escXml(f.previousPath)} → ` : "";
+  return `${from}${escXml(f.path)}${f.lines ? `:${escXml(f.lines)}` : ""}`;
+}
+
+function fileItemHtml(f, { changes = f.changes || [], meta = "" } = {}) {
+  const action = f.action || "modify";
+  return `
+    <div class="file-item ${highlightedFilePath === f.path ? "active-highlight" : ""}" data-file-path="${escXml(f.path)}">
+      <div class="file-header">
+        <span class="action-badge ${escXml(action)}">${escXml(action)}</span>
+        <span>${filePathHtml(f)}</span>
+      </div>
+      ${f.summary ? `<div class="file-summary">${escXml(f.summary)}</div>` : ""}
+      ${changes.length ? `<div class="change-list">${changes.map((c) => changeRowHtml(c, c.via)).join("")}</div>` : ""}
+      ${!changes.length && f.symbols && f.symbols.length ? `<div class="file-meta">Symbols: <code>${escXml(f.symbols.join(", "))}</code></div>` : ""}
+      ${meta}
+    </div>`;
+}
 
 function isHldBranchNode(doc, nodeId) {
   let cur = doc.nodes[nodeId];
@@ -768,6 +1012,7 @@ function getNodeSize(node) {
   let h = 44;
   if (hasStatusOrType) h += 16;
   if (hasNotes) h += 16;
+  if (nodeChanges(node).length > 0) h += 16;
   if (fileCount > 0) h += Math.min(fileCount, 2) * 20 + 6;
   return { w, h };
 }
@@ -919,8 +1164,8 @@ function render(doc) {
     if (node.status && node.status !== "none") classes.push(`status-${node.status}`);
     if (id === selectedNodeId) classes.push("selected");
     if (
-      highlightedFilePath &&
-      (node.files || []).some((f) => f.path === highlightedFilePath)
+      (highlightedFilePath && (node.files || []).some((f) => f.path === highlightedFilePath)) ||
+      (changeKindFilter && nodeChanges(node).some((c) => kindOf(c) === changeKindFilter))
     ) {
       classes.push("file-highlighted");
     }
@@ -948,17 +1193,27 @@ function render(doc) {
       innerContent += `<text class="node-meta-text" x="${px + 12}" y="${cursorY}">💬 ${escXml(truncate(node.notes, 32))}</text>`;
     }
 
-    // File chips (up to 2 shown directly on the node card)
-    const files = node.files || [];
+    // Change tally for everything this node touched (e.g. "+2 ✱1 ✓3")
+    const allNodeChanges = nodeChanges(node);
+    if (allNodeChanges.length > 0) {
+      cursorY += 16;
+      innerContent += `<text class="node-status-pill" x="${px + 12}" y="${cursorY}">${tallySvg(allNodeChanges)}</text>`;
+    }
+
+    // File chips (up to 2 shown directly on the node card), most recent first
+    const files = [...(node.files || [])].sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
     const visibleFiles = files.slice(0, 2);
     for (let i = 0; i < visibleFiles.length; i++) {
       cursorY += 20;
       const f = visibleFiles[i];
-      const chipText = `${f.action ? f.action[0].toUpperCase() + ":" : ""}${f.path.split("/").pop()}${f.lines ? ":" + f.lines : ""}`;
-      const extraCount = i === 1 && files.length > 2 ? ` (+${files.length - 2})` : "";
+      const action = f.action || "modify";
+      const name = f.path.split("/").pop();
+      const shownName = action === "rename" && f.previousPath ? `${f.previousPath.split("/").pop()}→${name}` : name;
+      const extraCount = i === 1 && files.length > 2 ? ` +${files.length - 2}` : "";
+      const tallyLen = tallyChanges(f.changes || []).reduce((n, [, c]) => n + String(c).length + 2, 0);
       innerContent += `
-        <rect class="node-file-chip" x="${px + 10}" y="${cursorY - 12}" width="${p.w - 20}" height="16"/>
-        <text class="node-file-text" x="${px + 15}" y="${cursorY - 1}">📄 ${escXml(truncate(chipText + extraCount, 30))}</text>
+        <rect class="node-file-chip" style="stroke:${ACTION_COLORS[action] || ACTION_COLORS.modify}" x="${px + 10}" y="${cursorY - 12}" width="${p.w - 20}" height="16"/>
+        <text class="node-file-text" x="${px + 15}" y="${cursorY - 1}"><tspan fill="${ACTION_COLORS[action] || ACTION_COLORS.modify}" font-weight="700">${escXml(action[0].toUpperCase())}</tspan> ${escXml(truncate(shownName + extraCount, Math.max(10, 31 - tallyLen)))} ${tallySvg(f.changes || [])}</text>
       `;
     }
 
@@ -1051,6 +1306,7 @@ function render(doc) {
       e.stopPropagation();
       selectedNodeId = el.dataset.nodeId;
       activeTab = "inspector";
+      changeKindFilter = null;
       updateTabUI();
       render(window._mindmapDoc);
     });
@@ -1067,24 +1323,27 @@ function collectStats(doc) {
   const completed = tasks.filter((n) => n.status === "completed");
   const inProgress = tasks.filter((n) => n.status === "in_progress");
 
+  // Aggregate per path across nodes; the most recent touch decides action/summary,
+  // symbol-level changes from every node are kept (tagged with the node they came from).
   const fileMap = new Map();
   for (const n of Object.values(doc.nodes)) {
     for (const f of n.files || []) {
+      const changes = (f.changes || []).map((c) => ({ ...c, via: n.label }));
       const existing = fileMap.get(f.path);
-      if (existing) {
-        if (!existing.nodes.some((x) => x.id === n.id)) existing.nodes.push(n);
-        if (f.summary) existing.summary = f.summary;
-        if (f.lines) existing.lines = f.lines;
-        if (f.action) existing.action = f.action;
-        if (f.symbols) existing.symbols = f.symbols;
-      } else {
-        fileMap.set(f.path, {
-          path: f.path,
-          action: f.action || "modify",
-          lines: f.lines,
-          symbols: f.symbols || [],
-          summary: f.summary,
-          nodes: [n],
+      if (!existing) {
+        fileMap.set(f.path, { ...f, action: f.action || "modify", changes, nodes: [n] });
+        continue;
+      }
+      if (!existing.nodes.some((x) => x.id === n.id)) existing.nodes.push(n);
+      existing.changes.push(...changes);
+      if ((f.timestamp || "") >= (existing.timestamp || "")) {
+        Object.assign(existing, {
+          action: f.action || existing.action,
+          timestamp: f.timestamp,
+          previousPath: f.previousPath ?? existing.previousPath,
+          summary: f.summary ?? existing.summary,
+          lines: f.lines ?? existing.lines,
+          symbols: f.symbols ?? existing.symbols,
         });
       }
     }
@@ -1100,16 +1359,17 @@ function updateHeaderProgress(doc) {
 
   if (!doc || !doc.nodes) {
     wrap.style.display = "none";
-    filesTabBtn.textContent = "Files (0)";
+    filesTabBtn.textContent = "Changes (0)";
     return;
   }
 
   const { tasks, completed, fileMap } = collectStats(doc);
+  const changedFiles = [...fileMap.values()].filter((f) => f.action !== "read").length;
   wrap.style.display = "flex";
   const pct = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
   fill.style.width = `${pct}%`;
   txt.textContent = `${completed.length}/${tasks.length} tasks (${pct}%) · ${fileMap.size} files`;
-  filesTabBtn.textContent = `Files (${fileMap.size})`;
+  filesTabBtn.textContent = `Changes (${changedFiles})`;
 }
 
 function renderSidebar(doc) {
@@ -1150,24 +1410,11 @@ function renderSidebar(doc) {
       `;
     }
 
-    let filesHtml = "";
-    if (files.length === 0) {
-      filesHtml = `<div style="color:var(--muted);font-size:12px;">No files logged on this node yet.</div>`;
-    } else {
-      filesHtml = files
-        .map(
-          (f) => `
-        <div class="file-item ${highlightedFilePath === f.path ? "active-highlight" : ""}" data-file-path="${escXml(f.path)}">
-          <div class="file-header">
-            <span class="action-badge ${escXml(f.action || "modify")}">${escXml(f.action || "modify")}</span>
-            <span>${escXml(f.path)}${f.lines ? `:${escXml(f.lines)}` : ""}</span>
-          </div>
-          ${f.symbols && f.symbols.length ? `<div class="file-meta">Symbols: <code>${escXml(f.symbols.join(", "))}</code></div>` : ""}
-          ${f.summary ? `<div class="file-summary">${escXml(f.summary)}</div>` : ""}
-        </div>`
-        )
-        .join("");
-    }
+    const filesHtml =
+      files.length === 0
+        ? `<div style="color:var(--muted);font-size:12px;">No files logged on this node yet.</div>`
+        : files.map((f) => fileItemHtml(f)).join("");
+    const nodeTally = tallyHtml(nodeChanges(node));
 
     container.innerHTML = `
       <div class="inspector-card">
@@ -1188,7 +1435,7 @@ function renderSidebar(doc) {
 
       ${linksHtml}
 
-      <div class="section-title">Touched Files on Node (${files.length})</div>
+      <div class="section-title">Files & Changes on Node (${files.length}) ${nodeTally}</div>
       ${filesHtml}
     `;
 
@@ -1205,26 +1452,58 @@ function renderSidebar(doc) {
       return;
     }
 
-    const items = Array.from(fileMap.values())
+    const all = [...fileMap.values()].sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+    const changed = all.filter((f) => f.action !== "read");
+    const readOnly = all.filter((f) => f.action === "read");
+    const allChanges = changed.flatMap((f) => f.changes);
+
+    const filterChips = [
+      `<button class="kind-filter ${changeKindFilter ? "" : "active"}" data-kind="">All ${allChanges.length}</button>`,
+      ...tallyChanges(allChanges).map(
+        ([k, n]) =>
+          `<button class="kind-filter kind-${k} ${changeKindFilter === k ? "active" : ""}" data-kind="${k}">${CHANGE_KINDS[k].glyph} ${CHANGE_KINDS[k].label} ${n}</button>`
+      ),
+    ].join("");
+
+    const visible = changeKindFilter
+      ? changed
+          .map((f) => ({ f, changes: f.changes.filter((c) => kindOf(c) === changeKindFilter) }))
+          .filter((x) => x.changes.length > 0)
+      : changed.map((f) => ({ f, changes: f.changes }));
+
+    const changedHtml = visible.length
+      ? visible
+          .map(({ f, changes }) =>
+            fileItemHtml(f, {
+              changes,
+              meta: `<div class="file-meta">via ${f.nodes.map((n) => `<b>${escXml(n.label)}</b>`).join(", ")}</div>`,
+            })
+          )
+          .join("")
+      : `<div style="color:var(--muted);font-size:12px;">No matching changes.</div>`;
+
+    const readHtml = readOnly
       .map(
-        (info) => `
-      <div class="file-item ${highlightedFilePath === info.path ? "active-highlight" : ""}" data-file-path="${escXml(info.path)}">
-        <div class="file-header">
-          <span class="action-badge ${escXml(info.action)}">${escXml(info.action)}</span>
-          <span>${escXml(info.path)}${info.lines ? `:${escXml(info.lines)}` : ""}</span>
-        </div>
-        ${info.summary ? `<div class="file-summary">${escXml(info.summary)}</div>` : ""}
-        <div class="file-meta">Referenced in: ${info.nodes.map((n) => `<b>${escXml(n.label)}</b>`).join(", ")}</div>
-      </div>`
+        (f) => `
+        <div class="file-item read-only ${highlightedFilePath === f.path ? "active-highlight" : ""}" data-file-path="${escXml(f.path)}">
+          <div class="file-header"><span class="action-badge read">read</span><span>${filePathHtml(f)}</span></div>
+        </div>`
       )
       .join("");
 
     container.innerHTML = `
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">
-        Click a file to highlight both the <b>Plan Tasks</b> and <b>HLD Components</b> that touch it.
-      </div>
-      ${items}
+      ${allChanges.length ? `<div class="kind-filters">${filterChips}</div>` : ""}
+      <div class="section-title">Changed Files (${changed.length}) · newest first</div>
+      ${changedHtml}
+      ${readOnly.length && !changeKindFilter ? `<div class="section-title">Read for Context (${readOnly.length})</div>${readHtml}` : ""}
     `;
+
+    container.querySelectorAll(".kind-filter").forEach((el) => {
+      el.addEventListener("click", () => {
+        changeKindFilter = el.dataset.kind || null;
+        render(window._mindmapDoc);
+      });
+    });
   } else if (activeTab === "activity") {
     const log = doc.activityLog || [];
     if (log.length === 0) {
@@ -1260,8 +1539,9 @@ function updateTabUI() {
 document.querySelectorAll(".sidebar-tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     activeTab = btn.dataset.tab;
+    if (activeTab !== "files") changeKindFilter = null;
     updateTabUI();
-    renderSidebar(window._mindmapDoc);
+    render(window._mindmapDoc);
   });
 });
 
@@ -1332,45 +1612,126 @@ async function fetchMindmapById(id) {
   const res = await fetch(`/data/${encodeURIComponent(filename)}`, { cache: "no-store" });
   if (res.ok) {
     const doc = await res.json();
-    loadMindmap(doc);
+    if (id === currentId) loadMindmap(doc); // ignore responses for a session we already switched away from
   }
 }
 
-async function refreshFileList(autoSelectLatest = false) {
-  const select = document.getElementById("mindmap-select");
+// ── Sessions sidebar ────────────────────────────────────────────
+const LIVE_WINDOW_MS = 2 * 60 * 1000;
+
+function timeAgo(iso) {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (!iso || Number.isNaN(s)) return "";
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function filteredSessions() {
+  const q = sessionQuery.trim().toLowerCase();
+  if (!q) return sessions;
+  return sessions.filter((s) => `${s.title} ${s.workspacePath || ""} ${s.activeTask || ""}`.toLowerCase().includes(q));
+}
+
+function renderSessions() {
+  const list = document.getElementById("session-list");
+  const visible = filteredSessions();
+  document.getElementById("sessions-count").textContent = `Sessions (${sessions.length})`;
+
+  if (visible.length === 0) {
+    list.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px;">${sessions.length ? "No matching sessions." : "No sessions yet."}</div>`;
+    return;
+  }
+
+  list.innerHTML = visible
+    .map((s) => {
+      const pct = s.totalTasks > 0 ? Math.round((s.completedTasks / s.totalTasks) * 100) : 0;
+      const live = Date.now() - new Date(s.updatedAt).getTime() < LIVE_WINDOW_MS;
+      const workspace = s.workspacePath ? s.workspacePath.split("/").filter(Boolean).pop() : "";
+      return `
+        <div class="session-item ${s.id === currentId ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
+          <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}${escXml(s.title)}</div>
+          <div class="session-sub">${[workspace, timeAgo(s.updatedAt)].filter(Boolean).map(escXml).join(" · ")}</div>
+          ${s.activeTask ? `<div class="session-task">◐ ${escXml(s.activeTask)}</div>` : ""}
+          <div class="session-progress">
+            <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+            <span>${s.completedTasks}/${s.totalTasks} tasks · ${s.fileCount} files</span>
+          </div>
+        </div>`;
+    })
+    .join("");
+
+  list.querySelectorAll(".session-item").forEach((el) => {
+    el.addEventListener("click", () => selectSession(el.dataset.sessionId));
+  });
+}
+
+async function selectSession(id) {
+  if (!id || id === currentId) return;
+  currentId = id;
+  history.replaceState(null, "", `#${encodeURIComponent(id)}`);
+  selectedNodeId = "root";
+  highlightedFilePath = null;
+  changeKindFilter = null;
+  scale = 1; tx = 0; ty = 0;
+  renderSessions();
+  document.querySelector(".session-item.active")?.scrollIntoView({ block: "nearest" });
+  await fetchMindmapById(id);
+}
+
+async function refreshSessions() {
   try {
     const res = await fetch("/api/mindmaps", { cache: "no-store" });
-    if (!res.ok) throw new Error("Fallback to /data/");
-    const items = await res.json();
-
-    select.innerHTML = '<option value="">— select a mindmap —</option>';
-    for (const item of items) {
-      const opt = document.createElement("option");
-      opt.value = item.id;
-      opt.textContent = `${item.title} (${item.completedTasks}/${item.totalTasks} tasks · ${item.fileCount} files)`;
-      select.appendChild(opt);
-    }
-
-    if (autoSelectLatest && items.length > 0 && !currentId) {
-      currentId = items[0].id;
-    }
-    if (currentId) {
-      select.value = currentId;
-      await fetchMindmapById(currentId);
-    }
+    if (!res.ok) return;
+    sessions = await res.json();
+    renderSessions();
   } catch {
-    // Fallback if opened without /api/mindmaps
+    // Viewer opened without the API server; sessions list stays empty
   }
 }
 
-document.getElementById("mindmap-select").onchange = async (e) => {
-  const val = e.target.value;
-  if (!val) return;
-  currentId = val;
-  await fetchMindmapById(val);
+async function init() {
+  await refreshSessions();
+  if (currentId && sessions.some((s) => s.id === currentId)) {
+    await fetchMindmapById(currentId);
+  } else {
+    currentId = "";
+    if (sessions.length > 0) await selectSession(sessions[0].id);
+  }
+}
+
+document.getElementById("session-search").addEventListener("input", (e) => {
+  sessionQuery = e.target.value;
+  renderSessions();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+  const visible = filteredSessions();
+  if (visible.length === 0) return;
+  e.preventDefault();
+  const idx = visible.findIndex((s) => s.id === currentId);
+  const next = e.key === "ArrowDown" ? Math.min(visible.length - 1, idx + 1) : Math.max(0, idx - 1);
+  selectSession(visible[next].id);
+});
+
+if (localStorage.getItem("synapse.sessionsCollapsed") === "1") document.body.classList.add("sessions-collapsed");
+document.getElementById("sessions-toggle").onclick = () => {
+  const collapsed = document.body.classList.toggle("sessions-collapsed");
+  localStorage.setItem("synapse.sessionsCollapsed", collapsed ? "1" : "0");
 };
 
-document.getElementById("refresh-btn").onclick = () => refreshFileList(false);
+setInterval(renderSessions, 30000); // keep "x m ago" and live dots fresh
+
+document.getElementById("legend-kinds").innerHTML = Object.entries(CHANGE_KINDS)
+  .map(([k, m]) => `<span class="kind-tally kind-${k}" title="${m.label}">${m.glyph} ${k}</span>`)
+  .join("");
+
+document.getElementById("refresh-btn").onclick = async () => {
+  await refreshSessions();
+  await fetchMindmapById(currentId);
+};
 
 document.getElementById("sync-git-btn").onclick = async () => {
   if (!currentId) {
@@ -1400,6 +1761,7 @@ document.getElementById("file-upload").onchange = async (e) => {
   const text = await file.text();
   try {
     loadMindmap(JSON.parse(text));
+    renderSessions();
   } catch (err) {
     alert("Invalid JSON: " + err.message);
   }
@@ -1421,8 +1783,10 @@ function connectSSE() {
     try {
       const payload = JSON.parse(event.data);
       if (payload.type === "mindmap_updated") {
-        currentId = payload.id || currentId;
-        await refreshFileList(false);
+        // Refresh the session list, but only reload the canvas for the session being viewed.
+        await refreshSessions();
+        if (!currentId && payload.id) await selectSession(payload.id);
+        else if (payload.id === currentId) await fetchMindmapById(currentId);
       }
     } catch {
       // ignore malformed event
@@ -1435,7 +1799,7 @@ function connectSSE() {
   };
 }
 
-refreshFileList(true);
+init();
 connectSSE();
 </script>
 </body>

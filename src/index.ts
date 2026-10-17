@@ -14,7 +14,7 @@ const AGENT_WORKFLOW_INSTRUCTIONS = `You have access to the Synapse MCP server f
 Whenever you work on a multi-step coding task or explore a codebase:
 1. PLAN: Start by calling \`create_mindmap\` with \`title\`, \`workspacePath\` (the project root), and \`initialPlan\` (your planned steps, with the first step set to \`status: "in_progress"\` and remaining steps set to \`status: "planned"\`).
 2. MAP CODE MENTAL MODEL (HLD): Use \`map_architecture\` (and \`link_nodes\`) to visually map how you understand the code—create \`component\`, \`data_flow\`, \`hypothesis\`, \`decision\`, and \`risk\` nodes and connect them with labeled flow links (e.g., "calls", "streams SSE to", "mutates", "depends on").
-3. TRACK CODE: As you inspect or edit files, call \`log_file_touch\` with \`path\`, \`action\` ("read", "create", "modify", "delete"), optional \`lines\` (e.g. "20-85"), \`symbols\`, and a brief \`summary\`.
+3. TRACK CODE: As you inspect or edit files, call \`log_file_touch\` with \`path\`, \`action\` ("read", "create", "modify", "delete", "rename" + \`previousPath\`), optional \`lines\` (e.g. "20-85"), a brief \`summary\`, and \`changes\` describing each symbol-level edit: \`{ kind: "add" | "modify" | "fix" | "refactor" | "rename" | "remove" | "test", symbol, previousSymbol?, detail? }\` — e.g. a bug fix might log \`fix validateToken\`, \`add isExpired\`, \`rename checkAuth → requireAuth\`, \`test "rejects expired tokens"\`.
 4. UPDATE PROGRESS: When finishing a step and moving to the next, call \`update_plan_status\` with \`nodeId\`, \`status: "completed"\`, and \`nextNodeId\` set to the next step's ID.`;
 
 const server = new Server(
