@@ -98,6 +98,21 @@ export interface MindmapNode {
   updatedAt?: string;
 }
 
+/** Node types that describe the agent's mental model of the code (HLD) rather than the plan. */
+export const HLD_NODE_TYPES: ReadonlySet<NodeType> = new Set<NodeType>([
+  "component",
+  "data_flow",
+  "hypothesis",
+  "decision",
+  "risk",
+]);
+
+/** Plan tasks are every node except the root, HLD concepts, files and notes. */
+export function isPlanTask(node: MindmapNode): boolean {
+  const type = node.type ?? "task";
+  return node.id !== "root" && type !== "root" && type !== "file" && type !== "note" && !HLD_NODE_TYPES.has(type);
+}
+
 /** The full mindmap document stored on disk. */
 export interface MindmapDocument {
   id: string;
@@ -110,6 +125,21 @@ export interface MindmapDocument {
   /** Directed conceptual/HLD flow links between nodes. */
   links?: MindmapLink[];
   activityLog?: ActivityEntry[];
+}
+
+/** Summary of a stored mindmap, as listed by the store and the viewer's session list. */
+export interface MindmapListItem {
+  id: string;
+  title: string;
+  updatedAt: string;
+  createdAt: string;
+  workspacePath?: string;
+  nodeCount: number;
+  completedTasks: number;
+  totalTasks: number;
+  /** Label of the most recently updated in-progress task. */
+  activeTask?: string;
+  fileCount: number;
 }
 
 /** Initial plan item when bootstrapping a mindmap. */

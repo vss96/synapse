@@ -8,7 +8,7 @@ import {
   resolveTargetNodeForFile,
   upsertNodeFileTouch,
 } from "./watcher.js";
-import { CHANGE_KINDS, FILE_ACTIONS } from "./types.js";
+import { CHANGE_KINDS, FILE_ACTIONS, HLD_NODE_TYPES, isPlanTask } from "./types.js";
 import type {
   CodeChange,
   FileTouch,
@@ -526,17 +526,13 @@ async function syncGitStatus(input: SyncGitStatusInput): Promise<MindmapDocument
 /*  get_plan_summary                                                   */
 /* ------------------------------------------------------------------ */
 
-const HLD_TYPES = new Set(["component", "data_flow", "hypothesis", "decision", "risk", "file", "note"]);
-
 async function getPlanSummary(input: { mindmapId: string }): Promise<string> {
   const doc = await store.load(input.mindmapId);
   if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
 
-  const allNodes = Object.values(doc.nodes).filter((n) => n.id !== "root");
-  const tasks = allNodes.filter((n) => !HLD_TYPES.has(n.type || "task"));
-  const hldNodes = allNodes.filter((n) =>
-    ["component", "data_flow", "hypothesis", "decision", "risk"].includes(n.type || ""),
-  );
+  const allNodes = Object.values(doc.nodes);
+  const tasks = allNodes.filter(isPlanTask);
+  const hldNodes = allNodes.filter((n) => n.type && HLD_NODE_TYPES.has(n.type));
   const completed = tasks.filter((n) => n.status === "completed");
   const inProgress = tasks.filter((n) => n.status === "in_progress");
   const blocked = tasks.filter((n) => n.status === "blocked");

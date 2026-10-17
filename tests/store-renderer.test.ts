@@ -26,6 +26,16 @@ describe("store & renderer", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("rejects mindmap ids that could escape the data directory", async () => {
+    for (const id of ["../outside", "a/b", "..", "", "x.json"]) {
+      assert.equal(store.isValidMindmapId(id), false, id);
+      assert.equal(await store.load(id), null);
+      assert.equal(await store.remove(id), false);
+    }
+    const doc = { id: "../outside", title: "x", createdAt: "", updatedAt: "", nodes: {} } as MindmapDocument;
+    await assert.rejects(store.save(doc), /Invalid mindmap id/);
+  });
+
   it("saves, loads, lists, and removes mindmap documents", async () => {
     const doc1: MindmapDocument = {
       id: "mm_test0001",

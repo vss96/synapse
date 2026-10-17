@@ -9,6 +9,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { tools } from "./tools.js";
+import { VERSION } from "./version.js";
 
 const AGENT_WORKFLOW_INSTRUCTIONS = `You have access to the Synapse MCP server for live mindmap tracking of your coding plan, touched files, and your mental model / High-Level Design (HLD) of the codebase.
 Whenever you work on a multi-step coding task or explore a codebase:
@@ -18,7 +19,7 @@ Whenever you work on a multi-step coding task or explore a codebase:
 4. UPDATE PROGRESS: When finishing a step and moving to the next, call \`update_plan_status\` with \`nodeId\`, \`status: "completed"\`, and \`nextNodeId\` set to the next step's ID.`;
 
 const server = new Server(
-  { name: "synapse", version: "1.1.0" },
+  { name: "synapse", version: VERSION },
   {
     capabilities: {
       tools: {},

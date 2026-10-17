@@ -1,9 +1,27 @@
+<p align="center"><img src="docs/public/logo.png" alt="Synapse" width="120"></p>
+
 # Synapse – Live Plan, Code & Mental Model Mindmap for Any Agent
 
-**Synapse** is an MCP server + live web viewer that lets **any coding agent** (Claude Code, Antigravity, Cursor, Claude Desktop, Windsurf, etc.) maintain a real-time visual mindmap of:
+**Synapse** is an MCP server + live web viewer that lets **any coding agent** (Claude Code, Claude Desktop, Cursor, OpenCode, Codex, Windsurf, etc.) maintain a real-time visual mindmap of:
 1. **What the plan is** (hierarchical tasks with `planned`, `in_progress`, `completed`, and `blocked` statuses)
 2. **How the agent is thinking about the code (HLD / Mental Model)** (semantic `component`, `data_flow`, `decision`, `hypothesis`, and `risk` cards connected by directed flow links)
 3. **Which files and symbols are being touched** (line ranges, symbols, diff summaries, and cross-highlighting between plan tasks and architectural components)
+
+📖 **Docs:** https://vss96.github.io/synapse/
+
+## Quick Start
+
+Requires Node ≥ 20.
+
+```bash
+# Register Synapse with the coding agents installed on this machine
+npx synapse-mindmap init
+
+# Watch your agent work (port 4040, or the next free port)
+npx synapse-mindmap viewer --open
+```
+
+`init` detects Claude Code, Claude Desktop, Cursor, OpenCode and Codex (which also covers the ChatGPT desktop app), asks before configuring each one, and backs up any config file it edits. Restart your agent afterwards. Mindmaps are stored in `~/.synapse/data` (override with `SYNAPSE_DATA_DIR`). See the [client guide](https://vss96.github.io/synapse/guide/clients) for manual setup.
 
 ---
 
@@ -31,25 +49,6 @@ Track a real-time chronological log of every plan update, HLD mapping, and file 
 
 ---
 
-## Quick Start
-
-Development uses [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`); the MCP server is built to `dist/` and runs on Node ≥ 18.
-
-```bash
-# Install, build & write claude.json
-./setup.sh
-
-# Run tests
-bun test
-
-# Rebuild dist/ after changing src/ (or keep `bun run build:watch` running)
-bun run build
-
-# Start the live web viewer (auto-updates via Server-Sent Events)
-bun run viewer
-# → http://localhost:4040
-```
-
 ## MCP Tools
 
 | Tool | Description |
@@ -71,16 +70,14 @@ bun run viewer
 
 ## Connect to Any Agent
 
-### 1. MCP Server Config (`claude.json` / `mcp_config.json`)
+### 1. MCP Server Config
+`npx synapse-mindmap init` writes this for you. To add it by hand, most clients use:
 ```json
 {
   "mcpServers": {
     "synapse": {
-      "command": "node",
-      "args": ["/Users/vss/Documents/synapse/dist/index.js"],
-      "env": {
-        "SYNAPSE_DATA_DIR": "/Users/vss/Documents/synapse/data"
-      }
+      "command": "npx",
+      "args": ["-y", "synapse-mindmap", "mcp"]
     }
   }
 }
@@ -91,3 +88,20 @@ bun run viewer
 - **Skill / Rules**:
   - For skill-supporting agents (like Antigravity / Claude): see [`.agent/skills/synapse-tracker/SKILL.md`](.agent/skills/synapse-tracker/SKILL.md).
   - For `CLAUDE.md` / `.cursorrules`: copy the snippet from [`AGENT_INSTRUCTIONS.md`](AGENT_INSTRUCTIONS.md).
+
+## Development
+
+Development uses [Bun](https://bun.sh); the published package is plain Node.js.
+
+```bash
+./setup.sh            # bun install, build, write claude.json for this checkout
+bun test              # tests
+bun run build         # tsc → dist/ (MCP server, CLI, viewer server) + bundled viewer app
+bun run dev           # MCP server from source, restarting on changes
+bun run viewer        # build, then serve the viewer against ./data
+bun run docs:dev      # docs site
+```
+
+## License
+
+[MIT](LICENSE). The logo is a public-domain NIAID illustration; see [docs/public/LOGO-CREDITS.md](docs/public/LOGO-CREDITS.md).

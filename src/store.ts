@@ -1,21 +1,30 @@
 import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import type { MindmapDocument } from "./types.js";
+import { isPlanTask, type MindmapDocument, type MindmapListItem } from "./types.js";
 
+export type { MindmapListItem };
+
+/** Where mindmaps are stored: $SYNAPSE_DATA_DIR, or ~/.synapse/data (shared by the MCP server and the viewer). */
 export function getDataDir(): string {
-  return path.resolve(process.env.SYNAPSE_DATA_DIR || "./data");
+  return path.resolve(process.env.SYNAPSE_DATA_DIR || path.join(os.homedir(), ".synapse", "data"));
 }
 
-/** Ensure the data directory exists. */
-async function ensureDir(): Promise<void> {
+export async function ensureDataDir(): Promise<string> {
   const dir = getDataDir();
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
-  }
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+const MINDMAP_ID = /^[A-Za-z0-9_-]+$/;
+
+/** Mindmap ids come from agents and HTTP requests, so they must not be able to escape the data directory. */
+export function isValidMindmapId(id: unknown): id is string {
+  return typeof id === "string" && MINDMAP_ID.test(id);
 }
 
 function filePath(id: string): string {
+  if (!isValidMindmapId(id)) throw new Error(`Invalid mindmap id: ${JSON.stringify(id)}`);
   return path.join(getDataDir(), `${id}.json`);
 }
 
@@ -38,7 +47,7 @@ export function recordActivity(
   }
 }
 
-/** Load a single mindmap by id. Returns null if not found. */
+/** Load a single mindmap by id. Returns null if not found or the id is invalid. */
 export async function load(id: string): Promise<MindmapDocument | null> {
   try {
     const raw = await readFile(filePath(id), "utf-8");
@@ -50,39 +59,44 @@ export async function load(id: string): Promise<MindmapDocument | null> {
 
 /** Persist a mindmap document. */
 export async function save(doc: MindmapDocument): Promise<void> {
-  await ensureDir();
+  const file = filePath(doc.id);
+  await ensureDataDir();
   doc.updatedAt = new Date().toISOString();
-  await writeFile(filePath(doc.id), JSON.stringify(doc, null, 2), "utf-8");
+  await writeFile(file, JSON.stringify(doc, null, 2), "utf-8");
 }
 
-export interface MindmapListItem {
-  id: string;
-  title: string;
-  updatedAt: string;
-  createdAt: string;
-  workspacePath?: string;
-  nodeCount: number;
+
+function summarize(doc: MindmapDocument): MindmapListItem {
+  const nodes = Object.values(doc.nodes || {});
+  const tasks = nodes.filter(isPlanTask);
+  const activeTask = tasks
+    .filter((n) => n.status === "in_progress")
+    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))[0];
+  const files = new Set(nodes.flatMap((n) => (n.files || []).map((f) => f.path)));
+  return {
+    id: doc.id,
+    title: doc.title || doc.id,
+    updatedAt: doc.updatedAt || doc.createdAt || "",
+    createdAt: doc.createdAt || "",
+    workspacePath: doc.workspacePath,
+    nodeCount: nodes.length,
+    completedTasks: tasks.filter((n) => n.status === "completed").length,
+    totalTasks: tasks.length,
+    activeTask: activeTask?.label,
+    fileCount: files.size,
+  };
 }
 
 /** List every stored mindmap sorted by most recently updated. */
 export async function list(): Promise<MindmapListItem[]> {
-  await ensureDir();
-  const dir = getDataDir();
+  const dir = await ensureDataDir();
   const entries = await readdir(dir, { withFileTypes: true });
   const results: MindmapListItem[] = [];
   for (const entry of entries) {
     if (!entry.name.endsWith(".json")) continue;
     try {
-      const raw = await readFile(path.join(dir, entry.name), "utf-8");
-      const doc = JSON.parse(raw) as MindmapDocument;
-      results.push({
-        id: doc.id,
-        title: doc.title,
-        updatedAt: doc.updatedAt || doc.createdAt || "",
-        createdAt: doc.createdAt || "",
-        workspacePath: doc.workspacePath,
-        nodeCount: Object.keys(doc.nodes || {}).length,
-      });
+      const doc = JSON.parse(await readFile(path.join(dir, entry.name), "utf-8")) as MindmapDocument;
+      if (isValidMindmapId(doc.id)) results.push(summarize(doc));
     } catch {
       // skip malformed files
     }

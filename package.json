@@ -1,20 +1,50 @@
 {
-  "name": "synapse",
-  "version": "1.0.0",
-  "description": "Synapse – MCP mindmap server. Any agent can create, navigate, and visualize structured thoughts.",
-  "private": true,
+  "name": "synapse-mindmap",
+  "version": "1.1.0",
+  "description": "MCP server + live viewer: a real-time mindmap of what your coding agent is planning, thinking, and changing.",
   "type": "module",
+  "license": "MIT",
+  "author": "Vikas",
+  "homepage": "https://vss96.github.io/synapse/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vss96/synapse.git"
+  },
+  "bugs": "https://github.com/vss96/synapse/issues",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mindmap",
+    "coding-agent",
+    "claude",
+    "cursor",
+    "codex",
+    "opencode"
+  ],
+  "bin": {
+    "synapse-mindmap": "dist/cli.js",
+    "synapse": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "viewer/index.html",
+    "docs/public/logo.png",
+    "docs/public/favicon.png"
+  ],
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc && tsc -p viewer && bun build viewer/app.ts --outdir dist/web",
     "build:watch": "tsc --watch",
+    "prepack": "bun run build",
     "start": "node dist/index.js",
     "dev": "bun --watch src/index.ts",
-    "viewer": "bun viewer/server.js",
+    "viewer": "bun run build && SYNAPSE_DATA_DIR=./data node dist/cli.js viewer",
     "test": "bun test",
-    "all": "bun run build && (bun run start & bun run viewer)"
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.7.0",
@@ -23,6 +53,7 @@
   "devDependencies": {
     "@types/bun": "^1.2.0",
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitepress": "^1.6.4"
   }
 }

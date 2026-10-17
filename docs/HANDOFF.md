@@ -1,5 +1,7 @@
 # Handoff: Sessions sidebar, change semantics, OpenCode MCP setup
 
+> Historical note from an earlier session. Since then Synapse became the `synapse-mindmap` npm package (`npx synapse-mindmap init` / `viewer`), the viewer server moved to `src/viewer.ts`, and the default data directory is `~/.synapse/data`. For the current workflow see [development.md](development.md).
+
 Date: 2026-10-17 · Repo: `/Users/vss/Documents/synapse` · State: **all changes uncommitted** (on top of `348639d`)
 
 ## Goals of the session
