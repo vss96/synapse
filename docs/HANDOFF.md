@@ -32,7 +32,7 @@ All three are done and verified.
 
 ### Viewer
 - `viewer/server.js`
-  - Git sync now imports `inspectGitChanges` / `resolveTargetNodeForFile` / `upsertNodeFileTouch` / `recordActivity` from `../dist/` instead of keeping its own copy of that logic. It now needs a build (see below).
+  - Git sync now imports `inspectGitChanges` / `resolveTargetNodeForFile` / `upsertNodeFileTouch` / `recordActivity` from `../src/` (the viewer runs on Bun) instead of keeping its own copy of that logic.
   - `/api/mindmaps` adds `activeTask`. Task counts now exclude HLD concept types, matching the viewer.
   - Live (SSE) updates are debounced per file. Before, a single shared timer meant concurrent writes from two sessions dropped one of the updates.
 - `viewer/index.html`
@@ -66,7 +66,7 @@ Added to the global config `~/.config/opencode/opencode.json` in the V2 format (
 
 - Backup of the original: `~/.config/opencode/opencode.json.bak-synapse`.
 - The OpenCode log confirms `mcp connected server=synapse tools=14` for `~/` and `~/Documents`.
-- The server runs from `dist/`, so **re-run `npx tsc` after changing `src/`** and restart/reconnect the server (`/mcps`). Sessions that were already running keep the old tool list.
+- The server runs from `dist/` on Node, so **run `bun run build` (or keep `bun run build:watch` running) after changing `src/`** and restart/reconnect the server (`/mcps`). Sessions that were already running keep the old tool list.
 
 ## Verification performed
 - `npm test` and `npx tsc --noEmit`.
@@ -79,7 +79,7 @@ Added to the global config `~/.config/opencode/opencode.json` in the V2 format (
 - **This session's working directory `/Users/vss/Documents/agent-mindmap` does not exist.** Synapse fails to connect for that directory only. Work from `/Users/vss/Documents/synapse` (or move the session there).
 - `opencode mcp add/list` gets killed (exit 137) when run from inside an agent session, so the config was edited by hand. Run `opencode mcp list` from a normal terminal to double-check.
 - Git only reports a rename when it is **staged** (`git mv` / `git add`). Unstaged renames still appear as delete + create. The fs watcher's auto-detected events don't detect renames either.
-- `npm run viewer` now depends on `dist/` (gitignored). `setup.sh` and the `viewer` script both build it.
+- Development uses Bun (install, `bun test`, `bun run viewer`); the MCP server itself is built with `tsc` and runs on Node. `tsconfig.json` restricts `src/` to Node types so Bun-only APIs can't slip into runtime code.
 - The viewer has no automated UI tests; it was verified manually in a headless browser only.
 - The viewer shows unknown change kinds as `modify`. The server does not validate `kind` against the enum; this matches how existing fields are handled.
 
@@ -93,6 +93,7 @@ Added to the global config `~/.config/opencode/opencode.json` in the V2 format (
 ## How to run
 ```bash
 cd /Users/vss/Documents/synapse
-npm test              # 9 tests
-npm run viewer        # builds, then http://localhost:4040
+bun test              # 9 tests
+bun run build         # dist/ for the MCP server (node dist/index.js)
+bun run viewer        # http://localhost:4040
 ```

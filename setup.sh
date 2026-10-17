@@ -6,12 +6,17 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+if ! command -v bun >/dev/null; then
+  echo "✖ Bun is required for development: curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
+fi
+
 echo "▸ Installing dependencies..."
 cd "$ROOT"
-npm install
+bun install
 
 echo "▸ Building TypeScript..."
-npx tsc
+bun run build
 
 echo "▸ Creating data directory..."
 mkdir -p "$ROOT/data"
@@ -34,9 +39,9 @@ CONF
 echo ""
 echo "✔ Synapse ready."
 echo ""
-echo "  MCP server   →  npx tsx src/index.ts        (dev)"
-echo "  MCP server   →  node dist/index.js           (prod)"
-echo "  Viewer       →  npm run viewer   (http://localhost:4040)"
+echo "  MCP server   →  bun run dev                  (dev, restarts on changes)"
+echo "  MCP server   →  node dist/index.js           (prod; rebuild with bun run build)"
+echo "  Viewer       →  bun run viewer   (http://localhost:4040)"
 echo "  Claude Code  →  use claude.json as an MCP config"
 echo ""
 echo "  Claude Desktop config:"

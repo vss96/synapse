@@ -1,4 +1,4 @@
-import { describe, it, before, after } from "node:test";
+import { describe, it, beforeAll, afterAll } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -21,13 +21,13 @@ describe("MCP tools integration", () => {
   let tmpDir: string;
   let originalDataDir: string | undefined;
 
-  before(async () => {
+  beforeAll(async () => {
     originalDataDir = process.env.SYNAPSE_DATA_DIR;
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "synapse-tools-test-"));
     process.env.SYNAPSE_DATA_DIR = tmpDir;
   });
 
-  after(async () => {
+  afterAll(async () => {
     if (originalDataDir === undefined) {
       delete process.env.SYNAPSE_DATA_DIR;
     } else {

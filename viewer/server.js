@@ -1,8 +1,8 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * HTTP + SSE server that serves the Synapse live mindmap viewer,
  * the mindmap data directory, and real-time file change events.
- * Run with: node viewer/server.js
+ * Run with: bun viewer/server.js
  */
 
 import { createServer } from "node:http";
@@ -10,8 +10,8 @@ import { readFile, writeFile, readdir, mkdir } from "node:fs/promises";
 import { existsSync, watch } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inspectGitChanges, resolveTargetNodeForFile, upsertNodeFileTouch } from "../dist/watcher.js";
-import { recordActivity } from "../dist/store.js";
+import { inspectGitChanges, resolveTargetNodeForFile, upsertNodeFileTouch } from "../src/watcher.ts";
+import { recordActivity } from "../src/store.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIEWER_DIR = __dirname;

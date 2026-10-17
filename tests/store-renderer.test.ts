@@ -1,4 +1,4 @@
-import { describe, it, before, after } from "node:test";
+import { describe, it, beforeAll, afterAll } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -11,13 +11,13 @@ describe("store & renderer", () => {
   let tmpDir: string;
   let originalDataDir: string | undefined;
 
-  before(async () => {
+  beforeAll(async () => {
     originalDataDir = process.env.SYNAPSE_DATA_DIR;
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "synapse-store-test-"));
     process.env.SYNAPSE_DATA_DIR = tmpDir;
   });
 
-  after(async () => {
+  afterAll(async () => {
     if (originalDataDir === undefined) {
       delete process.env.SYNAPSE_DATA_DIR;
     } else {

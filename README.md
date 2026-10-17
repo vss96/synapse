@@ -33,15 +33,20 @@ Track a real-time chronological log of every plan update, HLD mapping, and file 
 
 ## Quick Start
 
+Development uses [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`); the MCP server is built to `dist/` and runs on Node ≥ 18.
+
 ```bash
-# Install & build
+# Install, build & write claude.json
 ./setup.sh
 
 # Run tests
-npm test
+bun test
+
+# Rebuild dist/ after changing src/ (or keep `bun run build:watch` running)
+bun run build
 
 # Start the live web viewer (auto-updates via Server-Sent Events)
-npm run viewer
+bun run viewer
 # → http://localhost:4040
 ```
 
