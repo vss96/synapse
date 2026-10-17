@@ -81,12 +81,11 @@ Added to the global config `~/.config/opencode/opencode.json` in the V2 format (
 - Git only reports a rename when it is **staged** (`git mv` / `git add`). Unstaged renames still appear as delete + create. The fs watcher's auto-detected events don't detect renames either.
 - `npm run viewer` now depends on `dist/` (gitignored). `setup.sh` and the `viewer` script both build it.
 - The viewer has no automated UI tests; it was verified manually in a headless browser only.
-- The README screenshots (`docs/screenshots/*`) predate the sidebar and Changes tab.
 - The viewer shows unknown change kinds as `modify`. The server does not validate `kind` against the enum; this matches how existing fields are handled.
 
 ## Suggested next steps
-1. Review and commit (13 modified files + this doc).
-2. Re-take the README screenshots.
+1. ~~Review and commit~~ (done: `180ef2e`).
+2. ~~Re-take the README screenshots~~ (done: 1280×800 @2x, from a seeded temp copy of `data/`).
 3. Optional: OpenCode sends `_meta["ai.opencode/sessionID"]` on each tool call, which could auto-link a mindmap to its OpenCode session (e.g. show the session ID in the sidebar, or reuse the mindmap per session).
 4. Optional: expose `files` / `changes` on `update_node` (the type supports it but the schema doesn't advertise it; this predates this session).
 5. Optional: let the change-kind filter also apply to the Inspector, or add a session-level change tally to `/api/mindmaps` for the sidebar.
