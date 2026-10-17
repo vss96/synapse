@@ -132,7 +132,7 @@ Progress counts only plan nodes. Mental-model concepts, `file` nodes, and `note`
 
 ### Statuses
 
-`none`, `planned`, `in_progress`, `completed`, `blocked`. Plan nodes default to `planned`. Mental-model concepts and notes default to `none`.
+Only task nodes (`plan`, `task`, `code`) have a status: `planned` (the default), `in_progress`, `completed`, or `blocked`. The root, notes, file nodes and mental-model concepts have no status, so they never affect progress.
 
 ### Links
 

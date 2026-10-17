@@ -5,17 +5,46 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
-import { tools } from "../src/tools.js";
-import type { MindmapDocument } from "../src/types.js";
+import { tools, type ToolResult } from "../src/tools.js";
+import { isTask } from "../src/model/kinds.js";
+import { MindmapDocument, ROOT_ID, type FileTouch, type MindmapNode, type NodeId, type TaskNode } from "../src/model/schema.js";
 
 const execFileAsync = promisify(execFile);
 
-async function callTool(name: string, args: Record<string, unknown> = {}): Promise<string> {
+async function callTool(name: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
   const tool = tools.find((t) => t.name === name);
   assert.ok(tool, `Tool "${name}" should exist`);
-  const res = await tool.handler(args);
-  return res.content[0].text;
+  return tool.handler(args);
 }
+const textOf = (result: ToolResult) => result.content[0]?.text ?? "";
+
+/** Calls a tool that must succeed and returns its text. */
+async function ok(name: string, args: Record<string, unknown> = {}): Promise<string> {
+  const result = await callTool(name, args);
+  assert.ok(!result.isError, `${name} failed: ${textOf(result)}`);
+  return textOf(result);
+}
+/** Calls a tool that must fail and returns its error message. */
+async function fails(name: string, args: Record<string, unknown>): Promise<string> {
+  const result = await callTool(name, args);
+  assert.equal(result.isError, true, `${name} should have failed but returned: ${textOf(result).slice(0, 200)}`);
+  return textOf(result);
+}
+/** Calls a tool that returns a mindmap; the reply must be a valid document. */
+const docFrom = async (name: string, args: Record<string, unknown>) => MindmapDocument.parse(JSON.parse(await ok(name, args)));
+
+function nodeOf(doc: MindmapDocument, id: NodeId | undefined): MindmapNode {
+  const node = id && doc.nodes[id];
+  assert.ok(node, `node ${id} should exist`);
+  return node;
+}
+function taskOf(doc: MindmapDocument, id: NodeId | undefined): TaskNode {
+  const node = nodeOf(doc, id);
+  assert.ok(isTask(node), `${node.label} should be a task`);
+  return node;
+}
+const childrenOf = (doc: MindmapDocument, id: NodeId = ROOT_ID) => nodeOf(doc, id).children;
+const changesOf = (f: FileTouch | undefined) => (!f || f.action === "read" ? [] : f.changes);
 
 describe("MCP tools integration", () => {
   let tmpDir: string;
@@ -28,16 +57,13 @@ describe("MCP tools integration", () => {
   });
 
   afterAll(async () => {
-    if (originalDataDir === undefined) {
-      delete process.env.SYNAPSE_DATA_DIR;
-    } else {
-      process.env.SYNAPSE_DATA_DIR = originalDataDir;
-    }
+    if (originalDataDir === undefined) delete process.env.SYNAPSE_DATA_DIR;
+    else process.env.SYNAPSE_DATA_DIR = originalDataDir;
     await rm(tmpDir, { recursive: true, force: true });
   });
 
   it("bootstraps initialPlan, tracks file touches, transitions statuses, and generates plan summaries", async () => {
-    const raw = await callTool("create_mindmap", {
+    const doc = await docFrom("create_mindmap", {
       title: "Feature X",
       initialPlan: [
         {
@@ -46,23 +72,16 @@ describe("MCP tools integration", () => {
           notes: "Define core interfaces",
           children: [{ label: "Substep 1a: Validate types", status: "planned" }],
         },
-        {
-          label: "Step 2: Implement API",
-          status: "planned",
-        },
+        { label: "Step 2: Implement API", status: "planned" },
       ],
     });
-
-    const doc = JSON.parse(raw) as MindmapDocument;
     assert.ok(doc.id.startsWith("mm_"));
-    assert.equal(doc.nodes.root.children.length, 2);
+    const [step1Id, step2Id] = childrenOf(doc);
+    assert.equal(taskOf(doc, step1Id).status, "in_progress");
+    assert.equal(childrenOf(doc, step1Id).length, 1);
 
-    const [step1Id, step2Id] = doc.nodes.root.children;
-    assert.equal(doc.nodes[step1Id].status, "in_progress");
-    assert.equal(doc.nodes[step1Id].children.length, 1);
-
-    // Log file touch without specifying nodeId -> should attach to active in_progress node (step1Id)
-    const afterTouchRaw = await callTool("log_file_touch", {
+    // Without nodeId the touch attaches to the active in_progress task
+    const afterTouch = await docFrom("log_file_touch", {
       mindmapId: doc.id,
       path: "src/schema.ts",
       action: "create",
@@ -71,151 +90,124 @@ describe("MCP tools integration", () => {
       summary: "Created UserSchema definition",
       createChildNode: true,
     });
-    const afterTouchDoc = JSON.parse(afterTouchRaw) as MindmapDocument;
-    assert.equal(afterTouchDoc.nodes[step1Id].files?.length, 1);
-    assert.equal(afterTouchDoc.nodes[step1Id].files?.[0].path, "src/schema.ts");
-    // Also created a child file node
-    assert.equal(afterTouchDoc.nodes[step1Id].children.length, 2);
+    const step1 = nodeOf(afterTouch, step1Id);
+    assert.deepEqual(step1.files.map((f) => f.path), ["src/schema.ts"]);
+    assert.equal(step1.children.length, 2, "also created a child file node");
 
-    // Transition step1 -> completed and step2 -> in_progress
-    const afterStatusRaw = await callTool("update_plan_status", {
+    const afterStatus = await docFrom("update_plan_status", {
       mindmapId: doc.id,
       nodeId: step1Id,
       status: "completed",
       notes: "Schema finalized",
       nextNodeId: step2Id,
     });
-    const afterStatusDoc = JSON.parse(afterStatusRaw) as MindmapDocument;
-    assert.equal(afterStatusDoc.nodes[step1Id].status, "completed");
-    assert.equal(afterStatusDoc.nodes[step1Id].notes, "Schema finalized");
-    assert.equal(afterStatusDoc.nodes[step2Id].status, "in_progress");
+    assert.equal(taskOf(afterStatus, step1Id).status, "completed");
+    assert.equal(taskOf(afterStatus, step1Id).notes, "Schema finalized");
+    assert.equal(taskOf(afterStatus, step2Id).status, "in_progress");
 
-    // Check get_plan_summary output
-    const summary = await callTool("get_plan_summary", { mindmapId: doc.id });
-    assert.match(summary, /Progress: 1\/3 tasks completed \(33%\)/);
+    const summary = await ok("get_plan_summary", { mindmapId: doc.id });
+    assert.match(summary, /Progress: 1\/3 tasks completed \(33%\)/, "the file node is not a task");
     assert.match(summary, /Step 2: Implement API/);
     assert.match(summary, /src\/schema\.ts:1-50/);
   });
 
   it("supports add_node, update_node, remove_node, list_mindmaps, and delete_mindmap", async () => {
-    const doc = JSON.parse(await callTool("create_mindmap", { title: "CRUD Map" })) as MindmapDocument;
+    const doc = await docFrom("create_mindmap", { title: "CRUD Map" });
+    const withParent = await docFrom("add_node", { mindmapId: doc.id, parentId: "root", label: "Parent Task", status: "planned" });
+    const parentId = childrenOf(withParent)[0];
+    const withChild = await docFrom("add_node", { mindmapId: doc.id, parentId, label: "Child Task" });
+    const childId = childrenOf(withChild, parentId)[0];
 
-    // Add parent & child node
-    const withParent = JSON.parse(
-      await callTool("add_node", {
-        mindmapId: doc.id,
-        parentId: "root",
-        label: "Parent Task",
-        status: "planned",
-      }),
-    ) as MindmapDocument;
-    const parentId = withParent.nodes.root.children[0];
-
-    const withChild = JSON.parse(
-      await callTool("add_node", {
-        mindmapId: doc.id,
-        parentId,
-        label: "Child Task",
-      }),
-    ) as MindmapDocument;
-    const childId = withChild.nodes[parentId].children[0];
-
-    // Update node
-    const updated = JSON.parse(
-      await callTool("update_node", {
-        mindmapId: doc.id,
-        nodeId: childId,
-        label: "Updated Child Task",
-        status: "blocked",
-        notes: "Waiting on dependency",
-      }),
-    ) as MindmapDocument;
-    assert.equal(updated.nodes[childId].label, "Updated Child Task");
-    assert.equal(updated.nodes[childId].status, "blocked");
-
-    // Prevent removing root
-    const rootRemoveMsg = await callTool("remove_node", {
+    const updated = await docFrom("update_node", {
       mindmapId: doc.id,
-      nodeId: "root",
+      nodeId: childId,
+      label: "Updated Child Task",
+      status: "blocked",
+      notes: "Waiting on dependency",
     });
-    assert.match(rootRemoveMsg, /Cannot remove the root node/);
+    assert.equal(taskOf(updated, childId).label, "Updated Child Task");
+    assert.equal(taskOf(updated, childId).status, "blocked");
 
-    // Remove parent -> should also remove child recursively
-    const afterRemove = JSON.parse(
-      await callTool("remove_node", {
-        mindmapId: doc.id,
-        nodeId: parentId,
-      }),
-    ) as MindmapDocument;
-    assert.equal(afterRemove.nodes[parentId], undefined);
-    assert.equal(afterRemove.nodes[childId], undefined);
-    assert.equal(afterRemove.nodes.root.children.length, 0);
+    // Changing a task into a concept drops its status; changing it back starts it as planned
+    const asConcept = await docFrom("update_node", { mindmapId: doc.id, nodeId: childId, type: "risk" });
+    assert.equal("status" in nodeOf(asConcept, childId), false);
+    const asTask = await docFrom("update_node", { mindmapId: doc.id, nodeId: childId, type: "task" });
+    assert.equal(taskOf(asTask, childId).status, "planned");
 
-    // List and delete
-    const listText = await callTool("list_mindmaps");
-    assert.match(listText, new RegExp(doc.id));
+    assert.match(await fails("remove_node", { mindmapId: doc.id, nodeId: "root" }), /Cannot remove the root node/);
 
-    const delText = await callTool("delete_mindmap", { mindmapId: doc.id });
-    assert.match(delText, /deleted/);
+    const afterRemove = await docFrom("remove_node", { mindmapId: doc.id, nodeId: parentId });
+    assert.equal(parentId && afterRemove.nodes[parentId], undefined);
+    assert.equal(childId && afterRemove.nodes[childId], undefined, "descendants go too");
+    assert.equal(childrenOf(afterRemove).length, 0);
+
+    assert.match(await ok("list_mindmaps"), new RegExp(doc.id));
+    assert.match(await ok("delete_mindmap", { mindmapId: doc.id }), /deleted/);
+    assert.match(await fails("delete_mindmap", { mindmapId: doc.id }), /not found/);
+  });
+
+  it("rejects invalid input and impossible requests with isError", async () => {
+    const doc = await docFrom("create_mindmap", { title: "Strict", initialPlan: [{ label: "Task", status: "in_progress" }] });
+    const taskId = childrenOf(doc)[0];
+
+    assert.match(await fails("get_mindmap", { mindmapId: "mm_missing" }), /not found/);
+    assert.match(await fails("get_mindmap", { mindmapId: "../etc/passwd" }), /Invalid input/);
+    assert.match(await fails("add_node", { mindmapId: doc.id, parentId: "n_nope", label: "x" }), /Parent node "n_nope" not found/);
+    assert.match(await fails("add_node", { mindmapId: doc.id, parentId: "root", label: "x", type: "bogus" }), /Invalid input/);
+    assert.match(await fails("log_file_touch", { mindmapId: doc.id, path: "a.ts", action: "rename" }), /previousPath/);
+    assert.match(
+      await fails("log_file_touch", { mindmapId: doc.id, path: "a.ts", changes: [{ kind: "rename", symbol: "b" }] }),
+      /previousSymbol/,
+    );
+
+    // Only tasks have a status
+    assert.match(
+      await fails("add_node", { mindmapId: doc.id, parentId: "root", label: "Gateway", type: "component", status: "completed" }),
+      /only plan\/task\/code nodes have a status/,
+    );
+    const withConcept = await docFrom("add_node", { mindmapId: doc.id, parentId: "root", label: "Gateway", type: "component" });
+    const conceptId = childrenOf(withConcept).at(-1);
+    assert.match(await fails("update_plan_status", { mindmapId: doc.id, nodeId: conceptId, status: "completed" }), /component node/);
+    assert.match(
+      await fails("update_plan_status", { mindmapId: doc.id, nodeId: taskId, status: "completed", nextNodeId: conceptId }),
+      /component node/,
+    );
+    assert.equal(taskOf(await docFrom("get_mindmap", { mindmapId: doc.id }), taskId).status, "in_progress", "a failed call changes nothing");
   });
 
   it("syncs uncommitted git status & diff stats via sync_git_status", async () => {
     const repoDir = await mkdtemp(path.join(os.tmpdir(), "synapse-git-test-"));
     try {
-      await execFileAsync("git", ["init"], { cwd: repoDir });
-      await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: repoDir });
-      await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: repoDir });
-
+      const git = (...args: string[]) => execFileAsync("git", args, { cwd: repoDir });
+      await git("init");
+      await git("config", "user.email", "test@example.com");
+      await git("config", "user.name", "Test User");
       const trackedFile = path.join(repoDir, "index.ts");
       await writeFile(trackedFile, "export const a = 1;\n", "utf-8");
-      await execFileAsync("git", ["add", "index.ts"], { cwd: repoDir });
-      await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repoDir });
-
-      // Modify tracked file and create untracked file
+      await git("add", "index.ts");
+      await git("commit", "-m", "initial");
       await writeFile(trackedFile, "export const a = 2;\nexport const b = 3;\n", "utf-8");
       await writeFile(path.join(repoDir, "new-helper.ts"), "export function help() {}\n", "utf-8");
 
-      const doc = JSON.parse(
-        await callTool("create_mindmap", {
-          title: "Git Sync Map",
-          initialPlan: [{ label: "Edit repo files", status: "in_progress" }],
-        }),
-      ) as MindmapDocument;
-
-      const syncedDoc = JSON.parse(
-        await callTool("sync_git_status", {
-          mindmapId: doc.id,
-          workspacePath: repoDir,
-        }),
-      ) as MindmapDocument;
-
-      const activeId = syncedDoc.nodes.root.children[0];
-      const files = syncedDoc.nodes[activeId].files || [];
+      const doc = await docFrom("create_mindmap", { title: "Git Sync Map", initialPlan: [{ label: "Edit repo files", status: "in_progress" }] });
+      const synced = await docFrom("sync_git_status", { mindmapId: doc.id, workspacePath: repoDir });
+      const files = nodeOf(synced, childrenOf(synced)[0]).files;
       assert.equal(files.length, 2);
 
       const modFile = files.find((f) => f.path === "index.ts");
-      const newFile = files.find((f) => f.path === "new-helper.ts");
-      assert.ok(modFile);
-      assert.equal(modFile.action, "modify");
-      assert.match(modFile.summary || "", /\+2\/-1 lines/);
-
-      assert.ok(newFile);
-      assert.equal(newFile.action, "create");
+      assert.equal(modFile?.action, "modify");
+      assert.match(modFile?.summary ?? "", /\+2\/-1 lines/);
+      assert.equal(files.find((f) => f.path === "new-helper.ts")?.action, "create");
     } finally {
       await rm(repoDir, { recursive: true, force: true });
     }
   });
 
   it("records symbol-level changes and file renames, and surfaces them in summaries", async () => {
-    const doc = JSON.parse(
-      await callTool("create_mindmap", {
-        title: "Fix token expiry",
-        initialPlan: [{ label: "Fix expiry check", status: "in_progress" }],
-      }),
-    ) as MindmapDocument;
-    const stepId = doc.nodes.root.children[0];
+    const doc = await docFrom("create_mindmap", { title: "Fix token expiry", initialPlan: [{ label: "Fix expiry check", status: "in_progress" }] });
+    const stepId = childrenOf(doc)[0];
 
-    await callTool("log_file_touch", {
+    await ok("log_file_touch", {
       mindmapId: doc.id,
       path: "src/auth.ts",
       changes: [
@@ -224,7 +216,7 @@ describe("MCP tools integration", () => {
       ],
     });
     // Same kind+symbol replaces; new entries append
-    await callTool("log_file_touch", {
+    await ok("log_file_touch", {
       mindmapId: doc.id,
       path: "src/auth.ts",
       changes: [
@@ -232,55 +224,46 @@ describe("MCP tools integration", () => {
         { kind: "rename", previousSymbol: "checkAuth", symbol: "requireAuth" },
       ],
     });
-    await callTool("log_file_touch", {
+    // Reading a file afterwards doesn't downgrade the edit
+    await ok("log_file_touch", { mindmapId: doc.id, path: "src/auth.ts", action: "read" });
+    await ok("log_file_touch", { mindmapId: doc.id, path: "tests/auth-old.test.ts", changes: [{ kind: "test", symbol: "rejects expired tokens" }] });
+    const afterRename = await docFrom("log_file_touch", {
       mindmapId: doc.id,
-      path: "tests/auth-old.test.ts",
-      changes: [{ kind: "test", symbol: "rejects expired tokens" }],
+      path: "tests/auth.test.ts",
+      action: "rename",
+      previousPath: "tests/auth-old.test.ts",
     });
-    const afterRename = JSON.parse(
-      await callTool("log_file_touch", {
-        mindmapId: doc.id,
-        path: "tests/auth.test.ts",
-        action: "rename",
-        previousPath: "tests/auth-old.test.ts",
-      }),
-    ) as MindmapDocument;
 
-    const files = afterRename.nodes[stepId].files || [];
+    const files = nodeOf(afterRename, stepId).files;
     assert.equal(files.length, 2, "rename absorbs the entry logged under the old path");
 
-    const auth = files.find((f) => f.path === "src/auth.ts")!;
-    assert.deepEqual(
-      auth.changes?.map((c) => `${c.kind}:${c.symbol}`),
-      ["fix:validateToken", "add:isExpired", "rename:requireAuth"],
-    );
-    assert.equal(auth.changes?.[0].detail, "compare in UTC, inclusive bound");
+    const auth = files.find((f) => f.path === "src/auth.ts");
+    assert.equal(auth?.action, "modify");
+    assert.deepEqual(changesOf(auth).map((c) => `${c.kind}:${c.symbol}`), ["fix:validateToken", "add:isExpired", "rename:requireAuth"]);
+    assert.equal(changesOf(auth)[0]?.detail, "compare in UTC, inclusive bound");
 
-    const renamed = files.find((f) => f.path === "tests/auth.test.ts")!;
-    assert.equal(renamed.action, "rename");
+    const renamed = files.find((f) => f.path === "tests/auth.test.ts");
+    assert.ok(renamed?.action === "rename");
     assert.equal(renamed.previousPath, "tests/auth-old.test.ts");
-    assert.equal(renamed.changes?.[0].kind, "test");
+    assert.equal(renamed.changes[0]?.kind, "test");
 
     // The same change logged on a second node (e.g. an HLD component) is counted once
-    const component = JSON.parse(
-      await callTool("add_node", { mindmapId: doc.id, parentId: "root", label: "Auth", type: "component" }),
-    ) as MindmapDocument;
-    const componentId = component.nodes.root.children.at(-1)!;
-    await callTool("log_file_touch", {
+    const withComponent = await docFrom("add_node", { mindmapId: doc.id, parentId: "root", label: "Auth", type: "component" });
+    await ok("log_file_touch", {
       mindmapId: doc.id,
-      nodeId: componentId,
+      nodeId: childrenOf(withComponent).at(-1),
       path: "src/auth.ts",
       changes: [{ kind: "fix", symbol: "validateToken" }],
     });
 
-    const summary = await callTool("get_plan_summary", { mindmapId: doc.id });
+    const summary = await ok("get_plan_summary", { mindmapId: doc.id });
     assert.match(summary, /Code Changes: 1 add, 1 fix, 1 rename, 1 test/);
     assert.equal(summary.match(/fix: `validateToken`/g)?.length, 1);
     assert.match(summary, /fix: `validateToken` — compare in UTC, inclusive bound/);
     assert.match(summary, /tests\/auth-old\.test\.ts → tests\/auth\.test\.ts/);
     assert.match(summary, /rename: `checkAuth → requireAuth`/);
 
-    const text = await callTool("render_mindmap", { mindmapId: doc.id, format: "text" });
+    const text = await ok("render_mindmap", { mindmapId: doc.id, format: "text" });
     assert.match(text, /✱ fix validateToken — compare in UTC, inclusive bound/);
   });
 
@@ -296,78 +279,49 @@ describe("MCP tools integration", () => {
       await git("commit", "-m", "initial");
       await git("mv", "old.ts", "new.ts");
 
-      const doc = JSON.parse(
-        await callTool("create_mindmap", {
-          title: "Git Rename Map",
-          initialPlan: [{ label: "Rename module", status: "in_progress" }],
-        }),
-      ) as MindmapDocument;
-      const synced = JSON.parse(
-        await callTool("sync_git_status", { mindmapId: doc.id, workspacePath: repoDir }),
-      ) as MindmapDocument;
-
-      const file = synced.nodes[synced.nodes.root.children[0]].files?.[0];
+      const doc = await docFrom("create_mindmap", { title: "Git Rename Map", initialPlan: [{ label: "Rename module", status: "in_progress" }] });
+      const synced = await docFrom("sync_git_status", { mindmapId: doc.id, workspacePath: repoDir });
+      const file = nodeOf(synced, childrenOf(synced)[0]).files[0];
       assert.equal(file?.path, "new.ts");
-      assert.equal(file?.action, "rename");
-      assert.equal(file?.previousPath, "old.ts");
+      assert.ok(file?.action === "rename");
+      assert.equal(file.previousPath, "old.ts");
     } finally {
       await rm(repoDir, { recursive: true, force: true });
     }
   });
 
   it("maps HLD mental model concepts and directed flow links via map_architecture and link_nodes", async () => {
-    const doc = JSON.parse(
-      await callTool("create_mindmap", { title: "Mental Model Test" }),
-    ) as MindmapDocument;
-
-    const afterHld = JSON.parse(
-      await callTool("map_architecture", {
-        mindmapId: doc.id,
-        nodes: [
-          {
-            key: "api",
-            label: "API Gateway",
-            type: "component",
-            notes: "Handles incoming requests",
-            files: [{ path: "src/api.ts", action: "read" }],
-          },
-          {
-            key: "worker",
-            label: "Event Stream",
-            type: "data_flow",
-            notes: "Publishes SSE events",
-          },
-          {
-            key: "dec1",
-            label: "Keep TypeScript over Rust",
-            type: "decision",
-            parentKey: "api",
-            notes: "Sub-ms JSON I/O; LLM latency dominates",
-          },
-        ],
-        links: [
-          {
-            from: "api",
-            to: "worker",
-            label: "emits events to",
-            style: "animated",
-          },
-        ],
-      }),
-    ) as MindmapDocument;
-
-    assert.equal(afterHld.links?.length, 1);
-    assert.equal(afterHld.links?.[0].label, "emits events to");
-    assert.equal(afterHld.links?.[0].style, "animated");
-
-    // Verify rendered text includes the directed flow link and semantic icons
-    const rendered = await callTool("render_mindmap", {
+    const doc = await docFrom("create_mindmap", { title: "Mental Model Test" });
+    const afterHld = await docFrom("map_architecture", {
       mindmapId: doc.id,
-      format: "text",
+      nodes: [
+        { key: "api", label: "API Gateway", type: "component", notes: "Handles incoming requests", files: [{ path: "src/api.ts", action: "read" }] },
+        { key: "worker", label: "Event Stream", type: "data_flow", notes: "Publishes SSE events" },
+        { key: "dec1", label: "Keep TypeScript over Rust", type: "decision", parentKey: "api", notes: "Sub-ms JSON I/O; LLM latency dominates" },
+      ],
+      links: [{ from: "api", to: "worker", label: "emits events to", style: "animated" }],
     });
+    assert.equal(afterHld.links.length, 1);
+    assert.equal(afterHld.links[0]?.label, "emits events to");
+    assert.equal(afterHld.links[0]?.style, "animated");
+
+    // Moving an existing node keeps the tree consistent (it used to stay listed under its old parent)
+    const workerId = Object.values(afterHld.nodes).find((n) => n.label === "Event Stream")?.id;
+    const apiId = Object.values(afterHld.nodes).find((n) => n.label === "API Gateway")?.id;
+    const moved = await docFrom("map_architecture", {
+      mindmapId: doc.id,
+      nodes: [{ key: workerId, label: "Event Stream", type: "data_flow", parentKey: apiId }],
+    });
+    assert.equal(nodeOf(moved, workerId).parent, apiId);
+    assert.equal(Object.values(moved.nodes).filter((n) => workerId && n.children.includes(workerId)).length, 1);
+    assert.match(
+      await fails("map_architecture", { mindmapId: doc.id, nodes: [{ key: apiId, label: "API Gateway", parentKey: workerId }] }),
+      /own descendant/,
+    );
+
+    const rendered = await ok("render_mindmap", { mindmapId: doc.id, format: "text" });
     assert.match(rendered, /📦 API Gateway/);
     assert.match(rendered, /⚖️ Keep TypeScript over Rust/);
     assert.match(rendered, /──\[emits events to\]──▶/);
   });
 });
-

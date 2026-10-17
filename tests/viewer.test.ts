@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
 import { startViewer, type RunningViewer } from "../src/viewer.js";
+import { addChild, emptyDoc } from "./fixtures.js";
 
 /** Raw HTTP so tests can set Host/Origin like a browser on another site would. */
 function call(
@@ -42,16 +43,10 @@ describe("viewer server", () => {
   beforeAll(async () => {
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "synapse-viewer-test-"));
     process.env.SYNAPSE_DATA_DIR = tmpDir;
-    await store.save({
-      id: "mm_test",
-      title: "Viewer test",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      nodes: {
-        root: { id: "root", label: "Viewer test", type: "root", children: ["t1"], parent: null },
-        t1: { id: "t1", label: "Step", type: "task", status: "in_progress", children: [], parent: "root" },
-      },
-    });
+    const doc = emptyDoc("mm_test", "Viewer test");
+    addChild(doc, { type: "task", label: "Step", status: "in_progress" });
+    addChild(doc, { type: "component", label: "Gateway" });
+    await store.save(doc);
     const free = await occupy();
     const port = portOf(free);
     await close(free);

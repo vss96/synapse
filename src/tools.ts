@@ -1,80 +1,106 @@
-import { nanoid } from "nanoid";
+import { z } from "zod";
 import * as store from "./store.js";
 import { render } from "./renderer.js";
+import { ensureWorkspaceWatcher, inspectGitChanges } from "./watcher.js";
+import { fileTouchTarget, mergeChanges, upsertFileTouch } from "./model/file-touch.js";
+import { CHANGE_KINDS, FILE_ACTIONS, LINK_STYLES, NODE_TYPES, TASK_STATUSES, isConcept, isTask, isTaskType, type ChildNodeType, type LinkStyle, type TaskStatus } from "./model/kinds.js";
+import { attachChild, createChild, reparent, retype } from "./model/node.js";
 import {
-  ensureWorkspaceWatcher,
-  inspectGitChanges,
-  mergeChanges,
-  resolveTargetNodeForFile,
-  upsertNodeFileTouch,
-} from "./watcher.js";
-import { CHANGE_KINDS, FILE_ACTIONS, HLD_NODE_TYPES, isPlanTask } from "./types.js";
-import type {
   CodeChange,
-  FileTouch,
-  MindmapDocument,
-  MindmapNode,
-  CreateMindmapInput,
-  AddNodeInput,
-  UpdateNodeInput,
-  RemoveNodeInput,
-  LogFileTouchInput,
-  UpdatePlanStatusInput,
-  SyncGitStatusInput,
-  LinkNodesInput,
-  MapArchitectureInput,
-} from "./types.js";
+  MindmapId,
+  NodeId,
+  ROOT_ID,
+  newLinkId,
+  newMindmapId,
+  now,
+  type ChildNode,
+  type FileTouch,
+  type MindmapDocument,
+  type MindmapNode,
+} from "./model/schema.js";
 
-const NODE_TYPE_ENUM = [
-  "plan",
-  "task",
-  "file",
-  "code",
-  "note",
-  "component",
-  "data_flow",
-  "hypothesis",
-  "decision",
-  "risk",
-];
+/* ------------------------------------------------------------------ */
+/*  Tool plumbing                                                      */
+/* ------------------------------------------------------------------ */
 
-const CHANGES_SCHEMA = {
-  type: "array",
-  description:
-    "Symbol-level changes in this file, so the user can follow what is being added, fixed, refactored, renamed, removed, or tested",
-  items: {
-    type: "object",
-    properties: {
-      kind: { type: "string", enum: CHANGE_KINDS },
-      symbol: { type: "string", description: "Function/class/type/test name (for renames, the new name)" },
-      previousSymbol: { type: "string", description: "Old name when kind is 'rename'" },
-      detail: { type: "string", description: "Short description of the change" },
+/** A failure the agent caused and can fix (unknown id, wrong node kind…); reported with isError. */
+export class ToolError extends Error {}
+
+export interface ToolResult {
+  content: { type: "text"; text: string }[];
+  isError?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: z.ZodObject;
+  /** Parses `args` with `inputSchema`, runs the tool and formats the result. */
+  handler: (args: unknown) => Promise<ToolResult>;
+}
+
+const text = (value: string, isError = false): ToolResult => ({ content: [{ type: "text", text: value }], ...(isError ? { isError } : {}) });
+
+function defineTool<S extends z.ZodObject>(def: {
+  name: string;
+  description: string;
+  inputSchema: S;
+  run: (input: z.infer<S>) => Promise<string | MindmapDocument>;
+}): ToolDefinition {
+  return {
+    name: def.name,
+    description: def.description,
+    inputSchema: def.inputSchema,
+    handler: async (args) => {
+      const input = def.inputSchema.safeParse(args ?? {});
+      if (!input.success) return text(`Invalid input for ${def.name}:\n${z.prettifyError(input.error)}`, true);
+      try {
+        const result = await def.run(input.data);
+        return text(typeof result === "string" ? result : JSON.stringify(result, null, 2));
+      } catch (err) {
+        if (err instanceof ToolError) return text(err.message, true);
+        throw err;
+      }
     },
-    required: ["kind", "symbol"],
-  },
-};
+  };
+}
 
-const FILE_TOUCH_PROPERTIES = {
-  path: { type: "string", description: "File path (e.g. 'src/tools.ts')" },
-  action: {
-    type: "string",
-    enum: FILE_ACTIONS,
-    description: "Action performed on the file (default: 'modify')",
-  },
-  previousPath: { type: "string", description: "Old file path when action is 'rename'" },
-  lines: { type: "string", description: "Optional line range touched (e.g. '45-120')" },
-  symbols: {
-    type: "array",
-    items: { type: "string" },
-    description: "Optional list of function/class/type symbols touched",
-  },
-  changes: CHANGES_SCHEMA,
-  summary: { type: "string", description: "Short summary of what changed in this file" },
+async function loadMindmap(id: MindmapId): Promise<MindmapDocument> {
+  const doc = await store.load(id);
+  if (!doc) throw new ToolError(`Mindmap "${id}" not found.`);
+  return doc;
+}
+
+function getNode(doc: MindmapDocument, id: NodeId, role = "Node"): MindmapNode {
+  const node = doc.nodes[id];
+  if (!node) throw new ToolError(`${role} "${id}" not found.`);
+  return node;
+}
+
+function getChild(doc: MindmapDocument, id: NodeId): ChildNode {
+  const node = getNode(doc, id);
+  if (node.type === "root") throw new ToolError("The root node can't be changed this way.");
+  return node;
+}
+
+/** A status only applies to tasks; asking for one on any other node is a mistake worth reporting. */
+function statusFor(type: ChildNodeType, status: TaskStatus | undefined, label: string): TaskStatus | undefined {
+  if (status !== undefined && !isTaskType(type)) {
+    throw new ToolError(`"${label}" is a ${type} node; only plan/task/code nodes have a status.`);
+  }
+  return status;
+}
+
+const isDescendant = (doc: MindmapDocument, id: NodeId, ancestor: NodeId): boolean => {
+  for (let cur = doc.nodes[id]; cur && cur.type !== "root"; cur = doc.nodes[cur.parent]) {
+    if (cur.parent === ancestor) return true;
+  }
+  return false;
 };
 
 /** "2 add, 1 fix" style tally, in CHANGE_KINDS order. */
-export function describeChanges(changes: CodeChange[] | undefined): string {
-  if (!changes || changes.length === 0) return "";
+export function describeChanges(changes: readonly CodeChange[]): string {
   return CHANGE_KINDS.map((kind) => [kind, changes.filter((c) => c.kind === kind).length] as const)
     .filter(([, n]) => n > 0)
     .map(([kind, n]) => `${n} ${kind}`)
@@ -82,973 +108,533 @@ export function describeChanges(changes: CodeChange[] | undefined): string {
 }
 
 /* ------------------------------------------------------------------ */
-/*  create_mindmap                                                     */
+/*  Input schemas                                                      */
 /* ------------------------------------------------------------------ */
 
-async function createMindmap(input: CreateMindmapInput): Promise<MindmapDocument> {
-  const id = `mm_${nanoid(8)}`;
-  const now = new Date().toISOString();
-  const rootLabel = input.rootLabel ?? input.title;
+const mindmapId = MindmapId.describe("Mindmap ID");
+const ChildType = z.enum(NODE_TYPES).exclude(["root"]);
+const Status = z.enum(TASK_STATUSES);
+const Style = z.enum(LINK_STYLES);
+const Label = z.string().trim().min(1);
 
-  const root: MindmapNode = {
-    id: "root",
-    label: rootLabel,
-    type: "root",
-    status: "in_progress",
-    children: [],
-    parent: null,
-    updatedAt: now,
-  };
+const FileTouchInput = z
+  .object({
+    path: z.string().trim().min(1).describe("File path (e.g. 'src/tools.ts')"),
+    action: z.enum(FILE_ACTIONS).default("modify").describe("Action performed on the file (default: 'modify')"),
+    previousPath: z.string().trim().min(1).optional().describe("Old file path; required when action is 'rename'"),
+    lines: z.string().optional().describe("Line range touched (e.g. '45-120')"),
+    symbols: z.array(z.string()).optional().describe("Function/class/type symbols touched"),
+    changes: z
+      .array(CodeChange)
+      .default([])
+      .describe(
+        "Symbol-level changes in this file, so the user can follow what is being added, fixed, refactored, renamed, removed, or tested. Renames need previousSymbol.",
+      ),
+    summary: z.string().optional().describe("Short summary of what changed in this file"),
+  })
+  .superRefine((t, ctx) => {
+    if (t.action === "rename" && !t.previousPath) ctx.addIssue({ code: "custom", message: "A rename needs previousPath", path: ["previousPath"] });
+    if (t.action === "read" && t.changes.length > 0) ctx.addIssue({ code: "custom", message: "A read can't have changes", path: ["changes"] });
+  });
+type FileTouchInput = z.infer<typeof FileTouchInput>;
 
-  const doc: MindmapDocument = {
-    id,
-    title: input.title,
-    workspacePath: input.workspacePath,
-    createdAt: now,
-    updatedAt: now,
-    nodes: { root },
-    links: [],
-    activityLog: [],
-  };
+function toFileTouch(input: FileTouchInput): FileTouch {
+  const common = { path: input.path, lines: input.lines, symbols: input.symbols, summary: input.summary, timestamp: now() };
+  if (input.action === "read") return { ...common, action: "read" };
+  if (input.action === "rename") return { ...common, action: "rename", previousPath: input.previousPath!, changes: input.changes };
+  return { ...common, action: input.action, changes: input.changes };
+}
 
-  store.recordActivity(doc, `Created mindmap "${input.title}"`, { nodeId: "root" });
+/* ------------------------------------------------------------------ */
+/*  Tools                                                              */
+/* ------------------------------------------------------------------ */
 
-  // Populate initialPlan if provided
-  if (Array.isArray(input.initialPlan)) {
-    for (const item of input.initialPlan) {
-      const stepId = `n_${nanoid(6)}`;
-      const stepNode: MindmapNode = {
-        id: stepId,
-        label: item.label,
-        type: item.type ?? "task",
-        status: item.status ?? "planned",
-        notes: item.notes,
-        children: [],
-        parent: "root",
-        updatedAt: now,
-      };
-      doc.nodes[stepId] = stepNode;
-      root.children.push(stepId);
+const createMindmap = defineTool({
+  name: "create_mindmap",
+  description: "Create a new mindmap to track a coding plan, touched files, and the agent's mental model / HLD of the code.",
+  inputSchema: z.object({
+    title: Label.describe("Title of the mindmap / task"),
+    rootLabel: Label.optional().describe("Label for the root node (defaults to title)"),
+    workspacePath: z.string().optional().describe("Absolute path to the project workspace/repo for git and file watching"),
+    initialPlan: z
+      .array(
+        z.object({
+          label: Label.describe("Step title"),
+          type: ChildType.default("task"),
+          status: Status.optional().describe("Tasks only (default: planned)"),
+          notes: z.string().optional().describe("Implementation details or context"),
+          children: z
+            .array(z.object({ label: Label, type: ChildType.default("task"), status: Status.optional(), notes: z.string().optional() }))
+            .optional(),
+        }),
+      )
+      .optional()
+      .describe("Initial plan steps to create under the root node"),
+  }),
+  async run(input) {
+    const timestamp = now();
+    const doc: MindmapDocument = {
+      id: newMindmapId(),
+      title: input.title,
+      workspacePath: input.workspacePath,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      nodes: {
+        [ROOT_ID]: { id: ROOT_ID, type: "root", parent: null, label: input.rootLabel ?? input.title, files: [], children: [], updatedAt: timestamp },
+      },
+      links: [],
+      activityLog: [],
+    };
+    store.recordActivity(doc, `Created mindmap "${input.title}"`, { nodeId: ROOT_ID });
 
-      if (Array.isArray(item.children)) {
-        for (const sub of item.children) {
-          const subId = `n_${nanoid(6)}`;
-          const subNode: MindmapNode = {
-            id: subId,
-            label: sub.label,
-            type: sub.type ?? "task",
-            status: sub.status ?? "planned",
-            notes: sub.notes,
-            children: [],
-            parent: stepId,
-            updatedAt: now,
-          };
-          doc.nodes[subId] = subNode;
-          stepNode.children.push(subId);
-        }
+    for (const item of input.initialPlan ?? []) {
+      const step = createChild({ ...item, status: statusFor(item.type, item.status, item.label), parent: ROOT_ID });
+      attachChild(doc, step);
+      for (const sub of item.children ?? []) {
+        attachChild(doc, createChild({ ...sub, status: statusFor(sub.type, sub.status, sub.label), parent: step.id }));
       }
     }
-  }
 
-  await store.save(doc);
-  if (doc.workspacePath) {
+    await store.save(doc);
     ensureWorkspaceWatcher(doc.id, doc.workspacePath);
-  }
-  return doc;
-}
+    return doc;
+  },
+});
 
-/* ------------------------------------------------------------------ */
-/*  add_node                                                           */
-/* ------------------------------------------------------------------ */
-
-async function addNode(input: AddNodeInput): Promise<MindmapDocument | string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
-
-  const parent = doc.nodes[input.parentId];
-  if (!parent) return `Parent node "${input.parentId}" not found.`;
-
-  const now = new Date().toISOString();
-  const id = `n_${nanoid(6)}`;
-  const nodeType = input.type ?? "task";
-  const defaultStatus = ["component", "data_flow", "hypothesis", "decision", "risk", "note"].includes(nodeType)
-    ? "none"
-    : "planned";
-
-  const node: MindmapNode = {
-    id,
-    label: input.label,
-    type: nodeType,
-    status: input.status ?? defaultStatus,
-    notes: input.notes,
-    files: input.files,
-    children: [],
-    parent: input.parentId,
-    updatedAt: now,
-  };
-
-  doc.nodes[id] = node;
-  parent.children.push(id);
-  store.recordActivity(doc, `Added ${nodeType} node "${input.label}"`, { nodeId: id });
-  await store.save(doc);
-  return doc;
-}
-
-/* ------------------------------------------------------------------ */
-/*  update_node                                                        */
-/* ------------------------------------------------------------------ */
-
-async function updateNode(input: UpdateNodeInput): Promise<MindmapDocument | string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
-
-  const node = doc.nodes[input.nodeId];
-  if (!node) return `Node "${input.nodeId}" not found.`;
-
-  if (input.label !== undefined) node.label = input.label;
-  if (input.type !== undefined) node.type = input.type;
-  if (input.status !== undefined) node.status = input.status;
-  if (input.notes !== undefined) node.notes = input.notes;
-  if (input.files !== undefined) {
-    for (const f of input.files) {
-      upsertNodeFileTouch(node, f);
-    }
-  }
-  node.updatedAt = new Date().toISOString();
-
-  store.recordActivity(
-    doc,
-    `Updated node "${node.label}"${input.status ? ` → ${input.status}` : ""}`,
-    { nodeId: node.id },
-  );
-  await store.save(doc);
-  return doc;
-}
-
-/* ------------------------------------------------------------------ */
-/*  link_nodes                                                         */
-/* ------------------------------------------------------------------ */
-
-function upsertLink(
-  doc: MindmapDocument,
-  from: string,
-  to: string,
-  label: string,
-  style?: "solid" | "dashed" | "animated",
-  notes?: string,
-): void {
-  if (!doc.links) doc.links = [];
-  const existing = doc.links.find((l) => l.from === from && l.to === to && l.label === label);
-  if (existing) {
-    if (style !== undefined) existing.style = style;
-    if (notes !== undefined) existing.notes = notes;
-  } else {
-    doc.links.push({
-      id: `l_${nanoid(6)}`,
-      from,
-      to,
-      label,
-      style: style ?? "solid",
-      notes,
+const addNode = defineTool({
+  name: "add_node",
+  description:
+    "Add a child node under a parent node. Supports both plan/task nodes ('plan', 'task', 'code', 'file', 'note') and semantic code-thinking nodes ('component', 'data_flow', 'hypothesis', 'decision', 'risk').",
+  inputSchema: z.object({
+    mindmapId,
+    parentId: NodeId.describe("Parent node ID (use 'root' for top-level steps)"),
+    label: Label.describe("Node label text"),
+    type: ChildType.default("task").describe("Semantic type of node (default: 'task')"),
+    status: Status.optional().describe("Initial status; tasks only (default: planned)"),
+    notes: z.string().optional().describe("Notes, rationale, hypothesis details, or trade-offs"),
+    files: z.array(FileTouchInput).optional(),
+  }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    getNode(doc, input.parentId, "Parent node");
+    const node = createChild({
+      ...input,
+      parent: input.parentId,
+      status: statusFor(input.type, input.status, input.label),
+      files: input.files?.map(toFileTouch),
     });
+    attachChild(doc, node);
+    store.recordActivity(doc, `Added ${node.type} node "${node.label}"`, { nodeId: node.id });
+    await store.save(doc);
+    return doc;
+  },
+});
+
+const updateNode = defineTool({
+  name: "update_node",
+  description: "Update a node's label, status, semantic type, notes, or attached files.",
+  inputSchema: z.object({
+    mindmapId,
+    nodeId: NodeId.describe("Node ID to update"),
+    label: Label.optional().describe("New label text"),
+    type: ChildType.optional().describe("New semantic type"),
+    status: Status.optional().describe("New status; tasks only"),
+    notes: z.string().optional().describe("Updated notes or context"),
+    files: z.array(FileTouchInput).optional().describe("File touches to record on this node"),
+  }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    let node = getChild(doc, input.nodeId);
+    if (input.type && input.type !== node.type) node = retype(node, input.type);
+    if (input.label !== undefined) node.label = input.label;
+    if (input.notes !== undefined) node.notes = input.notes;
+    const status = statusFor(node.type, input.status, node.label);
+    if (status && isTask(node)) node.status = status;
+    for (const f of input.files ?? []) upsertFileTouch(node, toFileTouch(f));
+    node.updatedAt = now();
+    doc.nodes[node.id] = node;
+
+    store.recordActivity(doc, `Updated node "${node.label}"${status ? ` → ${status}` : ""}`, { nodeId: node.id });
+    await store.save(doc);
+    return doc;
+  },
+});
+
+function upsertLink(doc: MindmapDocument, link: { from: NodeId; to: NodeId; label: string; style?: LinkStyle; notes?: string }): void {
+  const existing = doc.links.find((l) => l.from === link.from && l.to === link.to && l.label === link.label);
+  if (existing) {
+    if (link.style !== undefined) existing.style = link.style;
+    if (link.notes !== undefined) existing.notes = link.notes;
+  } else {
+    doc.links.push({ id: newLinkId(), ...link, style: link.style ?? "solid" });
   }
 }
 
-async function linkNodes(input: LinkNodesInput): Promise<MindmapDocument | string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
+const linkNodes = defineTool({
+  name: "link_nodes",
+  description:
+    "Create a directed concept or data-flow link between two nodes (e.g. 'calls', 'streams SSE to', 'mutates', 'depends on') to map how the agent understands interactions between components, files, or ideas.",
+  inputSchema: z.object({
+    mindmapId,
+    from: NodeId.describe("Source node ID"),
+    to: NodeId.describe("Target node ID"),
+    label: Label.describe("Flow or relationship label (e.g. 'calls', 'reads/writes')"),
+    style: Style.optional().describe("Visual line style ('animated' is great for live streams/events, 'dashed' for hypotheses/dependencies)"),
+    notes: z.string().optional().describe("Details about this relationship or flow"),
+  }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    const from = getNode(doc, input.from, "Source node");
+    const to = getNode(doc, input.to, "Target node");
+    upsertLink(doc, input);
+    store.recordActivity(doc, `Linked "${from.label}" ──[${input.label}]──▶ "${to.label}"`, { nodeId: from.id });
+    await store.save(doc);
+    return doc;
+  },
+});
 
-  if (!doc.nodes[input.from]) return `Source node "${input.from}" not found.`;
-  if (!doc.nodes[input.to]) return `Target node "${input.to}" not found.`;
+const HLD_CONTAINER_LABEL = "Code Mental Model (HLD)";
 
-  upsertLink(doc, input.from, input.to, input.label, input.style, input.notes);
-
-  store.recordActivity(
-    doc,
-    `Linked "${doc.nodes[input.from].label}" ──[${input.label}]──▶ "${doc.nodes[input.to].label}"`,
-    { nodeId: input.from },
+/** The branch HLD concepts go under by default: an existing mental-model component under the root, or a new one. */
+function hldContainer(doc: MindmapDocument): ChildNode {
+  const existing = Object.values(doc.nodes).find(
+    (n): n is ChildNode => n.type === "component" && n.parent === ROOT_ID && /mental model|hld|architecture/i.test(n.label),
   );
-  await store.save(doc);
-  return doc;
+  if (existing) return existing;
+  const container = createChild({
+    type: "component",
+    label: HLD_CONTAINER_LABEL,
+    parent: ROOT_ID,
+    notes: "High-level architecture, data flows, hypotheses, and design decisions",
+  });
+  attachChild(doc, container);
+  return container;
 }
 
-/* ------------------------------------------------------------------ */
-/*  map_architecture                                                   */
-/* ------------------------------------------------------------------ */
+const mapArchitecture = defineTool({
+  name: "map_architecture",
+  description:
+    "Batch-map the agent's high-level understanding and mental model of the codebase (HLD): components, data flows, decisions, hypotheses, and risks, plus directed links between them. Nodes are created under a 'Code Mental Model (HLD)' branch unless parentId or parentKey is given.",
+  inputSchema: z.object({
+    mindmapId,
+    parentId: NodeId.optional().describe("Parent node ID. If omitted, creates/uses a top-level 'Code Mental Model (HLD)' branch."),
+    nodes: z
+      .array(
+        z.object({
+          key: z.string().min(1).describe("Short symbolic key (e.g. 'mcp_server') or existing nodeId used to reference this node in links/parentKey"),
+          label: Label.describe("Human-readable name of the component, flow, hypothesis, or decision"),
+          type: ChildType.default("component").describe("Semantic thinking type (default: 'component')"),
+          status: Status.optional().describe("Tasks only"),
+          notes: z.string().optional().describe("How the agent thinks about this piece, why it matters, or trade-offs"),
+          files: z.array(FileTouchInput).optional(),
+          parentKey: z.string().optional().describe("Key of another node in this call (or existing nodeId) to nest under"),
+        }),
+      )
+      .describe("HLD / mental-model nodes to create or update"),
+    links: z
+      .array(
+        z.object({
+          from: z.string().min(1).describe("Source node key or ID"),
+          to: z.string().min(1).describe("Target node key or ID"),
+          label: Label.describe("Relationship label (e.g. 'routes tool calls to', 'persists JSON via')"),
+          style: Style.optional(),
+          notes: z.string().optional(),
+        }),
+      )
+      .optional()
+      .describe("Directed flow or dependency links between node keys (or existing node IDs)"),
+  }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    const container = input.parentId ? getNode(doc, input.parentId, "Parent node") : hldContainer(doc);
 
-async function mapArchitecture(input: MapArchitectureInput): Promise<MindmapDocument | string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
+    // Keys may name new nodes in this batch or existing node ids.
+    const byKey = new Map<string, NodeId>();
+    const resolve = (key: string): NodeId | undefined => {
+      const id = byKey.get(key) ?? NodeId.safeParse(key).data;
+      return id && doc.nodes[id] ? id : undefined;
+    };
 
-  const now = new Date().toISOString();
-
-  // Resolve or create the HLD container branch under root if parentId not provided
-  let containerId = input.parentId;
-  if (!containerId || !doc.nodes[containerId]) {
-    const existingHld = Object.values(doc.nodes).find(
-      (n) =>
-        n.parent === "root" &&
-        n.type === "component" &&
-        (n.label.toLowerCase().includes("mental model") ||
-          n.label.toLowerCase().includes("hld") ||
-          n.label.toLowerCase().includes("architecture")),
-    );
-    if (existingHld) {
-      containerId = existingHld.id;
-    } else {
-      containerId = `n_${nanoid(6)}`;
-      doc.nodes[containerId] = {
-        id: containerId,
-        label: "Code Mental Model (HLD)",
-        type: "component",
-        status: "none",
-        notes: "High-level architecture, data flows, hypotheses, and design decisions",
-        children: [],
-        parent: "root",
-        updatedAt: now,
-      };
-      doc.nodes["root"].children.push(containerId);
-    }
-  }
-
-  const keyToNodeId = new Map<string, string>();
-  // Pre-seed existing node IDs so keys can also refer to existing nodes
-  for (const id of Object.keys(doc.nodes)) {
-    keyToNodeId.set(id, id);
-  }
-
-  // First pass: create or update all nodes
-  for (const item of input.nodes || []) {
-    const existingId = doc.nodes[item.key] ? item.key : undefined;
-    const nodeId = existingId ?? `n_${nanoid(6)}`;
-    keyToNodeId.set(item.key, nodeId);
-
-    if (existingId) {
-      const existingNode = doc.nodes[existingId];
-      existingNode.label = item.label ?? existingNode.label;
-      if (item.type) existingNode.type = item.type;
-      if (item.status) existingNode.status = item.status;
-      if (item.notes) existingNode.notes = item.notes;
-      if (item.files) {
-        for (const f of item.files) upsertNodeFileTouch(existingNode, f);
-      }
-      existingNode.updatedAt = now;
-    } else {
-      doc.nodes[nodeId] = {
-        id: nodeId,
-        label: item.label,
-        type: item.type ?? "component",
-        status: item.status ?? "none",
-        notes: item.notes,
-        files: item.files ? [...item.files] : undefined,
-        children: [],
-        parent: containerId,
-        updatedAt: now,
-      };
-    }
-  }
-
-  // Second pass: wire parent-child relationships
-  for (const item of input.nodes || []) {
-    const nodeId = keyToNodeId.get(item.key)!;
-    const node = doc.nodes[nodeId];
-    const desiredParentId =
-      (item.parentKey && keyToNodeId.get(item.parentKey)) || containerId!;
-
-    if (doc.nodes[desiredParentId] && desiredParentId !== nodeId) {
-      node.parent = desiredParentId;
-      const parent = doc.nodes[desiredParentId];
-      if (!parent.children.includes(nodeId)) {
-        parent.children.push(nodeId);
+    for (const item of input.nodes) {
+      const existingId = resolve(item.key);
+      const status = statusFor(item.type, item.status, item.label);
+      const files = item.files?.map(toFileTouch) ?? [];
+      if (existingId) {
+        let node = getChild(doc, existingId);
+        if (item.type !== node.type) node = retype(node, item.type);
+        node.label = item.label;
+        if (item.notes) node.notes = item.notes;
+        if (status && isTask(node)) node.status = status;
+        for (const f of files) upsertFileTouch(node, f);
+        doc.nodes[node.id] = node;
+        byKey.set(item.key, node.id);
+      } else {
+        const node = createChild({ ...item, status, files, parent: container.id });
+        attachChild(doc, node);
+        byKey.set(item.key, node.id);
       }
     }
-  }
 
-  // Third pass: wire directed flow/concept links
-  let linkCount = 0;
-  for (const link of input.links || []) {
-    const fromId = keyToNodeId.get(link.from);
-    const toId = keyToNodeId.get(link.to);
-    if (fromId && toId && doc.nodes[fromId] && doc.nodes[toId]) {
-      upsertLink(doc, fromId, toId, link.label, link.style, link.notes);
+    for (const item of input.nodes) {
+      const node = getChild(doc, byKey.get(item.key)!);
+      const parentId = (item.parentKey && resolve(item.parentKey)) || container.id;
+      if (parentId === node.id) continue;
+      if (isDescendant(doc, parentId, node.id)) {
+        throw new ToolError(`Can't nest "${node.label}" under its own descendant "${doc.nodes[parentId]?.label}".`);
+      }
+      reparent(doc, node, parentId);
+    }
+
+    let linkCount = 0;
+    for (const link of input.links ?? []) {
+      const from = resolve(link.from);
+      const to = resolve(link.to);
+      if (!from || !to) continue;
+      upsertLink(doc, { ...link, from, to });
       linkCount++;
     }
-  }
 
-  store.recordActivity(
-    doc,
-    `Mapped HLD mental model: ${(input.nodes || []).length} node(s), ${linkCount} flow link(s)`,
-    { nodeId: containerId },
-  );
+    store.recordActivity(doc, `Mapped HLD mental model: ${input.nodes.length} node(s), ${linkCount} flow link(s)`, { nodeId: container.id });
+    await store.save(doc);
+    return doc;
+  },
+});
 
-  await store.save(doc);
-  return doc;
-}
+const updatePlanStatus = defineTool({
+  name: "update_plan_status",
+  description:
+    "Update the status of a plan task ('planned', 'in_progress', 'completed', 'blocked'), with an optional note. Can automatically start the next task by setting nextNodeId.",
+  inputSchema: z.object({
+    mindmapId,
+    nodeId: NodeId.describe("Task node ID to update"),
+    status: Status.describe("New status for the task"),
+    notes: z.string().optional().describe("Status note or completion summary"),
+    nextNodeId: NodeId.optional().describe("ID of the next task node to automatically transition to 'in_progress'"),
+  }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    const task = (id: NodeId) => {
+      const node = getNode(doc, id);
+      if (!isTask(node)) throw new ToolError(`"${node.label}" is a ${node.type} node; only plan/task/code nodes have a status.`);
+      return node;
+    };
+    const node = task(input.nodeId);
+    const next = input.nextNodeId ? task(input.nextNodeId) : undefined;
 
-/* ------------------------------------------------------------------ */
-/*  update_plan_status                                                 */
-/* ------------------------------------------------------------------ */
-
-async function updatePlanStatus(input: UpdatePlanStatusInput): Promise<MindmapDocument | string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
-
-  const node = doc.nodes[input.nodeId];
-  if (!node) return `Node "${input.nodeId}" not found.`;
-
-  const now = new Date().toISOString();
-  node.status = input.status;
-  if (input.notes !== undefined) {
-    node.notes = input.notes;
-  }
-  node.updatedAt = now;
-
-  store.recordActivity(doc, `Task "${node.label}" marked ${input.status}`, {
-    nodeId: node.id,
-  });
-
-  if (input.nextNodeId && doc.nodes[input.nextNodeId]) {
-    const nextNode = doc.nodes[input.nextNodeId];
-    nextNode.status = "in_progress";
-    nextNode.updatedAt = now;
-    store.recordActivity(doc, `Started task "${nextNode.label}"`, {
-      nodeId: nextNode.id,
-    });
-  }
-
-  await store.save(doc);
-  return doc;
-}
-
-/* ------------------------------------------------------------------ */
-/*  log_file_touch                                                     */
-/* ------------------------------------------------------------------ */
-
-async function logFileTouch(input: LogFileTouchInput): Promise<MindmapDocument | string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
-
-  const targetNode = resolveTargetNodeForFile(doc, input.nodeId);
-  const action = input.action ?? "modify";
-  const now = new Date().toISOString();
-  const touch: FileTouch = {
-    path: input.path,
-    action,
-    previousPath: input.previousPath,
-    lines: input.lines,
-    symbols: input.symbols,
-    changes: input.changes,
-    summary: input.summary,
-    timestamp: now,
-  };
-
-  upsertNodeFileTouch(targetNode, touch);
-
-  if (input.createChildNode) {
-    const existingChild = targetNode.children
-      .map((cid) => doc.nodes[cid])
-      .find((c) => c && c.type === "file" && c.label.includes(input.path));
-
-    const label = `${input.path}${input.lines ? `:${input.lines}` : ""}`;
-    if (existingChild) {
-      existingChild.label = label;
-      existingChild.notes = input.summary ?? existingChild.notes;
-      existingChild.updatedAt = now;
-      upsertNodeFileTouch(existingChild, touch);
-    } else {
-      const childId = `n_${nanoid(6)}`;
-      doc.nodes[childId] = {
-        id: childId,
-        label,
-        type: "file",
-        status: action === "read" ? "none" : "completed",
-        notes: input.summary,
-        files: [{ ...touch }],
-        children: [],
-        parent: targetNode.id,
-        updatedAt: now,
-      };
-      targetNode.children.push(childId);
+    node.status = input.status;
+    if (input.notes !== undefined) node.notes = input.notes;
+    node.updatedAt = now();
+    store.recordActivity(doc, `Task "${node.label}" marked ${input.status}`, { nodeId: node.id });
+    if (next) {
+      next.status = "in_progress";
+      next.updatedAt = now();
+      store.recordActivity(doc, `Started task "${next.label}"`, { nodeId: next.id });
     }
-  }
+    await store.save(doc);
+    return doc;
+  },
+});
 
-  const renamedFrom = action === "rename" && input.previousPath ? `${input.previousPath} → ` : "";
-  const tally = describeChanges(input.changes);
-  store.recordActivity(
-    doc,
-    `[${action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${targetNode.label}")`,
-    { nodeId: targetNode.id, file: input.path },
-  );
+const logFileTouch = defineTool({
+  name: "log_file_touch",
+  description:
+    "Record that a file was read, created, modified, renamed, or deleted, plus symbol-level `changes` (add, modify, fix, refactor, rename, remove, test) so the user can follow exactly what is changing. If nodeId is omitted, attaches to the currently in_progress task node.",
+  inputSchema: FileTouchInput.safeExtend({
+    mindmapId,
+    nodeId: NodeId.optional().describe("Task or component node ID. If omitted, attaches to the active in_progress task."),
+    createChildNode: z.boolean().optional().describe("If true, also creates a visible child file node under the task node in the tree"),
+  }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    if (input.nodeId) getNode(doc, input.nodeId);
+    const target = fileTouchTarget(doc, input.nodeId);
+    const touch = toFileTouch(input);
+    upsertFileTouch(target, touch);
 
-  await store.save(doc);
-  return doc;
-}
-
-/* ------------------------------------------------------------------ */
-/*  sync_git_status                                                    */
-/* ------------------------------------------------------------------ */
-
-async function syncGitStatus(input: SyncGitStatusInput): Promise<MindmapDocument | string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
-
-  const workspacePath = input.workspacePath || doc.workspacePath || process.cwd();
-  doc.workspacePath = workspacePath;
-
-  const changes = await inspectGitChanges(workspacePath);
-  if (changes.length === 0) {
-    return `No uncommitted git changes detected in ${workspacePath}.`;
-  }
-
-  const targetNode = resolveTargetNodeForFile(doc, input.targetNodeId);
-  for (const ch of changes) {
-    upsertNodeFileTouch(targetNode, {
-      path: ch.path,
-      action: ch.action,
-      previousPath: ch.previousPath,
-      summary: ch.summary,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  store.recordActivity(
-    doc,
-    `Synced ${changes.length} changed file(s) from git status into "${targetNode.label}"`,
-    { nodeId: targetNode.id },
-  );
-
-  await store.save(doc);
-  ensureWorkspaceWatcher(doc.id, workspacePath);
-  return doc;
-}
-
-/* ------------------------------------------------------------------ */
-/*  get_plan_summary                                                   */
-/* ------------------------------------------------------------------ */
-
-async function getPlanSummary(input: { mindmapId: string }): Promise<string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
-
-  const allNodes = Object.values(doc.nodes);
-  const tasks = allNodes.filter(isPlanTask);
-  const hldNodes = allNodes.filter((n) => n.type && HLD_NODE_TYPES.has(n.type));
-  const completed = tasks.filter((n) => n.status === "completed");
-  const inProgress = tasks.filter((n) => n.status === "in_progress");
-  const blocked = tasks.filter((n) => n.status === "blocked");
-  const planned = tasks.filter((n) => !n.status || n.status === "planned");
-
-  const fileMap = new Map<
-    string,
-    { action: string; tasks: string[]; summary?: string; lines?: string; previousPath?: string; changes: CodeChange[] }
-  >();
-  for (const n of Object.values(doc.nodes)) {
-    for (const f of n.files || []) {
-      const existing = fileMap.get(f.path);
+    if (input.createChildNode) {
+      const label = `${input.path}${input.lines ? `:${input.lines}` : ""}`;
+      const existing = target.children.map((id) => doc.nodes[id]).find((c) => c?.type === "file" && c.label.includes(input.path));
       if (existing) {
-        if (!existing.tasks.includes(n.label)) existing.tasks.push(n.label);
-        if (f.summary) existing.summary = f.summary;
-        if (f.lines) existing.lines = f.lines;
-        if (f.action) existing.action = f.action;
-        if (f.previousPath) existing.previousPath = f.previousPath;
-        existing.changes = mergeChanges(existing.changes, f.changes) ?? [];
+        existing.label = label;
+        existing.notes = input.summary ?? existing.notes;
+        upsertFileTouch(existing, touch);
       } else {
-        fileMap.set(f.path, {
-          action: f.action || "modify",
-          tasks: [n.label],
-          summary: f.summary,
-          lines: f.lines,
-          previousPath: f.previousPath,
-          changes: [...(f.changes || [])],
-        });
+        attachChild(doc, createChild({ type: "file", label, parent: target.id, notes: input.summary, files: [touch] }));
       }
     }
-  }
-  const allChanges = [...fileMap.values()].flatMap((info) => info.changes);
 
-  const pct = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
-  const lines: string[] = [
-    `# Plan & Code Summary: ${doc.title} (${doc.id})`,
-    `Progress: ${completed.length}/${tasks.length} tasks completed (${pct}%)`,
-    `Status Breakdown: ${inProgress.length} in progress · ${planned.length} planned · ${completed.length} completed · ${blocked.length} blocked`,
-    `Mental Model / HLD: ${hldNodes.length} concept node(s) · ${(doc.links || []).length} directed flow link(s)`,
-    `Code Changes: ${describeChanges(allChanges) || "none logged"}`,
-    "",
-  ];
+    const renamedFrom = touch.action === "rename" ? `${touch.previousPath} → ` : "";
+    const tally = describeChanges(input.changes);
+    store.recordActivity(
+      doc,
+      `[${touch.action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${target.label}")`,
+      { nodeId: target.id, file: input.path },
+    );
+    await store.save(doc);
+    return doc;
+  },
+});
 
-  if (inProgress.length > 0) {
-    lines.push("## Currently In Progress");
-    for (const t of inProgress) {
-      lines.push(`- [~] **${t.label}** (\`${t.id}\`)${t.notes ? ` — ${t.notes}` : ""}`);
+const syncGitStatus = defineTool({
+  name: "sync_git_status",
+  description:
+    "Inspect git status and diff in the workspace and automatically attach all modified/created/deleted files to the mindmap.",
+  inputSchema: z.object({
+    mindmapId,
+    workspacePath: z.string().optional().describe("Path to the git repository (defaults to the mindmap's workspacePath)"),
+    targetNodeId: NodeId.optional().describe("Node ID to attach git changes to (defaults to the active in_progress node)"),
+  }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    if (input.targetNodeId) getNode(doc, input.targetNodeId);
+    const workspacePath = input.workspacePath || doc.workspacePath || process.cwd();
+    doc.workspacePath = workspacePath;
+
+    const changes = await inspectGitChanges(workspacePath);
+    if (changes.length === 0) return `No uncommitted git changes detected in ${workspacePath}.`;
+
+    const target = fileTouchTarget(doc, input.targetNodeId);
+    for (const touch of changes) upsertFileTouch(target, touch);
+    store.recordActivity(doc, `Synced ${changes.length} changed file(s) from git status into "${target.label}"`, { nodeId: target.id });
+    await store.save(doc);
+    ensureWorkspaceWatcher(doc.id, workspacePath);
+    return doc;
+  },
+});
+
+const getPlanSummary = defineTool({
+  name: "get_plan_summary",
+  description:
+    "Get a concise status report of the mindmap plan: completion percentage, active tasks, blocked items, HLD concept count, and all touched files with their changes.",
+  inputSchema: z.object({ mindmapId }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    const nodes = Object.values(doc.nodes);
+    const tasks = nodes.filter(isTask);
+    const byStatus = (status: TaskStatus) => tasks.filter((n) => n.status === status);
+    const [planned, inProgress, completed, blocked] = [byStatus("planned"), byStatus("in_progress"), byStatus("completed"), byStatus("blocked")];
+
+    // One entry per path: the latest touch decides the action; changes merge across nodes.
+    const files = new Map<string, { touch: FileTouch; via: string[]; changes: CodeChange[] }>();
+    for (const n of nodes) {
+      for (const f of n.files) {
+        const entry = files.get(f.path) ?? { touch: f, via: [], changes: [] };
+        if (f.timestamp >= entry.touch.timestamp) entry.touch = f;
+        if (!entry.via.includes(n.label)) entry.via.push(n.label);
+        if (f.action !== "read") entry.changes = mergeChanges(entry.changes, f.changes);
+        files.set(f.path, entry);
+      }
     }
-    lines.push("");
-  }
+    const allChanges = [...files.values()].flatMap((e) => e.changes);
 
-  if (blocked.length > 0) {
-    lines.push("## Blocked");
-    for (const t of blocked) {
-      lines.push(`- [!] **${t.label}** (\`${t.id}\`)${t.notes ? ` — ${t.notes}` : ""}`);
-    }
-    lines.push("");
-  }
+    const pct = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
+    const lines: string[] = [
+      `# Plan & Code Summary: ${doc.title} (${doc.id})`,
+      `Progress: ${completed.length}/${tasks.length} tasks completed (${pct}%)`,
+      `Status Breakdown: ${inProgress.length} in progress · ${planned.length} planned · ${completed.length} completed · ${blocked.length} blocked`,
+      `Mental Model / HLD: ${nodes.filter(isConcept).length} concept node(s) · ${doc.links.length} directed flow link(s)`,
+      `Code Changes: ${describeChanges(allChanges) || "none logged"}`,
+      "",
+    ];
+    const section = (title: string, mark: string, items: typeof tasks) => {
+      if (items.length === 0) return;
+      lines.push(`## ${title}`, ...items.map((t) => `- [${mark}] **${t.label}** (\`${t.id}\`)${t.notes ? ` — ${t.notes}` : ""}`), "");
+    };
+    section("Currently In Progress", "~", inProgress);
+    section("Blocked", "!", blocked);
 
-  lines.push(`## Touched Files (${fileMap.size})`);
-  if (fileMap.size === 0) {
-    lines.push("_No files logged yet._");
-  } else {
-    for (const [filePath, info] of fileMap.entries()) {
-      const loc = info.lines ? `:${info.lines}` : "";
-      const sum = info.summary ? ` — ${info.summary}` : "";
-      const from = info.action === "rename" && info.previousPath ? `${info.previousPath} → ` : "";
-      lines.push(`- \`[${info.action.toUpperCase()}]\` **${from}${filePath}${loc}**${sum} _(via: ${info.tasks.join(", ")})_`);
-      for (const c of info.changes) {
-        const name = c.kind === "rename" && c.previousSymbol ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
+    lines.push(`## Touched Files (${files.size})`);
+    if (files.size === 0) lines.push("_No files logged yet._");
+    for (const [path, { touch, via, changes }] of files) {
+      const loc = touch.lines ? `:${touch.lines}` : "";
+      const sum = touch.summary ? ` — ${touch.summary}` : "";
+      const from = touch.action === "rename" ? `${touch.previousPath} → ` : "";
+      lines.push(`- \`[${touch.action.toUpperCase()}]\` **${from}${path}${loc}**${sum} _(via: ${via.join(", ")})_`);
+      for (const c of changes) {
+        const name = c.kind === "rename" ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
         lines.push(`  - ${c.kind}: \`${name}\`${c.detail ? ` — ${c.detail}` : ""}`);
       }
     }
-  }
+    return lines.join("\n");
+  },
+});
 
-  return lines.join("\n");
-}
+const removeNode = defineTool({
+  name: "remove_node",
+  description: "Remove a node and all its descendants from a mindmap. Cannot remove the root.",
+  inputSchema: z.object({ mindmapId, nodeId: NodeId.describe("Node ID to remove") }),
+  async run(input) {
+    const doc = await loadMindmap(input.mindmapId);
+    if (input.nodeId === ROOT_ID) throw new ToolError("Cannot remove the root node. Delete the entire mindmap instead.");
+    const node = getChild(doc, input.nodeId);
 
-/* ------------------------------------------------------------------ */
-/*  remove_node                                                        */
-/* ------------------------------------------------------------------ */
+    const removed = new Set<NodeId>();
+    const collect = (id: NodeId) => {
+      removed.add(id);
+      for (const child of doc.nodes[id]?.children ?? []) collect(child);
+    };
+    collect(node.id);
+    const parent = getNode(doc, node.parent);
+    parent.children = parent.children.filter((id) => id !== node.id);
+    for (const id of removed) delete doc.nodes[id];
+    doc.links = doc.links.filter((l) => !removed.has(l.from) && !removed.has(l.to));
 
-/** Recursively collect all descendant ids. */
-function collectDescendantIds(doc: MindmapDocument, nodeId: string): string[] {
-  const ids: string[] = [nodeId];
-  const node = doc.nodes[nodeId];
-  if (node) {
-    for (const childId of node.children) {
-      ids.push(...collectDescendantIds(doc, childId));
-    }
-  }
-  return ids;
-}
+    store.recordActivity(doc, `Removed node "${node.label}" (${removed.size} node(s))`);
+    await store.save(doc);
+    return doc;
+  },
+});
 
-async function removeNode(input: RemoveNodeInput): Promise<MindmapDocument | string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
+const listMindmaps = defineTool({
+  name: "list_mindmaps",
+  description: "List all stored mindmaps with their IDs, titles, and last updated timestamps.",
+  inputSchema: z.object({}),
+  async run() {
+    const items = await store.list();
+    if (items.length === 0) return "No mindmaps yet.";
+    return items.map((m) => `• ${m.id}  –  "${m.title}" (${m.nodeCount} nodes, updated ${m.updatedAt})`).join("\n");
+  },
+});
 
-  if (input.nodeId === "root") return "Cannot remove the root node. Delete the entire mindmap instead.";
+const getMindmap = defineTool({
+  name: "get_mindmap",
+  description: "Get a mindmap's full data as JSON.",
+  inputSchema: z.object({ mindmapId }),
+  run: (input) => loadMindmap(input.mindmapId),
+});
 
-  const node = doc.nodes[input.nodeId];
-  if (!node) return `Node "${input.nodeId}" not found.`;
+const renderMindmap = defineTool({
+  name: "render_mindmap",
+  description: "Render a mindmap in a digestible format: mermaid (flow chart syntax), text (indented outline), or json.",
+  inputSchema: z.object({ mindmapId, format: z.enum(["mermaid", "text", "json"]).describe("Output format") }),
+  async run(input) {
+    return render(await loadMindmap(input.mindmapId), { format: input.format });
+  },
+});
 
-  // Remove from parent's children list
-  if (node.parent && doc.nodes[node.parent]) {
-    const parent = doc.nodes[node.parent];
-    parent.children = parent.children.filter((c) => c !== input.nodeId);
-  }
-
-  // Collect and delete all descendants
-  const toRemove = new Set(collectDescendantIds(doc, input.nodeId));
-  for (const id of toRemove) {
-    delete doc.nodes[id];
-  }
-
-  // Clean up any directed links referencing removed nodes
-  if (doc.links) {
-    doc.links = doc.links.filter((l) => !toRemove.has(l.from) && !toRemove.has(l.to));
-  }
-
-  store.recordActivity(doc, `Removed node "${node.label}" (${toRemove.size} node(s))`);
-  await store.save(doc);
-  return doc;
-}
-
-/* ------------------------------------------------------------------ */
-/*  list_mindmaps                                                      */
-/* ------------------------------------------------------------------ */
-
-async function listMindmaps(): Promise<string> {
-  const items = await store.list();
-  if (items.length === 0) return "No mindmaps yet.";
-  return items
-    .map((m) => `• ${m.id}  –  "${m.title}" (${m.nodeCount} nodes, updated ${m.updatedAt})`)
-    .join("\n");
-}
-
-/* ------------------------------------------------------------------ */
-/*  render_mindmap                                                     */
-/* ------------------------------------------------------------------ */
-
-async function renderMindmap(input: { mindmapId: string; format: "mermaid" | "text" | "json" }): Promise<string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
-  return render(doc, { format: input.format });
-}
-
-/* ------------------------------------------------------------------ */
-/*  get_mindmap                                                        */
-/* ------------------------------------------------------------------ */
-
-async function getMindmap(input: { mindmapId: string }): Promise<string> {
-  const doc = await store.load(input.mindmapId);
-  if (!doc) return `Mindmap "${input.mindmapId}" not found.`;
-  return JSON.stringify(doc, null, 2);
-}
-
-/* ------------------------------------------------------------------ */
-/*  delete_mindmap                                                     */
-/* ------------------------------------------------------------------ */
-
-async function deleteMindmap(input: { mindmapId: string }): Promise<string> {
-  const ok = await store.remove(input.mindmapId);
-  return ok ? `Mindmap "${input.mindmapId}" deleted.` : `Mindmap "${input.mindmapId}" not found.`;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-function formatToolResult(result: unknown): { content: { type: string; text: string }[] } {
-  const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
-  return { content: [{ type: "text" as const, text }] };
-}
-
-/* ------------------------------------------------------------------ */
-/*  Tool definitions (for MCP server)                                  */
-/* ------------------------------------------------------------------ */
-
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  handler: (args: Record<string, unknown>) => Promise<{ content: { type: string; text: string }[] }>;
-}
+const deleteMindmap = defineTool({
+  name: "delete_mindmap",
+  description: "Delete an entire mindmap and all its nodes.",
+  inputSchema: z.object({ mindmapId }),
+  async run(input) {
+    if (!(await store.remove(input.mindmapId))) throw new ToolError(`Mindmap "${input.mindmapId}" not found.`);
+    return `Mindmap "${input.mindmapId}" deleted.`;
+  },
+});
 
 export const tools: ToolDefinition[] = [
-  {
-    name: "create_mindmap",
-    description:
-      "Create a new mindmap to track a coding plan, touched files, and the agent's mental model / HLD of the code.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        title: { type: "string", description: "Title of the mindmap / task" },
-        rootLabel: { type: "string", description: "Optional label for the root node (defaults to title)" },
-        workspacePath: {
-          type: "string",
-          description: "Optional absolute path to the project workspace/repo for git and file watching",
-        },
-        initialPlan: {
-          type: "array",
-          description: "Optional list of initial plan steps to create under the root node",
-          items: {
-            type: "object",
-            properties: {
-              label: { type: "string", description: "Step title" },
-              type: { type: "string", enum: NODE_TYPE_ENUM },
-              status: {
-                type: "string",
-                enum: ["none", "planned", "in_progress", "completed", "blocked"],
-              },
-              notes: { type: "string", description: "Implementation details or context" },
-              children: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    label: { type: "string" },
-                    type: { type: "string", enum: NODE_TYPE_ENUM },
-                    status: {
-                      type: "string",
-                      enum: ["none", "planned", "in_progress", "completed", "blocked"],
-                    },
-                    notes: { type: "string" },
-                  },
-                  required: ["label"],
-                },
-              },
-            },
-            required: ["label"],
-          },
-        },
-      },
-      required: ["title"],
-    },
-    handler: async (args) => formatToolResult(await createMindmap(args as unknown as CreateMindmapInput)),
-  },
-  {
-    name: "add_node",
-    description:
-      "Add a child node under a parent node. Supports both plan/task nodes ('plan', 'task', 'file', 'note') and semantic code-thinking nodes ('component', 'data_flow', 'hypothesis', 'decision', 'risk').",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        parentId: { type: "string", description: "Parent node ID (use 'root' for top-level steps)" },
-        label: { type: "string", description: "Node label text" },
-        type: {
-          type: "string",
-          enum: NODE_TYPE_ENUM,
-          description: "Semantic type of node (default: 'task')",
-        },
-        status: {
-          type: "string",
-          enum: ["none", "planned", "in_progress", "completed", "blocked"],
-          description: "Initial status of the node",
-        },
-        notes: { type: "string", description: "Optional notes, rationale, hypothesis details, or trade-offs" },
-      },
-      required: ["mindmapId", "parentId", "label"],
-    },
-    handler: async (args) => formatToolResult(await addNode(args as unknown as AddNodeInput)),
-  },
-  {
-    name: "update_node",
-    description: "Update a node's label, status, semantic type, notes, or attached files.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        nodeId: { type: "string", description: "Node ID to update" },
-        label: { type: "string", description: "New label text" },
-        type: {
-          type: "string",
-          enum: NODE_TYPE_ENUM,
-        },
-        status: {
-          type: "string",
-          enum: ["none", "planned", "in_progress", "completed", "blocked"],
-        },
-        notes: { type: "string", description: "Updated notes or context" },
-      },
-      required: ["mindmapId", "nodeId"],
-    },
-    handler: async (args) => formatToolResult(await updateNode(args as unknown as UpdateNodeInput)),
-  },
-  {
-    name: "link_nodes",
-    description:
-      "Create a directed conceptual or data/control-flow link between two nodes (e.g. 'calls', 'streams SSE to', 'mutates', 'depends on', 'triggers').",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        from: { type: "string", description: "Source node ID" },
-        to: { type: "string", description: "Target node ID" },
-        label: { type: "string", description: "Flow or relationship label (e.g. 'calls', 'reads/writes')" },
-        style: {
-          type: "string",
-          enum: ["solid", "dashed", "animated"],
-          description: "Visual line style ('animated' is great for live streams/events, 'dashed' for hypotheses/dependencies)",
-        },
-        notes: { type: "string", description: "Optional details about this relationship or flow" },
-      },
-      required: ["mindmapId", "from", "to", "label"],
-    },
-    handler: async (args) => formatToolResult(await linkNodes(args as unknown as LinkNodesInput)),
-  },
-  {
-    name: "map_architecture",
-    description:
-      "Batch-record the agent's mental model & High-Level Design (HLD) of the codebase: components, data flows, hypotheses, design decisions, risks, and directed flow links between them.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        parentId: {
-          type: "string",
-          description: "Optional parent node ID. If omitted, creates/uses a top-level 'Code Mental Model (HLD)' branch.",
-        },
-        nodes: {
-          type: "array",
-          description: "List of HLD / mental-model nodes to create or update",
-          items: {
-            type: "object",
-            properties: {
-              key: {
-                type: "string",
-                description: "Short symbolic key (e.g. 'mcp_server') or existing nodeId used to reference this node in links/parentKey",
-              },
-              label: { type: "string", description: "Human-readable name of the component, flow, hypothesis, or decision" },
-              type: {
-                type: "string",
-                enum: ["component", "data_flow", "hypothesis", "decision", "risk", "code", "note"],
-                description: "Semantic thinking type (default: 'component')",
-              },
-              status: {
-                type: "string",
-                enum: ["none", "planned", "in_progress", "completed", "blocked"],
-              },
-              notes: { type: "string", description: "How the agent thinks about this piece, why it matters, or trade-offs" },
-              parentKey: {
-                type: "string",
-                description: "Optional key of another node in this call (or existing nodeId) to nest under",
-              },
-              files: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: FILE_TOUCH_PROPERTIES,
-                  required: ["path"],
-                },
-              },
-            },
-            required: ["key", "label"],
-          },
-        },
-        links: {
-          type: "array",
-          description: "Directed flow or dependency links between node keys (or existing node IDs)",
-          items: {
-            type: "object",
-            properties: {
-              from: { type: "string", description: "Source node key or ID" },
-              to: { type: "string", description: "Target node key or ID" },
-              label: { type: "string", description: "Relationship label (e.g. 'routes tool calls to', 'persists JSON via')" },
-              style: { type: "string", enum: ["solid", "dashed", "animated"] },
-              notes: { type: "string" },
-            },
-            required: ["from", "to", "label"],
-          },
-        },
-      },
-      required: ["mindmapId", "nodes"],
-    },
-    handler: async (args) => formatToolResult(await mapArchitecture(args as unknown as MapArchitectureInput)),
-  },
-  {
-    name: "update_plan_status",
-    description:
-      "Update the execution status of a plan/task node (planned, in_progress, completed, blocked) and optionally start the next task node in one call.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        nodeId: { type: "string", description: "Task node ID to update" },
-        status: {
-          type: "string",
-          enum: ["planned", "in_progress", "completed", "blocked"],
-          description: "New status for the task",
-        },
-        notes: { type: "string", description: "Optional status note or completion summary" },
-        nextNodeId: {
-          type: "string",
-          description: "Optional ID of the next task node to automatically transition to 'in_progress'",
-        },
-      },
-      required: ["mindmapId", "nodeId", "status"],
-    },
-    handler: async (args) => formatToolResult(await updatePlanStatus(args as unknown as UpdatePlanStatusInput)),
-  },
-  {
-    name: "log_file_touch",
-    description:
-      "Record that a file was read, created, modified, renamed, or deleted, plus symbol-level `changes` (add, modify, fix, refactor, rename, remove, test) so the user can follow exactly what is changing. If nodeId is omitted, attaches to the currently in_progress task node.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        nodeId: {
-          type: "string",
-          description: "Optional task or component node ID. If omitted, attaches to the active in_progress task.",
-        },
-        ...FILE_TOUCH_PROPERTIES,
-        createChildNode: {
-          type: "boolean",
-          description: "If true, also creates a visible child file node under the task node in the tree",
-        },
-      },
-      required: ["mindmapId", "path"],
-    },
-    handler: async (args) => formatToolResult(await logFileTouch(args as unknown as LogFileTouchInput)),
-  },
-  {
-    name: "sync_git_status",
-    description:
-      "Inspect git status and diff in the workspace and automatically attach all modified/created/deleted files to the mindmap.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        workspacePath: {
-          type: "string",
-          description: "Optional path to the git repository (defaults to mindmap's workspacePath)",
-        },
-        targetNodeId: {
-          type: "string",
-          description: "Optional node ID to attach git changes to (defaults to active in_progress node)",
-        },
-      },
-      required: ["mindmapId"],
-    },
-    handler: async (args) => formatToolResult(await syncGitStatus(args as unknown as SyncGitStatusInput)),
-  },
-  {
-    name: "get_plan_summary",
-    description:
-      "Get a concise status report of the mindmap plan: completion percentage, active tasks, blocked items, HLD concept count, and all touched files.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-      },
-      required: ["mindmapId"],
-    },
-    handler: async (args) => formatToolResult(await getPlanSummary(args as { mindmapId: string })),
-  },
-  {
-    name: "remove_node",
-    description: "Remove a node and all its descendants from a mindmap. Cannot remove the root.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        nodeId: { type: "string", description: "Node ID to remove" },
-      },
-      required: ["mindmapId", "nodeId"],
-    },
-    handler: async (args) => formatToolResult(await removeNode(args as unknown as RemoveNodeInput)),
-  },
-  {
-    name: "list_mindmaps",
-    description: "List all stored mindmaps with their IDs, titles, and last updated timestamps.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-    handler: async () => formatToolResult(await listMindmaps()),
-  },
-  {
-    name: "get_mindmap",
-    description: "Get a mindmap's full data as JSON.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-      },
-      required: ["mindmapId"],
-    },
-    handler: async (args) => formatToolResult(await getMindmap(args as { mindmapId: string })),
-  },
-  {
-    name: "render_mindmap",
-    description: "Render a mindmap in a digestible format: mermaid (flow chart syntax), text (indented outline), or json.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-        format: { type: "string", enum: ["mermaid", "text", "json"], description: "Output format" },
-      },
-      required: ["mindmapId", "format"],
-    },
-    handler: async (args) =>
-      formatToolResult(await renderMindmap(args as { mindmapId: string; format: "mermaid" | "text" | "json" })),
-  },
-  {
-    name: "delete_mindmap",
-    description: "Delete an entire mindmap and all its nodes.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mindmapId: { type: "string", description: "Mindmap ID" },
-      },
-      required: ["mindmapId"],
-    },
-    handler: async (args) => formatToolResult(await deleteMindmap(args as { mindmapId: string })),
-  },
+  createMindmap,
+  addNode,
+  updateNode,
+  linkNodes,
+  mapArchitecture,
+  updatePlanStatus,
+  logFileTouch,
+  syncGitStatus,
+  getPlanSummary,
+  removeNode,
+  listMindmaps,
+  getMindmap,
+  renderMindmap,
+  deleteMindmap,
 ];

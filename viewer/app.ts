@@ -1,25 +1,20 @@
-import { HLD_NODE_TYPES, isPlanTask } from "../src/types.js";
-import type {
-  ChangeKind,
-  CodeChange,
-  FileAction,
-  FileTouch,
-  MindmapDocument,
-  MindmapListItem,
-  MindmapNode,
-  NodeStatus,
-  NodeType,
-} from "../src/types.js";
+import { isChangeKind, isConceptType, isTask, type ChangeKind, type FileAction, type NodeType, type TaskStatus } from "../src/model/kinds.js";
+import type { CodeChange, FileTouch, MindmapDocument, MindmapListItem, MindmapNode, NodeId } from "../src/model/schema.js";
 
 type ViewMode = "all" | "plan" | "hld";
 type SidebarTab = "inspector" | "files" | "activity";
+
+/** The well-known root id (schema.ts's ROOT_ID can't be imported: it would bundle zod). */
+const ROOT = "root" as NodeId;
 
 /** A change as shown in the sidebar; `via` lists the nodes that logged it. */
 type DisplayChange = CodeChange & { via?: string[] };
 
 /** A file aggregated across every node that touched it. */
-interface AggregatedFile extends FileTouch {
-  action: FileAction;
+interface AggregatedFile {
+  /** The latest touch: decides path, action, summary, lines and previous path. */
+  touch: FileTouch;
+  /** Changes from every touch, merged on kind + symbol. */
   changes: Array<CodeChange & { via: string[] }>;
   nodes: MindmapNode[];
 }
@@ -60,20 +55,18 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-const STATUS_LABELS: Record<NodeStatus, string> = {
+const STATUS_LABELS: Record<TaskStatus, string> = {
   planned: "○ Planned",
   in_progress: "◐ In Progress",
   completed: "✔ Completed",
   blocked: "✖ Blocked",
-  none: "",
 };
 
-const STATUS_COLORS: Record<NodeStatus, string> = {
+const STATUS_COLORS: Record<TaskStatus, string> = {
   planned: "#6e6e73",
   in_progress: "#007aff",
   completed: "#15803d",
   blocked: "#dc2626",
-  none: "#6e6e73",
 };
 
 const TYPE_BADGES: Partial<Record<NodeType, string>> = {
@@ -114,7 +107,8 @@ const ACTION_COLORS: Record<FileAction, string> = {
 
 let currentId = decodeURIComponent(location.hash.slice(1));
 let currentDoc: MindmapDocument | null = null;
-let selectedNodeId = "root";
+/** Plain string: it also comes from DOM data attributes; resolve it with nodeById. */
+let selectedNodeId: string = ROOT;
 let highlightedFilePath: string | null = null;
 let changeKindFilter: ChangeKind | null = null;
 let activeTab: SidebarTab = "inspector";
@@ -122,17 +116,22 @@ let viewMode: ViewMode = "all";
 let sessions: MindmapListItem[] = [];
 let sessionQuery = "";
 
-function isChangeKind(kind: string): kind is ChangeKind {
-  return Object.hasOwn(CHANGE_KINDS, kind);
+/** Looks up a node by an untrusted id (URL, DOM attribute). */
+function nodeById(doc: MindmapDocument, id: string): MindmapNode | undefined {
+  return Object.hasOwn(doc.nodes, id) ? doc.nodes[id as NodeId] : undefined;
 }
 
-/** Change kinds on disk may predate the current set; unknown ones display as "modify". */
+/** Uploaded files aren't validated; unknown change kinds display as "modify". */
 function kindOf(change: CodeChange): ChangeKind {
   return isChangeKind(change.kind) ? change.kind : "modify";
 }
 
+function touchChanges(f: FileTouch): readonly CodeChange[] {
+  return f.action === "read" ? [] : f.changes;
+}
+
 function nodeChanges(node: MindmapNode): CodeChange[] {
-  return (node.files || []).flatMap((f) => f.changes || []);
+  return node.files.flatMap(touchChanges);
 }
 
 /** [[kind, count], ...] in display order, non-zero only. */
@@ -156,7 +155,7 @@ function tallyHtml(changes: readonly CodeChange[]) {
 
 function changeRowHtml(c: CodeChange, via?: string) {
   const k = kindOf(c);
-  const name = k === "rename" && c.previousSymbol ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
+  const name = c.kind === "rename" ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
   return `
     <div class="change-row kind-${k}">
       <span class="kind-badge">${CHANGE_KINDS[k].glyph} ${escXml(c.kind)}</span>
@@ -165,15 +164,15 @@ function changeRowHtml(c: CodeChange, via?: string) {
 }
 
 function filePathHtml(f: FileTouch) {
-  const from = f.action === "rename" && f.previousPath ? `${escXml(f.previousPath)} → ` : "";
+  const from = f.action === "rename" ? `${escXml(f.previousPath)} → ` : "";
   return `${from}${escXml(f.path)}${f.lines ? `:${escXml(f.lines)}` : ""}`;
 }
 
 function fileItemHtml(
   f: FileTouch,
-  { changes = f.changes || [], meta = "" }: { changes?: readonly DisplayChange[]; meta?: string } = {}
+  { changes = touchChanges(f), meta = "" }: { changes?: readonly DisplayChange[]; meta?: string } = {}
 ) {
-  const action = f.action || "modify";
+  const action = f.action;
   return `
     <div class="file-item ${highlightedFilePath === f.path ? "active-highlight" : ""}" data-file-path="${escXml(f.path)}">
       <div class="file-header">
@@ -187,29 +186,34 @@ function fileItemHtml(
     </div>`;
 }
 
-function isHldBranchNode(doc: MindmapDocument, nodeId: string) {
-  let cur: MindmapNode | undefined = doc.nodes[nodeId];
+function isHldBranchNode(doc: MindmapDocument, node: MindmapNode) {
+  let cur: MindmapNode | undefined = node;
   while (cur) {
-    if (cur.type && HLD_NODE_TYPES.has(cur.type)) return true;
-    cur = cur.parent ? doc.nodes[cur.parent] : undefined;
+    if (isConceptType(cur.type)) return true;
+    cur = cur.parent === null ? undefined : doc.nodes[cur.parent];
   }
   return false;
 }
 
-function shouldShowNodeInView(doc: MindmapDocument, nodeId: string) {
-  if (nodeId === "root" || viewMode === "all") return true;
-  const isHld = isHldBranchNode(doc, nodeId);
+function shouldShowNodeInView(doc: MindmapDocument, node: MindmapNode) {
+  if (node.type === "root" || viewMode === "all") return true;
+  const isHld = isHldBranchNode(doc, node);
   return viewMode === "hld" ? isHld : !isHld;
+}
+
+function visibleChildren(doc: MindmapDocument, node: MindmapNode): MindmapNode[] {
+  return node.children.flatMap((cid) => {
+    const child = doc.nodes[cid];
+    return child && shouldShowNodeInView(doc, child) ? [child] : [];
+  });
 }
 
 // ── Calculate Dynamic Node Dimensions & Non-Overlapping Tree Layout ──
 function getNodeSize(node: MindmapNode) {
   const w = 235;
-  const fileCount = (node.files || []).length;
+  const fileCount = node.files.length;
   const hasNotes = Boolean(node.notes);
-  const hasStatusOrType =
-    node.id !== "root" &&
-    ((node.status && node.status !== "none") || (node.type && TYPE_BADGES[node.type]));
+  const hasStatusOrType = node.type !== "root" && (isTask(node) || Boolean(TYPE_BADGES[node.type]));
   let h = 44;
   if (hasStatusOrType) h += 16;
   if (hasNotes) h += 16;
@@ -219,66 +223,48 @@ function getNodeSize(node: MindmapNode) {
 }
 
 function layoutTree(doc: MindmapDocument) {
-  const nodes = doc.nodes;
-  if (!nodes || !nodes["root"]) return null;
+  const root = doc.nodes[ROOT];
+  if (!root) return null;
 
   const LEVEL_GAP = 105;
   const SIBLING_GAP = 34;
-  const sizes: Record<string, { w: number; h: number }> = {};
-  const subtreeHeights: Record<string, number> = {};
+  const measured = new Map<NodeId, { size: { w: number; h: number }; subtreeH: number; children: MindmapNode[] }>();
 
-  function measure(nodeId: string): number {
-    const node = nodes[nodeId];
-    if (!node) return 44;
-    const sz = getNodeSize(node);
-    sizes[nodeId] = sz;
-    const validChildren = (node.children || []).filter(
-      (cid) => nodes[cid] && shouldShowNodeInView(doc, cid)
-    );
-    if (validChildren.length === 0) {
-      subtreeHeights[nodeId] = sz.h;
-      return sz.h;
-    }
+  function measure(node: MindmapNode): number {
+    const size = getNodeSize(node);
+    const children = visibleChildren(doc, node);
     let totalChildrenH = 0;
-    for (let i = 0; i < validChildren.length; i++) {
-      totalChildrenH += measure(validChildren[i]);
+    children.forEach((child, i) => {
+      totalChildrenH += measure(child);
       if (i > 0) totalChildrenH += SIBLING_GAP;
-    }
-    const h = Math.max(sz.h, totalChildrenH);
-    subtreeHeights[nodeId] = h;
-    return h;
+    });
+    const subtreeH = Math.max(size.h, totalChildrenH);
+    measured.set(node.id, { size, subtreeH, children });
+    return subtreeH;
   }
 
-  measure("root");
+  const rootH = measure(root);
 
-  const positions: Record<string, NodeBox> = {};
-  function assign(nodeId: string, x: number, centerY: number, depth: number) {
-    const node = nodes[nodeId];
-    if (!node) return;
-    const sz = sizes[nodeId];
-    positions[nodeId] = { x, y: centerY, w: sz.w, h: sz.h, depth };
+  const positions = new Map<NodeId, NodeBox>();
+  function assign(node: MindmapNode, x: number, centerY: number, depth: number) {
+    const m = measured.get(node.id);
+    if (!m) return;
+    const { size, children } = m;
+    positions.set(node.id, { x, y: centerY, w: size.w, h: size.h, depth });
+    if (children.length === 0) return;
 
-    const validChildren = (node.children || []).filter(
-      (cid) => nodes[cid] && shouldShowNodeInView(doc, cid)
-    );
-    if (validChildren.length === 0) return;
-
-    let totalChildrenH = 0;
-    for (let i = 0; i < validChildren.length; i++) {
-      totalChildrenH += subtreeHeights[validChildren[i]];
-      if (i > 0) totalChildrenH += SIBLING_GAP;
-    }
+    const heights = children.map((child) => measured.get(child.id)?.subtreeH ?? 0);
+    const totalChildrenH = heights.reduce((sum, h) => sum + h, 0) + SIBLING_GAP * (children.length - 1);
 
     let cursorY = centerY - totalChildrenH / 2;
-    for (const cid of validChildren) {
-      const chH = subtreeHeights[cid];
-      const childCenterY = cursorY + chH / 2;
-      assign(cid, x + sz.w + LEVEL_GAP, childCenterY, depth + 1);
+    children.forEach((child, i) => {
+      const chH = heights[i] ?? 0;
+      assign(child, x + size.w + LEVEL_GAP, cursorY + chH / 2, depth + 1);
       cursorY += chH + SIBLING_GAP;
-    }
+    });
   }
 
-  assign("root", 60, Math.max(300, subtreeHeights["root"] / 2 + 40), 0);
+  assign(root, 60, Math.max(300, rootH / 2 + 40), 0);
   return positions;
 }
 
@@ -303,7 +289,7 @@ function render(doc: MindmapDocument | null) {
   updateHeaderProgress(doc);
   renderSidebar(doc);
 
-  if (!doc || !doc.nodes || !doc.nodes["root"]) {
+  if (!doc || !doc.nodes[ROOT]) {
     svg.innerHTML = "";
     empty.style.display = "flex";
     return;
@@ -318,8 +304,7 @@ function render(doc: MindmapDocument | null) {
   }
 
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const id in positions) {
-    const p = positions[id];
+  for (const p of positions.values()) {
     minX = Math.min(minX, p.x);
     maxX = Math.max(maxX, p.x + p.w);
     minY = Math.min(minY, p.y - p.h / 2);
@@ -336,36 +321,35 @@ function render(doc: MindmapDocument | null) {
   let flowLinksSvg = "";
   let nodeEls = "";
 
-  for (const id in positions) {
-    const p = positions[id];
+  for (const [id, p] of positions) {
+    const node = nodes[id];
+    if (!node) continue;
     const px = p.x + OFX;
     const py = p.y + OFY;
-    const node = nodes[id];
 
     // Draw cubic bezier tree edges to children
-    if (node && node.children) {
-      for (const cid of node.children) {
-        if (!positions[cid]) continue;
-        const cp = positions[cid];
-        const cpx = cp.x + OFX;
-        const cpy = cp.y + OFY;
-        const childNode = nodes[cid];
-        const mx = (px + p.w + cpx) / 2;
-        let edgeCls = "edge";
-        if (childNode?.status === "in_progress") edgeCls += " edge-active";
-        else if (childNode?.status === "completed") edgeCls += " edge-completed";
-        edges += `<path class="${edgeCls}" d="M${px + p.w},${py} C${mx},${py} ${mx},${cpy} ${cpx},${cpy}"/>`;
-      }
+    for (const cid of node.children) {
+      const cp = positions.get(cid);
+      if (!cp) continue;
+      const cpx = cp.x + OFX;
+      const cpy = cp.y + OFY;
+      const childNode = nodes[cid];
+      const childStatus = childNode && isTask(childNode) ? childNode.status : undefined;
+      const mx = (px + p.w + cpx) / 2;
+      let edgeCls = "edge";
+      if (childStatus === "in_progress") edgeCls += " edge-active";
+      else if (childStatus === "completed") edgeCls += " edge-completed";
+      edges += `<path class="${edgeCls}" d="M${px + p.w},${py} C${mx},${py} ${mx},${cpy} ${cpx},${cpy}"/>`;
     }
 
     // Determine node classes
     const classes = ["node-group"];
-    if (id === "root") classes.push("root");
-    if (node.type) classes.push(`type-${node.type}`);
-    if (node.status && node.status !== "none") classes.push(`status-${node.status}`);
+    if (node.type === "root") classes.push("root");
+    classes.push(`type-${node.type}`);
+    if (isTask(node)) classes.push(`status-${node.status}`);
     if (id === selectedNodeId) classes.push("selected");
     if (
-      (highlightedFilePath && (node.files || []).some((f) => f.path === highlightedFilePath)) ||
+      (highlightedFilePath && node.files.some((f) => f.path === highlightedFilePath)) ||
       (changeKindFilter && nodeChanges(node).some((c) => kindOf(c) === changeKindFilter))
     ) {
       classes.push("file-highlighted");
@@ -378,14 +362,13 @@ function render(doc: MindmapDocument | null) {
       <text class="node-title" x="${px + 12}" y="${cursorY}">${escXml(truncate(node.label, 30))}</text>
     `;
 
-    // Status or Semantic Thinking Type row
-    const typeLabel = node.type && TYPE_BADGES[node.type];
-    const stLabel = node.status && node.status !== "none" ? STATUS_LABELS[node.status] : "";
-    if (id !== "root" && (typeLabel || stLabel)) {
+    // Status (tasks only) or Semantic Thinking Type row
+    const typeLabel = TYPE_BADGES[node.type];
+    const stLabel = isTask(node) ? STATUS_LABELS[node.status] : "";
+    if (node.type !== "root" && (typeLabel || stLabel)) {
       cursorY += 16;
       const combined = [typeLabel, stLabel].filter(Boolean).join("  ·  ");
-      const pillColor =
-        (node.type && TYPE_COLORS[node.type]) || (node.status && STATUS_COLORS[node.status]) || "#6e6e73";
+      const pillColor = TYPE_COLORS[node.type] || (isTask(node) ? STATUS_COLORS[node.status] : "") || "#6e6e73";
       innerContent += `<text class="node-status-pill" fill="${pillColor}" x="${px + 12}" y="${cursorY}">${escXml(combined)}</text>`;
     }
 
@@ -403,21 +386,21 @@ function render(doc: MindmapDocument | null) {
     }
 
     // File chips (up to 2 shown directly on the node card), most recent first
-    const files = [...(node.files || [])].sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
-    const visibleFiles = files.slice(0, 2);
-    for (let i = 0; i < visibleFiles.length; i++) {
+    const files = [...node.files].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    files.slice(0, 2).forEach((f, i) => {
       cursorY += 20;
-      const f = visibleFiles[i];
-      const action = f.action || "modify";
+      const action = f.action;
       const name = f.path.split("/").pop() ?? "";
-      const shownName = action === "rename" && f.previousPath ? `${f.previousPath.split("/").pop()}→${name}` : name;
+      const shownName = f.action === "rename" ? `${f.previousPath.split("/").pop()}→${name}` : name;
       const extraCount = i === 1 && files.length > 2 ? ` +${files.length - 2}` : "";
-      const tallyLen = tallyChanges(f.changes || []).reduce((n, [, c]) => n + String(c).length + 2, 0);
+      const changes = touchChanges(f);
+      const tallyLen = tallyChanges(changes).reduce((n, [, c]) => n + String(c).length + 2, 0);
+      const color = ACTION_COLORS[action] || ACTION_COLORS.modify;
       innerContent += `
-        <rect class="node-file-chip" style="stroke:${ACTION_COLORS[action] || ACTION_COLORS.modify}" x="${px + 10}" y="${cursorY - 12}" width="${p.w - 20}" height="16"/>
-        <text class="node-file-text" x="${px + 15}" y="${cursorY - 1}"><tspan fill="${ACTION_COLORS[action] || ACTION_COLORS.modify}" font-weight="700">${escXml(action[0].toUpperCase())}</tspan> ${escXml(truncate(shownName + extraCount, Math.max(10, 31 - tallyLen)))} ${tallySvg(f.changes || [])}</text>
+        <rect class="node-file-chip" style="stroke:${color}" x="${px + 10}" y="${cursorY - 12}" width="${p.w - 20}" height="16"/>
+        <text class="node-file-text" x="${px + 15}" y="${cursorY - 1}"><tspan fill="${color}" font-weight="700">${escXml(action.charAt(0).toUpperCase())}</tspan> ${escXml(truncate(shownName + extraCount, Math.max(10, 31 - tallyLen)))} ${tallySvg(changes)}</text>
       `;
-    }
+    });
 
     nodeEls += `
       <g class="${classes.join(" ")}" data-node-id="${escXml(id)}">
@@ -427,9 +410,9 @@ function render(doc: MindmapDocument | null) {
   }
 
   // Draw directed concept / data-flow links (doc.links)
-  for (const link of doc.links || []) {
-    const pFrom = positions[link.from];
-    const pTo = positions[link.to];
+  for (const link of doc.links) {
+    const pFrom = positions.get(link.from);
+    const pTo = positions.get(link.to);
     if (!pFrom || !pTo) continue;
 
     const sameColumn = Math.abs(pFrom.x - pTo.x) < 20;
@@ -506,7 +489,7 @@ function render(doc: MindmapDocument | null) {
   document.querySelectorAll<SVGGElement>(".node-group").forEach((el) => {
     el.addEventListener("click", (e) => {
       e.stopPropagation();
-      selectedNodeId = el.dataset.nodeId ?? "root";
+      selectedNodeId = el.dataset.nodeId ?? ROOT;
       activeTab = "inspector";
       changeKindFilter = null;
       updateTabUI();
@@ -522,41 +505,38 @@ function collectStats(doc: MindmapDocument | null): {
   fileMap: Map<string, AggregatedFile>;
 } {
   const fileMap = new Map<string, AggregatedFile>();
-  if (!doc || !doc.nodes) return { tasks: [], completed: [], fileMap };
-  const tasks = Object.values(doc.nodes).filter(isPlanTask);
+  if (!doc) return { tasks: [], completed: [], fileMap };
+  const tasks = Object.values(doc.nodes).filter(isTask);
   const completed = tasks.filter((n) => n.status === "completed");
 
   // Aggregate per path across nodes; the most recent touch decides action/summary.
   // Symbol-level changes merge on kind + symbol (same rule as the server) and remember
   // every node that logged them.
   for (const n of Object.values(doc.nodes)) {
-    for (const f of n.files || []) {
-      let existing = fileMap.get(f.path);
-      const isNew = !existing;
-      if (!existing) {
-        existing = { ...f, action: f.action || "modify", changes: [], nodes: [n] };
-        fileMap.set(f.path, existing);
-      } else if (!existing.nodes.some((x) => x.id === n.id)) {
-        existing.nodes.push(n);
-      }
-      for (const c of f.changes || []) {
-        const same = existing.changes.find((x) => x.kind === c.kind && x.symbol === c.symbol);
-        if (!same) existing.changes.push({ ...c, via: [n.label] });
+    for (const f of n.files) {
+      const existing = fileMap.get(f.path);
+      const agg: AggregatedFile = existing ?? { touch: f, changes: [], nodes: [n] };
+      if (!existing) fileMap.set(f.path, agg);
+      else if (!agg.nodes.some((x) => x.id === n.id)) agg.nodes.push(n);
+
+      for (const c of touchChanges(f)) {
+        const i = agg.changes.findIndex((x) => x.kind === c.kind && x.symbol === c.symbol);
+        const same = agg.changes[i];
+        if (!same) agg.changes.push({ ...c, via: [n.label] });
         else {
-          Object.assign(same, { ...c, detail: c.detail ?? same.detail, via: same.via });
+          agg.changes[i] = { ...c, detail: c.detail ?? same.detail, via: same.via };
           if (!same.via.includes(n.label)) same.via.push(n.label);
         }
       }
-      if (isNew) continue;
-      if ((f.timestamp || "") >= (existing.timestamp || "")) {
-        Object.assign(existing, {
-          action: f.action || existing.action,
-          timestamp: f.timestamp,
-          previousPath: f.previousPath ?? existing.previousPath,
-          summary: f.summary ?? existing.summary,
-          lines: f.lines ?? existing.lines,
-          symbols: f.symbols ?? existing.symbols,
-        });
+      // A newer touch wins, but keeps older details it doesn't restate.
+      if (existing && f.timestamp >= existing.touch.timestamp) {
+        const prev = existing.touch;
+        existing.touch = {
+          ...f,
+          summary: f.summary ?? prev.summary,
+          lines: f.lines ?? prev.lines,
+          symbols: f.symbols ?? prev.symbols,
+        };
       }
     }
   }
@@ -569,14 +549,14 @@ function updateHeaderProgress(doc: MindmapDocument | null) {
   const txt = byId("progress-text");
   const filesTabBtn = byId("tab-files-btn");
 
-  if (!doc || !doc.nodes) {
+  if (!doc) {
     wrap.style.display = "none";
     filesTabBtn.textContent = "Changes (0)";
     return;
   }
 
   const { tasks, completed, fileMap } = collectStats(doc);
-  const changedFiles = [...fileMap.values()].filter((f) => f.action !== "read").length;
+  const changedFiles = [...fileMap.values()].filter((f) => f.touch.action !== "read").length;
   wrap.style.display = "flex";
   const pct = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
   fill.style.width = `${pct}%`;
@@ -586,19 +566,17 @@ function updateHeaderProgress(doc: MindmapDocument | null) {
 
 function renderSidebar(doc: MindmapDocument | null) {
   const container = byId("sidebar-content");
-  if (!doc || !doc.nodes) {
+  if (!doc) {
     container.innerHTML = `<div style="color:var(--muted);font-size:13px;">Load or create a mindmap to inspect plan tasks, HLD concepts, and touched code.</div>`;
     return;
   }
 
   if (activeTab === "inspector") {
-    const node = doc.nodes[selectedNodeId] || doc.nodes["root"];
+    const node = nodeById(doc, selectedNodeId) ?? doc.nodes[ROOT];
     if (!node) return;
-    const status = node.status || "none";
-    const nodeType = node.type || "task";
-    const files = node.files || [];
+    const files = node.files;
 
-    const relatedLinks = (doc.links || []).filter(
+    const relatedLinks = doc.links.filter(
       (l) => l.from === node.id || l.to === node.id
     );
 
@@ -632,8 +610,8 @@ function renderSidebar(doc: MindmapDocument | null) {
       <div class="inspector-card">
         <div class="inspector-title">${escXml(node.label)}</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;">
-          <span class="type-tag ${escXml(nodeType)}">${escXml(TYPE_BADGES[nodeType] || nodeType)}</span>
-          <span class="status-tag ${escXml(status)}">${escXml(status.replace("_", " "))}</span>
+          <span class="type-tag ${escXml(node.type)}">${escXml(TYPE_BADGES[node.type] || node.type)}</span>
+          ${isTask(node) ? `<span class="status-tag ${escXml(node.status)}">${escXml(node.status.replace("_", " "))}</span>` : ""}
           <span style="font-size:11px;color:var(--muted);">ID: <code>${escXml(node.id)}</code></span>
         </div>
       </div>
@@ -653,7 +631,7 @@ function renderSidebar(doc: MindmapDocument | null) {
 
     container.querySelectorAll<HTMLElement>(".link-item").forEach((el) => {
       el.addEventListener("click", () => {
-        selectedNodeId = el.dataset.jumpNode ?? "root";
+        selectedNodeId = el.dataset.jumpNode ?? ROOT;
         render(currentDoc);
       });
     });
@@ -664,9 +642,9 @@ function renderSidebar(doc: MindmapDocument | null) {
       return;
     }
 
-    const all = [...fileMap.values()].sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
-    const changed = all.filter((f) => f.action !== "read");
-    const readOnly = all.filter((f) => f.action === "read");
+    const all = [...fileMap.values()].sort((a, b) => b.touch.timestamp.localeCompare(a.touch.timestamp));
+    const changed = all.filter((f) => f.touch.action !== "read");
+    const readOnly = all.filter((f) => f.touch.action === "read");
     const allChanges = changed.flatMap((f) => f.changes);
 
     const filterChips = [
@@ -686,7 +664,7 @@ function renderSidebar(doc: MindmapDocument | null) {
     const changedHtml = visible.length
       ? visible
           .map(({ f, changes }) =>
-            fileItemHtml(f, {
+            fileItemHtml(f.touch, {
               changes,
               meta: `<div class="file-meta">via ${f.nodes.map((n) => `<b>${escXml(n.label)}</b>`).join(", ")}</div>`,
             })
@@ -696,9 +674,9 @@ function renderSidebar(doc: MindmapDocument | null) {
 
     const readHtml = readOnly
       .map(
-        (f) => `
-        <div class="file-item read-only ${highlightedFilePath === f.path ? "active-highlight" : ""}" data-file-path="${escXml(f.path)}">
-          <div class="file-header"><span class="action-badge read">read</span><span>${filePathHtml(f)}</span></div>
+        ({ touch }) => `
+        <div class="file-item read-only ${highlightedFilePath === touch.path ? "active-highlight" : ""}" data-file-path="${escXml(touch.path)}">
+          <div class="file-header"><span class="action-badge read">read</span><span>${filePathHtml(touch)}</span></div>
         </div>`
       )
       .join("");
@@ -718,7 +696,7 @@ function renderSidebar(doc: MindmapDocument | null) {
       });
     });
   } else if (activeTab === "activity") {
-    const log = doc.activityLog || [];
+    const log = doc.activityLog;
     if (log.length === 0) {
       container.innerHTML = `<div style="color:var(--muted);font-size:12.5px;">No activity recorded yet.</div>`;
       return;
@@ -822,10 +800,8 @@ viewport.addEventListener("wheel", (e) => {
 // ── Load & Refresh Mindmaps ─────────────────────────────────────
 function loadMindmap(doc: MindmapDocument) {
   currentDoc = doc;
-  if (doc && doc.id) currentId = doc.id;
-  if (doc && doc.nodes && !doc.nodes[selectedNodeId]) {
-    selectedNodeId = "root";
-  }
+  currentId = doc.id;
+  if (!nodeById(doc, selectedNodeId)) selectedNodeId = ROOT;
   render(doc);
 }
 
@@ -893,7 +869,7 @@ async function selectSession(id: string | undefined) {
   if (!id || id === currentId) return;
   currentId = id;
   history.replaceState(null, "", `#${encodeURIComponent(id)}`);
-  selectedNodeId = "root";
+  selectedNodeId = ROOT;
   highlightedFilePath = null;
   changeKindFilter = null;
   scale = 1; tx = 0; ty = 0;
@@ -919,7 +895,8 @@ async function init() {
     await fetchMindmapById(currentId);
   } else {
     currentId = "";
-    if (sessions.length > 0) await selectSession(sessions[0].id);
+    const first = sessions[0];
+    if (first) await selectSession(first.id);
   }
 }
 
@@ -936,7 +913,8 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
   const idx = visible.findIndex((s) => s.id === currentId);
   const next = e.key === "ArrowDown" ? Math.min(visible.length - 1, idx + 1) : Math.max(0, idx - 1);
-  selectSession(visible[next].id);
+  const target = visible[next];
+  if (target) selectSession(target.id);
 });
 
 if (localStorage.getItem("synapse.sessionsCollapsed") === "1") document.body.classList.add("sessions-collapsed");

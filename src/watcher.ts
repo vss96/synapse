@@ -2,9 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { watch, existsSync, type FSWatcher } from "node:fs";
 import path from "node:path";
-import { nanoid } from "nanoid";
 import * as store from "./store.js";
-import type { CodeChange, FileAction, FileTouch, MindmapDocument, MindmapNode } from "./types.js";
+import { fileTouchTarget, upsertFileTouch } from "./model/file-touch.js";
+import { MindmapId, now, type EditTouch } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,17 +30,11 @@ function shouldIgnorePath(relPath: string): boolean {
   return false;
 }
 
-export interface GitFileChange {
-  path: string;
-  action: FileAction;
-  previousPath?: string;
-  summary: string;
-}
-
 /**
- * Inspect git status and diff --numstat in a workspace directory.
+ * Inspect git status and diff --numstat in a workspace directory. Staged renames
+ * (`R old -> new`) are reported as renames; everything else as create, modify or delete.
  */
-export async function inspectGitChanges(workspacePath: string): Promise<GitFileChange[]> {
+export async function inspectGitChanges(workspacePath: string): Promise<EditTouch[]> {
   if (!existsSync(workspacePath)) {
     throw new Error(`Workspace path does not exist: ${workspacePath}`);
   }
@@ -59,135 +53,28 @@ export async function inspectGitChanges(workspacePath: string): Promise<GitFileC
     }
   }
 
-  const changes: GitFileChange[] = [];
+  const changes: EditTouch[] = [];
+  const timestamp = now();
   for (const line of statusOut.split("\n")) {
     if (!line.trim() || line.length < 4) continue;
     const code = line.slice(0, 2);
-    let filePath = line.slice(3).trim();
-    let previousPath: string | undefined;
-    if (filePath.includes(" -> ")) {
-      const [from, to] = filePath.split(" -> ");
-      previousPath = from.trim();
-      filePath = to.trim();
-    }
-    if (shouldIgnorePath(filePath)) continue;
-
-    let action: FileAction = "modify";
-    if (code.includes("R") && previousPath) {
-      action = "rename";
-    } else if (code.includes("?") || code.includes("A")) {
-      action = "create";
-    } else if (code.includes("D")) {
-      action = "delete";
-    }
+    const [from, to] = line.slice(3).trim().split(" -> ");
+    const filePath = (to ?? from ?? "").trim();
+    const previousPath = to !== undefined ? from?.trim() : undefined;
+    if (!filePath || shouldIgnorePath(filePath)) continue;
 
     const diffStat = statsMap.get(filePath);
-    const summary = diffStat
-      ? `Git ${action} (${diffStat})`
-      : `Git ${action}`;
-
-    changes.push({ path: filePath, action, summary, ...(action === "rename" ? { previousPath } : {}) });
+    const describe = (action: string) => (diffStat ? `Git ${action} (${diffStat})` : `Git ${action}`);
+    const common = { path: filePath, changes: [], timestamp };
+    if (code.includes("R") && previousPath) {
+      changes.push({ ...common, action: "rename", previousPath, summary: describe("rename") });
+    } else {
+      const action = code.includes("?") || code.includes("A") ? "create" : code.includes("D") ? "delete" : "modify";
+      changes.push({ ...common, action, summary: describe(action) });
+    }
   }
 
   return changes;
-}
-
-/**
- * Find the best target node in a mindmap to attach a file touch to:
- * 1. Explicit nodeId if provided and exists
- * 2. The most recently updated node with status === "in_progress"
- * 3. A dedicated "Touched Files" node under root (created if needed)
- */
-export function resolveTargetNodeForFile(
-  doc: MindmapDocument,
-  explicitNodeId?: string,
-): MindmapNode {
-  if (explicitNodeId && doc.nodes[explicitNodeId]) {
-    return doc.nodes[explicitNodeId];
-  }
-
-  // Find an in_progress node
-  const inProgressNodes = Object.values(doc.nodes).filter(
-    (n) => n.status === "in_progress" && n.id !== "root",
-  );
-  if (inProgressNodes.length > 0) {
-    inProgressNodes.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
-    return inProgressNodes[0];
-  }
-
-  // Find or create "Touched Files" node under root
-  const root = doc.nodes["root"];
-  const existingFilesNode = Object.values(doc.nodes).find(
-    (n) => n.parent === "root" && (n.label === "Touched Files" || n.type === "file"),
-  );
-  if (existingFilesNode) {
-    return existingFilesNode;
-  }
-
-  const id = `n_${nanoid(6)}`;
-  const filesNode: MindmapNode = {
-    id,
-    label: "Touched Files",
-    type: "file",
-    status: "in_progress",
-    children: [],
-    parent: "root",
-    files: [],
-    updatedAt: new Date().toISOString(),
-  };
-  doc.nodes[id] = filesNode;
-  if (root) {
-    root.children.push(id);
-  }
-  return filesNode;
-}
-
-/** Merge symbol-level changes; a later change with the same kind + symbol replaces the earlier one. */
-export function mergeChanges(prev: CodeChange[] | undefined, next: CodeChange[] | undefined): CodeChange[] | undefined {
-  if (!Array.isArray(next) || next.length === 0) return prev;
-  const merged = [...(prev ?? [])];
-  for (const change of next) {
-    const idx = merged.findIndex((c) => c.kind === change.kind && c.symbol === change.symbol);
-    if (idx >= 0) merged[idx] = { ...merged[idx], ...change };
-    else merged.push(change);
-  }
-  return merged;
-}
-
-/**
- * Upsert a FileTouch entry onto a node. A rename with `previousPath` absorbs the
- * entry previously recorded under the old path.
- */
-export function upsertNodeFileTouch(node: MindmapNode, touch: FileTouch): void {
-  if (!node.files) {
-    node.files = [];
-  }
-  const now = new Date().toISOString();
-  const normalizedTouch: FileTouch = {
-    ...touch,
-    action: touch.action || "modify",
-    timestamp: touch.timestamp || now,
-  };
-
-  let existingIdx = node.files.findIndex((f) => f.path === normalizedTouch.path);
-  if (existingIdx < 0 && normalizedTouch.action === "rename" && normalizedTouch.previousPath) {
-    existingIdx = node.files.findIndex((f) => f.path === normalizedTouch.previousPath);
-  }
-  if (existingIdx >= 0) {
-    const prev = node.files[existingIdx];
-    node.files[existingIdx] = {
-      ...prev,
-      ...normalizedTouch,
-      previousPath: normalizedTouch.previousPath ?? prev.previousPath,
-      symbols: normalizedTouch.symbols ?? prev.symbols,
-      changes: mergeChanges(prev.changes, normalizedTouch.changes),
-      lines: normalizedTouch.lines ?? prev.lines,
-      summary: normalizedTouch.summary ?? prev.summary,
-    };
-  } else {
-    node.files.push(normalizedTouch);
-  }
-  node.updatedAt = now;
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,13 +83,13 @@ export function upsertNodeFileTouch(node: MindmapNode, touch: FileTouch): void {
 
 const activeWatchers = new Map<string, FSWatcher>();
 
-export function ensureWorkspaceWatcher(mindmapId: string, workspacePath?: string): void {
+export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: string): void {
   if (!workspacePath || !existsSync(workspacePath)) return;
   const resolved = path.resolve(workspacePath);
   const key = `${mindmapId}:${resolved}`;
   if (activeWatchers.has(key)) return;
 
-  const pendingFiles = new Map<string, FileAction>();
+  const pendingFiles = new Map<string, "create" | "modify" | "delete">();
   let debounceTimer: NodeJS.Timeout | null = null;
 
   const flush = async () => {
@@ -214,25 +101,12 @@ export function ensureWorkspaceWatcher(mindmapId: string, workspacePath?: string
     const doc = await store.load(mindmapId);
     if (!doc) return;
 
-    const targetNode = resolveTargetNodeForFile(doc);
-    let changed = false;
-
+    const targetNode = fileTouchTarget(doc);
     for (const [relPath, action] of batch) {
-      upsertNodeFileTouch(targetNode, {
-        path: relPath,
-        action,
-        summary: `Auto-detected file ${action}`,
-      });
-      store.recordActivity(doc, `File ${action}: ${relPath}`, {
-        nodeId: targetNode.id,
-        file: relPath,
-      });
-      changed = true;
+      upsertFileTouch(targetNode, { path: relPath, action, changes: [], summary: `Auto-detected file ${action}`, timestamp: now() });
+      store.recordActivity(doc, `File ${action}: ${relPath}`, { nodeId: targetNode.id, file: relPath });
     }
-
-    if (changed) {
-      await store.save(doc);
-    }
+    await store.save(doc);
   };
 
   try {
@@ -243,7 +117,7 @@ export function ensureWorkspaceWatcher(mindmapId: string, workspacePath?: string
 
       const fullPath = path.join(resolved, filename);
       const exists = existsSync(fullPath);
-      const action: FileAction = !exists
+      const action: "create" | "modify" | "delete" = !exists
         ? "delete"
         : eventType === "rename"
           ? "create"

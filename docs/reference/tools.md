@@ -19,12 +19,12 @@ The Synapse server provides 14 tools. Agents normally only need the first five. 
 | [`render_mindmap`](#render-mindmap) | Render as Mermaid, text, or JSON |
 | [`delete_mindmap`](#delete-mindmap) | Delete a mindmap |
 
-**Return values.** Tools that modify a mindmap return the full updated document as JSON, so the agent can read back generated node IDs. If a mindmap or node isn't found, the tool returns a plain-text message such as `Mindmap "mm_x" not found.` instead of the document. Mindmap IDs must match `[A-Za-z0-9_-]+`. Any other ID is treated as not found. Unexpected errors are returned as MCP tool errors.
+**Return values.** Tools that modify a mindmap return the full updated document as JSON, so the agent can read back generated node IDs. Every input is validated before anything changes. Invalid input (an unknown enum value, a rename without `previousPath`, an ID with characters outside `[A-Za-z0-9_-]`) and impossible requests (an unknown mindmap or node, a status on a node that isn't a task) come back as MCP tool errors (`isError: true`) with a message saying what to fix, and nothing is saved.
 
 **Enums used below**
 
 - *NodeType*: `plan`, `task`, `file`, `code`, `note`, `component`, `data_flow`, `hypothesis`, `decision`, `risk`
-- *NodeStatus*: `none`, `planned`, `in_progress`, `completed`, `blocked`
+- *TaskStatus*: `planned`, `in_progress`, `completed`, `blocked`. Only task nodes (`plan`, `task`, `code`) have a status; setting one on any other node is an error.
 - *FileAction*: `read`, `create`, `modify`, `delete`, `rename`
 - *ChangeKind*: `add`, `modify`, `fix`, `refactor`, `rename`, `remove`, `test`
 - *LinkStyle*: `solid`, `dashed`, `animated`
@@ -42,7 +42,7 @@ Create a new mindmap to track a coding plan, touched files, and the agent's ment
 | `workspacePath` | string | | Absolute path to the project workspace/repo. It's used by git sync, and it starts the [workspace watcher](../guide/how-it-works#workspace-watcher). |
 | `initialPlan` | PlanItem[] | | Plan steps to create under the root |
 
-*PlanItem*: `{ label: string (required), type?: NodeType, status?: NodeStatus, notes?: string, children?: PlanItem[] }`. Children are one level deep, so they don't have their own `children`. `type` defaults to `task` and `status` defaults to `planned`.
+*PlanItem*: `{ label: string (required), type?: NodeType, status?: TaskStatus, notes?: string, children?: PlanItem[] }`. Children are one level deep, so they don't have their own `children`. `type` defaults to `task` and `status` defaults to `planned`.
 
 ```json
 {
@@ -74,7 +74,7 @@ Batch-record the agent's mental model & High-Level Design (HLD) of the codebase:
 | `key` | string | ✓ | A short key (such as `mcp_server`) used to refer to this node in `links` and `parentKey`. If it matches an existing node ID, that node is **updated** instead of created. |
 | `label` | string | ✓ | Name of the component, flow, hypothesis, or decision |
 | `type` | string | | One of `component` (default), `data_flow`, `hypothesis`, `decision`, `risk`, `code`, `note` |
-| `status` | NodeStatus | | Defaults to `none` |
+| `status` | TaskStatus | | Task types only |
 | `notes` | string | | How the agent thinks about this piece, why it matters, trade-offs |
 | `parentKey` | string | | Key from this call, or an existing node ID, to nest this node under |
 | `files` | FileTouch[] | | Files that implement this concept (same fields as [`log_file_touch`](#log-file-touch); `path` required) |
@@ -181,7 +181,7 @@ Add a child node under a parent. This works for plan nodes (`plan`, `task`, `fil
 | `parentId` | string | ✓ | Parent node ID. Use `root` for top-level steps. |
 | `label` | string | ✓ | Node label |
 | `type` | NodeType | | Defaults to `task` |
-| `status` | NodeStatus | | Defaults to `planned` for plan nodes and `none` for concepts and notes |
+| `status` | TaskStatus | | Task types only; defaults to `planned` |
 | `notes` | string | | Notes, rationale, hypothesis details, or trade-offs |
 
 ## `update_node`
@@ -194,7 +194,7 @@ Update a node's label, status, type, or notes.
 | `nodeId` | string | ✓ | Node to update |
 | `label` | string | | New label |
 | `type` | NodeType | | New type |
-| `status` | NodeStatus | | New status |
+| `status` | TaskStatus | | New status |
 | `notes` | string | | New notes |
 
 ## `remove_node`

@@ -9,8 +9,11 @@ import { watch, type FSWatcher } from "node:fs";
 import { connect } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import * as store from "./store.js";
-import { inspectGitChanges, resolveTargetNodeForFile, upsertNodeFileTouch } from "./watcher.js";
+import { fileTouchTarget, upsertFileTouch } from "./model/file-touch.js";
+import { MindmapId } from "./model/schema.js";
+import { inspectGitChanges } from "./watcher.js";
 
 export const DEFAULT_VIEWER_PORT = 4040;
 /** Ports tried after the default before letting the OS pick one. */
@@ -56,25 +59,34 @@ function isTrustedRequest(req: IncomingMessage, port: number): boolean {
   return origin === undefined || allowedHosts.has(origin.replace(/^http:\/\//, ""));
 }
 
+const SyncGitRequest = z.object({ mindmapId: MindmapId, workspacePath: z.string().optional() });
+
 async function handleGitSync(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!(req.headers["content-type"] ?? "").startsWith("application/json")) {
     return sendJson(res, 415, { error: "Expected application/json" });
   }
   let body = "";
   for await (const chunk of req) body += chunk;
-  const { mindmapId, workspacePath } = JSON.parse(body || "{}") as { mindmapId?: unknown; workspacePath?: unknown };
-  if (!store.isValidMindmapId(mindmapId)) return sendJson(res, 400, { error: "A valid mindmapId is required" });
+  let json: unknown;
+  try {
+    json = JSON.parse(body || "{}");
+  } catch {
+    return sendJson(res, 400, { error: "Body must be JSON" });
+  }
+  const request = SyncGitRequest.safeParse(json);
+  if (!request.success) return sendJson(res, 400, { error: "A valid mindmapId is required" });
+  const { mindmapId, workspacePath } = request.data;
 
   const doc = await store.load(mindmapId);
   if (!doc) return sendJson(res, 404, { error: "Mindmap not found" });
 
-  const repoPath = typeof workspacePath === "string" && workspacePath ? workspacePath : doc.workspacePath;
+  const repoPath = workspacePath || doc.workspacePath;
   if (!repoPath) return sendJson(res, 400, { error: "This mindmap has no workspacePath to sync from" });
 
   const changes = await inspectGitChanges(repoPath);
   if (changes.length > 0) {
-    const target = resolveTargetNodeForFile(doc);
-    for (const ch of changes) upsertNodeFileTouch(target, ch);
+    const target = fileTouchTarget(doc);
+    for (const touch of changes) upsertFileTouch(target, touch);
     store.recordActivity(doc, `Synced ${changes.length} changed file(s) from git into "${target.label}"`, {
       nodeId: target.id,
     });
@@ -193,7 +205,8 @@ export async function startViewer(options: ViewerOptions = {}): Promise<RunningV
         return sendJson(res, 200, await store.list());
       }
       if (pathname.startsWith("/api/mindmaps/") && req.method === "GET") {
-        const doc = await store.load(decodeURIComponent(pathname.slice("/api/mindmaps/".length)));
+        const id = MindmapId.safeParse(decodeURIComponent(pathname.slice("/api/mindmaps/".length)));
+        const doc = id.success ? await store.load(id.data) : null;
         return doc ? sendJson(res, 200, doc) : sendJson(res, 404, { error: "Mindmap not found" });
       }
       if (pathname === "/api/sync-git" && req.method === "POST") {
