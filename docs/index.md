@@ -6,8 +6,8 @@ hero:
   text: A live mindmap of what your coding agent is planning, thinking, and changing
   tagline: An MCP server and web viewer for Claude Code, Claude Desktop, Cursor, OpenCode, Codex, Windsurf, and any other MCP client.
   image:
-    src: /logo.png
-    alt: Synapse
+    src: /hero.svg
+    alt: A Synapse mindmap drawn as a network of neurons
   actions:
     - theme: brand
       text: Get Started

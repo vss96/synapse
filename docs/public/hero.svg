@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" role="img" aria-labelledby="t">
+  <title id="t">A Synapse mindmap: an agent's plan drawn as a network of neurons, with signals flowing from the task to its steps</title>
+  <defs>
+    <radialGradient id="soma-glow">
+      <stop offset="0" stop-color="#7aa7ff" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#7aa7ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="soma" cx="0.4" cy="0.35">
+      <stop offset="0" stop-color="#2c3d66"/>
+      <stop offset="1" stop-color="#141c33"/>
+    </radialGradient>
+    <style>
+      text { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #e6edf7; }
+      .axon { fill: none; stroke: #6f8fcf; stroke-width: 2.5; stroke-linecap: round; }
+      .thin { stroke-width: 1.5; stroke-opacity: 0.8; }
+      .flow { fill: none; stroke: #a78bfa; stroke-width: 1.5; stroke-dasharray: 5 5; animation: dash 1.2s linear infinite; }
+      .bulb { fill: #9cc2ff; }
+      .pill { fill: #121a2f; stroke: #2b3a5e; }
+      .pulse { fill: #e8f0ff; opacity: 0; animation: travel 3s ease-in infinite; }
+      .ring { fill: none; stroke: #60a5fa; transform-box: fill-box; transform-origin: center; animation: ring 2s ease-out infinite; }
+      @keyframes travel { 0% { offset-distance: 0%; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }
+      @keyframes dash { to { stroke-dashoffset: -10; } }
+      @keyframes ring { from { transform: scale(1); opacity: 0.9; } to { transform: scale(2.6); opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .pulse, .ring { display: none; } .flow { animation: none; } }
+    </style>
+  </defs>
+
+  <rect width="480" height="480" rx="40" fill="#0b1020"/>
+
+  <!-- background network -->
+  <g stroke="#3a4b75" stroke-opacity="0.35" stroke-width="1" fill="#5a6f9f" fill-opacity="0.45">
+    <path d="M30 230 90 205 60 160M90 205 150 240M420 260 455 300 440 230M205 440 260 455 300 425M180 40 240 25 300 50" fill="none"/>
+    <circle cx="30" cy="230" r="2"/><circle cx="90" cy="205" r="2.5"/><circle cx="60" cy="160" r="2"/><circle cx="150" cy="240" r="2"/>
+    <circle cx="420" cy="260" r="2"/><circle cx="455" cy="300" r="2"/><circle cx="440" cy="230" r="2.5"/>
+    <circle cx="205" cy="440" r="2"/><circle cx="260" cy="455" r="2.5"/><circle cx="300" cy="425" r="2"/>
+    <circle cx="180" cy="40" r="2"/><circle cx="240" cy="25" r="2.5"/><circle cx="300" cy="50" r="2"/>
+  </g>
+
+  <!-- axons from the root task to its steps -->
+  <path id="a1" class="axon" d="M240 240 C 200 190, 140 165, 120 115"/>
+  <path id="a2" class="axon" d="M240 240 C 285 195, 345 170, 365 125"/>
+  <path id="a3" class="axon" d="M240 240 C 200 290, 135 315, 111 365"/>
+  <path class="axon thin" d="M392 125 C 400 150, 398 168, 392 186"/>
+  <path class="flow" d="M392 214 C 400 260, 390 320, 380 365"/>
+  <text x="402" y="295" style="font-size:11px;fill:#a99bd6">calls</text>
+
+  <!-- synaptic terminals -->
+  <circle class="bulb" cx="120" cy="115" r="4"/>
+  <circle class="bulb" cx="365" cy="125" r="4"/>
+  <circle class="bulb" cx="111" cy="365" r="4"/>
+  <circle class="bulb" cx="392" cy="186" r="3"/>
+
+  <!-- signals -->
+  <circle class="pulse" r="3.5" style="offset-path: path('M240 240 C 200 190, 140 165, 120 115')"/>
+  <circle class="pulse" r="3.5" style="offset-path: path('M240 240 C 285 195, 345 170, 365 125'); animation-delay: 1s"/>
+  <circle class="pulse" r="3.5" style="offset-path: path('M240 240 C 200 290, 135 315, 111 365'); animation-delay: 2s"/>
+
+  <!-- root: the soma -->
+  <circle cx="240" cy="240" r="80" fill="url(#soma-glow)"/>
+  <g stroke="#6f8fcf" stroke-width="2" stroke-linecap="round" fill="none">
+    <path d="M206 262 188 280M274 262 290 284M240 278 242 300M210 220 192 214"/>
+  </g>
+  <circle cx="240" cy="240" r="40" fill="url(#soma)" stroke="#9cc2ff" stroke-width="2"/>
+  <text x="240" y="236" text-anchor="middle">refactor</text>
+  <text x="240" y="253" text-anchor="middle">auth</text>
+
+  <!-- completed -->
+  <rect class="pill" x="56" y="85" width="128" height="30" rx="15"/>
+  <circle cx="71" cy="100" r="5" fill="#34d399"/>
+  <text x="84" y="105">read config</text>
+
+  <!-- in progress -->
+  <rect class="pill" x="280" y="95" width="176" height="30" rx="15" style="stroke:#3b5b99"/>
+  <circle class="ring" cx="295" cy="110" r="5"/>
+  <circle cx="295" cy="110" r="5" fill="#60a5fa"/>
+  <text x="308" y="115">fix validateToken</text>
+
+  <!-- planned -->
+  <rect class="pill" x="55" y="365" width="112" height="30" rx="15"/>
+  <circle cx="70" cy="380" r="4.5" fill="none" stroke="#7b8aa6" stroke-width="1.5"/>
+  <text x="83" y="385">add tests</text>
+
+  <!-- touched file -->
+  <rect class="pill" x="349" y="186" width="86" height="28" rx="6"/>
+  <text x="363" y="205" style="fill:#9fb0cc">auth.ts</text>
+
+  <!-- architecture component -->
+  <rect class="pill" x="320" y="365" width="122" height="30" rx="6" style="stroke:#5b4a9a"/>
+  <rect x="331" y="375" width="10" height="10" rx="2" fill="#a78bfa"/>
+  <text x="349" y="385">TokenStore</text>
+</svg>

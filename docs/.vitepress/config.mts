@@ -12,10 +12,13 @@ export default defineConfig({
   srcExclude: ['HANDOFF.md', 'public/LOGO-CREDITS.md'],
 
   // Head links are not prefixed with `base` automatically.
-  head: [['link', { rel: 'icon', type: 'image/png', href: `${base}favicon.png` }]],
+  head: [
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}icon.svg` }],
+    ['link', { rel: 'icon', type: 'image/png', href: `${base}favicon.png` }],
+  ],
 
   themeConfig: {
-    logo: '/logo.png',
+    logo: '/icon.svg',
 
     nav: [
       { text: 'Guide', link: '/guide/getting-started', activeMatch: '/guide/' },
