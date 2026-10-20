@@ -32,13 +32,14 @@
     "docs/public/favicon.png"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc && tsc -p viewer && bun build viewer/app.ts --outdir dist/web",
+    "build": "rm -rf dist && tsc && tsc -p viewer && npm run build:web",
+    "build:web": "esbuild viewer/app.ts --bundle --format=esm --platform=browser --outdir=dist/web --log-level=warning",
     "build:watch": "tsc --watch",
-    "prepack": "bun run build",
+    "prepack": "npm run build",
     "start": "node dist/index.js",
     "dev": "bun --watch src/index.ts",
     "viewer": "bun run build && SYNAPSE_DATA_DIR=./data node dist/cli.js viewer",
-    "test": "tsc -p tests && bun test",
+    "test": "tsc -p tests && npm run build:web && bun test",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
@@ -55,6 +56,7 @@
   "devDependencies": {
     "@types/bun": "^1.2.0",
     "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.0",
     "vitepress": "^1.6.4"
   }

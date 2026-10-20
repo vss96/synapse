@@ -13,8 +13,9 @@ bun install
 
 | Command | What it does |
 |---|---|
-| `bun test` | Runs the test suite (`bun:test`, in `tests/`) |
-| `bun run build` | Removes `dist/`, compiles `src/` to `dist/` with `tsc`, type-checks the browser code (`tsc -p viewer`), and bundles `viewer/app.ts` to `dist/web/app.js` |
+| `bun run test` | Type-checks the tests, bundles the viewer app (the viewer tests need it), and runs the test suite (`bun:test`, in `tests/`) |
+| `bun run build` | Removes `dist/`, compiles `src/` to `dist/` with `tsc`, type-checks the browser code (`tsc -p viewer`), and bundles `viewer/app.ts` to `dist/web/app.js` with esbuild. It doesn't need Bun, so `npm run build` works too |
+| `bun run build:web` | Only bundles `viewer/app.ts` to `dist/web/app.js` |
 | `bun run dev` | Runs the MCP server from source with `--watch` |
 | `bun run viewer` | Builds, then serves the viewer against the repository's `./data` |
 | `bun run docs:dev` | Starts the docs dev server |
@@ -41,7 +42,7 @@ src/
   version.ts       Package version
 viewer/
   index.html       Viewer markup and CSS
-  app.ts           Browser code (strict TypeScript, bundled by Bun to dist/web/app.js)
+  app.ts           Browser code (strict TypeScript, bundled by esbuild to dist/web/app.js)
   tsconfig.json    DOM type-check for app.ts
 tests/             bun:test suites: model, store-renderer, tools, viewer, installer
 docs/              This site (VitePress); docs/public holds the logo and favicon
@@ -97,7 +98,7 @@ Releases are published by GitHub Actions ([`.github/workflows/publish.yml`](http
    git push origin v1.2.0
    ```
 
-The workflow fails unless the tag is `v` plus the `package.json` version. It runs the typecheck and tests, then `npm publish --provenance`. `prepack` runs `bun run build`, so the published package is always a fresh build. Run `npm pack --dry-run` locally to check exactly which files will be published.
+The workflow fails unless the tag is `v` plus the `package.json` version. It runs the typecheck and tests, then `npm publish --provenance`. `prepack` runs `npm run build`, so the published package is always a fresh build. Run `npm pack --dry-run` locally to check exactly which files will be published.
 
 The workflow has no npm token. It authenticates with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers), and npm records provenance linking each version to the commit and workflow run that built it.
 

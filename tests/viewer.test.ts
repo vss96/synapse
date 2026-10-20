@@ -1,10 +1,10 @@
-import { describe, it, beforeAll, afterAll, expect } from "bun:test";
+import { describe, it, beforeAll, afterAll, expect, spyOn } from "bun:test";
 import { createServer, request, type Server } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
-import { startViewer, type RunningViewer } from "../src/viewer.js";
+import { missingAssets, startViewer, type RunningViewer } from "../src/viewer.js";
 import { addChild, emptyDoc } from "./fixtures.js";
 
 /** Raw HTTP so tests can set Host/Origin like a browser on another site would. */
@@ -93,5 +93,23 @@ describe("viewer server", () => {
     expect((await sync({ "content-type": "application/json" }, JSON.stringify({ mindmapId: "../../x" }))).status).toBe(400);
     // No workspacePath on this mindmap, so a legitimate request is refused without touching git.
     expect((await sync({ "content-type": "application/json", origin: `http://localhost:${viewer.port}` })).status).toBe(400);
+  });
+
+  it("logs requests that fail with a 500", async () => {
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const body = JSON.stringify({ mindmapId: "mm_test", workspacePath: path.join(tmpDir, "no-such-dir") });
+      const res = await call(viewer.port, { method: "POST", path: "/api/sync-git", headers: { "content-type": "application/json" }, body });
+      expect(res.status).toBe(500);
+      expect(String(logged.mock.calls[0]?.[0])).toContain("POST /api/sync-git failed");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("reports the files it serves that are missing", () => {
+    expect(missingAssets(), "the test script builds the bundle first").toEqual([]);
+    const fake = { "/app.js": { file: path.join(tmpDir, "dist", "web", "app.js") } };
+    expect(missingAssets(fake)).toEqual([path.relative(path.resolve(import.meta.dir, ".."), fake["/app.js"].file)]);
   });
 });
