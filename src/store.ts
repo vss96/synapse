@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir, unlink, rename } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, unlink, rename, open, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { isTask } from "./model/kinds.js";
@@ -44,10 +44,19 @@ export function load(id: MindmapId): Promise<MindmapDocument | null> {
   return readDocument(filePath(id)).catch(() => null);
 }
 
-/** Persist a mindmap after checking it is still a valid document; the write is atomic. */
+/**
+ * Persist a mindmap after checking it is still a valid document; the write is atomic.
+ * Archive state belongs to the viewer, so the copy on disk wins over the caller's (possibly stale) one.
+ */
 export async function save(doc: MindmapDocument): Promise<void> {
   doc.updatedAt = now();
-  await write(doc);
+  const file = filePath(doc.id);
+  await withLock(file, async () => {
+    const archivedAt = (await readDocument(file).catch(() => null))?.archivedAt;
+    if (archivedAt) doc.archivedAt = archivedAt;
+    else delete doc.archivedAt;
+    await write(doc);
+  });
 }
 
 /**
@@ -55,17 +64,48 @@ export async function save(doc: MindmapDocument): Promise<void> {
  * Returns null if the mindmap doesn't exist.
  */
 export async function setArchived(id: MindmapId, archived: boolean): Promise<MindmapDocument | null> {
-  const doc = await load(id);
-  if (!doc) return null;
-  if (archived) doc.archivedAt ??= now();
-  else delete doc.archivedAt;
-  await write(doc);
-  return doc;
+  const file = filePath(id);
+  // Read and write under the lock, so a save from an agent can't land in between and be overwritten.
+  return withLock(file, async () => {
+    const doc = await readDocument(file).catch(() => null);
+    if (!doc) return null;
+    if (archived) doc.archivedAt ??= now();
+    else delete doc.archivedAt;
+    await write(doc);
+    return doc;
+  });
+}
+
+/** A lock older than this was left behind by a process that died while holding it. */
+const STALE_LOCK_MS = 5000;
+
+/**
+ * Run `fn` while holding `<file>.lock`. The MCP server and the viewer are separate processes,
+ * so the lock is a file created with O_EXCL rather than anything in memory.
+ */
+async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
+  await ensureDataDir();
+  const lock = `${file}.lock`;
+  for (;;) {
+    try {
+      await (await open(lock, "wx")).close();
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      const held = await stat(lock).catch(() => null);
+      if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) await unlink(lock).catch(() => {});
+      else await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await unlink(lock).catch(() => {});
+  }
 }
 
 async function write(doc: MindmapDocument): Promise<void> {
   const valid = MindmapDocument.parse(doc);
-  await ensureDataDir();
   const file = filePath(valid.id);
   const tmp = `${file}.${process.pid}.tmp`;
   await writeFile(tmp, JSON.stringify(valid, null, 2), "utf-8");

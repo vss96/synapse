@@ -1,6 +1,6 @@
 import { describe, it, beforeAll, afterAll } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
@@ -78,6 +78,39 @@ describe("store & renderer", () => {
     assert.equal(restored?.archivedAt, undefined);
     assert.equal((await store.load(doc.id))?.archivedAt, undefined);
     assert.equal(await store.setArchived(MindmapId.parse("mm_missing"), true), null);
+    await store.remove(doc.id);
+  });
+
+  it("keeps archive state when an agent saves a copy it loaded before the archive", async () => {
+    const doc = emptyDoc("mm_stale", "Busy");
+    await store.save(doc);
+    const agentCopy = await store.load(doc.id);
+    assert.ok(agentCopy);
+
+    const archived = await store.setArchived(doc.id, true);
+    addChild(agentCopy, { type: "task", label: "Agent kept working" });
+    await store.save(agentCopy);
+    const afterSave = await store.load(doc.id);
+    assert.equal(afterSave?.archivedAt, archived?.archivedAt, "the stale copy doesn't undo the archive");
+    assert.ok(Object.values(afterSave?.nodes ?? {}).some((n) => n.label === "Agent kept working"));
+
+    await store.setArchived(doc.id, false);
+    await store.save(afterSave!); // still carries archivedAt from before the restore
+    assert.equal((await store.load(doc.id))?.archivedAt, undefined, "nor does it undo a restore");
+
+    const files = await readdir(tmpDir);
+    assert.ok(!files.some((f) => f.endsWith(".lock")), "no lock file is left behind");
+    await store.remove(doc.id);
+  });
+
+  it("takes over a lock left behind by a process that died", async () => {
+    const doc = emptyDoc("mm_lock", "Locked");
+    const lock = path.join(tmpDir, "mm_lock.json.lock");
+    await writeFile(lock, "");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+    await store.save(doc);
+    assert.ok(await store.load(doc.id));
     await store.remove(doc.id);
   });
 
