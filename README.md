@@ -95,8 +95,8 @@ Development uses [Bun](https://bun.sh); the published package is plain Node.js.
 
 ```bash
 ./setup.sh            # bun install, build, write claude.json for this checkout
-bun test              # tests
-bun run build         # tsc → dist/ (MCP server, CLI, viewer server) + bundled viewer app
+bun run test          # tests (bundles the viewer app first)
+bun run build         # tsc → dist/ (MCP server, CLI, viewer server) + bundled viewer app; npm run build works too
 bun run dev           # MCP server from source, restarting on changes
 bun run viewer        # build, then serve the viewer against ./data
 bun run docs:dev      # docs site
