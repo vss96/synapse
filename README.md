@@ -48,6 +48,11 @@ Track a real-time chronological log of every plan update, HLD mapping, and file 
 
 ![Live Activity Stream](docs/screenshots/activity-feed.png)
 
+### 5. Archiving Sessions
+Sessions are grouped by repository. Hover over a finished session and click **Archive** to tuck it into the collapsed **Archived** group at the bottom; nothing is deleted, and **Restore** brings it back:
+
+<img src="docs/screenshots/archive-sessions.png" alt="Sessions panel with the Archive button on a hovered session and the Archived group expanded" width="260">
+
 ---
 
 ## MCP Tools
