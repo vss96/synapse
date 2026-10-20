@@ -104,7 +104,7 @@ Record that a file was read, created, modified, renamed, or deleted, along with 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `mindmapId` | string | ✓ | Mindmap ID |
-| `nodeId` | string | | Task or component to attach to. Defaults to the active `in_progress` node ([how the target is chosen](../guide/how-it-works#where-files-are-attached)). |
+| `nodeId` | string | | Task or component to attach to. Defaults to the active `in_progress` node ([how the target is chosen](../guide/how-it-works#where-files-are-attached)). A `planned` task passed here is started (`in_progress`), so auto-detected changes follow it. |
 | `path` | string | ✓ | File path, such as `src/tools.ts` |
 | `action` | FileAction | | Defaults to `modify` |
 | `previousPath` | string | | The old path, when `action` is `rename` |
@@ -115,6 +115,8 @@ Record that a file was read, created, modified, renamed, or deleted, along with 
 | `createChildNode` | boolean | | If `true`, also creates (or updates) a visible `file` child node under the target |
 
 *CodeChange*: `{ kind: ChangeKind (required), symbol: string (required), previousSymbol?: string, detail?: string }`. For renames, `symbol` is the new name.
+
+If other tasks are still `in_progress`, the reply includes a `hint` naming them, as a reminder to call `update_plan_status` when they're done.
 
 ```json
 {

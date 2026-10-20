@@ -295,7 +295,7 @@ describe("MCP tools integration", () => {
     }
   });
 
-  it("acknowledges changes compactly", async () => {
+  it("acknowledges changes compactly and starts a planned task that gets an explicit file touch", async () => {
     const created = await ackFrom("create_mindmap", {
       title: "Compact",
       initialPlan: [{ label: "Step 1", status: "in_progress" }, { label: "Step 2" }],
@@ -313,9 +313,12 @@ describe("MCP tools integration", () => {
     const touched = await ackFrom("log_file_touch", { mindmapId: created.mindmapId, nodeId: step2!.id, path: "src/b.ts" });
     assert.ok(JSON.stringify(touched).length < 1000);
     assert.equal(touched.node.id, step2!.id);
+    assert.equal(touched.node.status, "in_progress", "a planned task that gets a touch has started");
+    assert.match(touched.hint, /Also in_progress: "Step 1"/);
 
     const doc = await docFrom("get_mindmap", { mindmapId: created.mindmapId });
     assert.ok(JSON.stringify(doc).length > 10_000);
+    assert.equal(taskOf(doc, step2!.id as NodeId).status, "in_progress");
   });
 
   it("maps HLD mental model concepts and directed flow links via map_architecture and link_nodes", async () => {

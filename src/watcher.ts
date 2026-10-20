@@ -8,6 +8,7 @@ import { MindmapId, now, type EditTouch } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
 
+/** Tool, cache and build directories, ignored even outside git. In a repo, its .gitignore rules apply as well. */
 const IGNORED_SEGMENTS = new Set([
   ".git",
   "node_modules",
@@ -17,18 +18,51 @@ const IGNORED_SEGMENTS = new Set([
   "coverage",
   ".cache",
   ".DS_Store",
+  ".gradle",
+  ".idea",
+  ".kotlin",
+  ".venv",
+  "__pycache__",
 ]);
 
-function shouldIgnorePath(relPath: string): boolean {
+/** Editor and atomic-write temp files: `x~`, `.x.swp`, `x.tmp`, Claude Code's `x.tmp.<pid>.<hex>`, BSD `sed -i`'s `.!<pid>!x`. */
+const TEMP_FILE = /(~|\.swp|\.tmp|\.tmp\.\d+\.[0-9a-f]+)$|(^|\/)\.!\d+!/;
+
+export function shouldIgnorePath(relPath: string): boolean {
   const parts = relPath.split(/[\\/]/);
   for (const part of parts) {
     if (IGNORED_SEGMENTS.has(part)) return true;
   }
   // Ignore synapse's own data JSON files if watching the synapse repo itself
   if (parts[0] === "data" && relPath.endsWith(".json")) return true;
-  if (relPath.endsWith("~") || relPath.endsWith(".swp") || relPath.endsWith(".tmp")) return true;
-  return false;
+  return TEMP_FILE.test(relPath);
 }
+
+/** Run git in `cwd`, writing `input` to its stdin; "" when it fails (not a repo, no commits yet, nothing matched…). */
+async function git(cwd: string, args: string[], input?: string): Promise<string> {
+  try {
+    const run = execFileAsync("git", args, { cwd, maxBuffer: 64 * 1024 * 1024 });
+    run.child.stdin?.end(input);
+    return (await run).stdout;
+  } catch {
+    return "";
+  }
+}
+
+/** Those of `paths` that git ignores (honouring .gitignore files, .git/info/exclude and global excludes). */
+async function gitIgnored(cwd: string, paths: string[]): Promise<Set<string>> {
+  const out = await git(cwd, ["check-ignore", "--stdin", "-z"], paths.join("\0"));
+  return new Set(out.split("\0").filter(Boolean));
+}
+
+/** Those of `paths` that git lists with `args` (`ls-files` for tracked, `diff --name-only HEAD` for changed). */
+async function gitListed(cwd: string, args: string[], paths: string[]): Promise<Set<string>> {
+  const out = await git(cwd, ["--literal-pathspecs", ...args, "-z", "--", ...paths]);
+  return new Set(out.split("\0").filter(Boolean));
+}
+
+/** How long after a checkout, rebase, reset, merge or pull its file events may still arrive. */
+const VCS_SETTLE_MS = 30_000;
 
 /**
  * Inspect git status and diff --numstat in a workspace directory. Staged renames
@@ -89,24 +123,77 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
   const key = `${mindmapId}:${resolved}`;
   if (activeWatchers.has(key)) return;
 
-  const pendingFiles = new Map<string, "create" | "modify" | "delete">();
+  // Path → whether fs.watch reported a `rename` for it (a file appearing or disappearing) in this batch.
+  const pendingFiles = new Map<string, boolean>();
+  let batchStart = 0;
   let debounceTimer: NodeJS.Timeout | null = null;
+  let flushing = Promise.resolve();
 
-  const flush = async () => {
-    debounceTimer = null;
-    if (pendingFiles.size === 0) return;
-    const batch = Array.from(pendingFiles.entries());
+  const flushBatch = async () => {
+    const batch = new Map(pendingFiles);
+    const startedAt = batchStart;
     pendingFiles.clear();
+    if (batch.size === 0) return;
 
     const doc = await store.load(mindmapId);
     if (!doc) return;
 
+    const paths = [...batch.keys()];
+    const rebasing = (await git(resolved, ["rev-parse", "--git-path", "rebase-merge", "--git-path", "rebase-apply"]))
+      .split("\n")
+      .some((p) => p && existsSync(path.resolve(resolved, p)));
+    if (rebasing) {
+      store.recordActivity(doc, `Git rebase in progress: ${batch.size} file change(s) not attributed to a task`);
+      await store.save(doc);
+      return;
+    }
+    const [ignored, tracked] = await Promise.all([gitIgnored(resolved, paths), gitListed(resolved, ["ls-files"], paths)]);
+
+    // A checkout, reset, merge or pull rewrites the worktree to match the new HEAD; that churn isn't
+    // the agent's edits. HEAD's reflog says what last moved it and when (a commit is the agent's own).
+    // Files that now match HEAD came from git; files that differ from it were edited on top.
+    const [operation = "", movedAt = "0"] = (await git(resolved, ["reflog", "-1", "--format=%gs%x00%ct", "HEAD"])).trim().split("\0");
+    const vcsMoved = operation !== "" && !operation.startsWith("commit") && Number(movedAt) * 1000 >= startedAt - VCS_SETTLE_MS;
+    const changed = vcsMoved ? await gitListed(resolved, ["diff", "--name-only", "HEAD"], paths) : new Set<string>();
+    let churn = 0;
+
+    const recorded = new Set(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.path)));
+
+    // Classify by the file's state before the batch, not by event type: editors and git replace files
+    // by renaming a temp over them, which fs.watch reports as `rename` just like a new file.
+    const touches: [string, "create" | "modify" | "delete"][] = [];
+    for (const [relPath, renamed] of batch) {
+      if (ignored.has(relPath)) continue;
+      const exists = existsSync(path.join(resolved, relPath));
+      if (vcsMoved && (tracked.has(relPath) ? !changed.has(relPath) : !exists)) {
+        churn++;
+        continue;
+      }
+      const known = tracked.has(relPath) || recorded.has(relPath);
+      if (!exists) {
+        if (known) touches.push([relPath, "delete"]); // else it came and went within the batch
+      } else {
+        touches.push([relPath, known || !renamed ? "modify" : "create"]);
+      }
+    }
+    if (churn > 0) store.recordActivity(doc, `Git ${operation}: ${churn} file change(s) not attributed to a task`);
+    if (touches.length === 0) {
+      if (churn > 0) await store.save(doc);
+      return;
+    }
+
     const targetNode = fileTouchTarget(doc);
-    for (const [relPath, action] of batch) {
+    for (const [relPath, action] of touches) {
       upsertFileTouch(targetNode, { path: relPath, action, changes: [], summary: `Auto-detected file ${action}`, timestamp: now() });
       store.recordActivity(doc, `File ${action}: ${relPath}`, { nodeId: targetNode.id, file: relPath });
     }
     await store.save(doc);
+  };
+
+  // One batch at a time, so two flushes never load and save the document over each other.
+  const flush = () => {
+    debounceTimer = null;
+    flushing = flushing.then(flushBatch).catch((err) => console.error(`[synapse] watcher: ${err}`));
   };
 
   try {
@@ -115,15 +202,8 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       const relPath = filename.replace(/\\/g, "/");
       if (shouldIgnorePath(relPath)) return;
 
-      const fullPath = path.join(resolved, filename);
-      const exists = existsSync(fullPath);
-      const action: "create" | "modify" | "delete" = !exists
-        ? "delete"
-        : eventType === "rename"
-          ? "create"
-          : "modify";
-
-      pendingFiles.set(relPath, action);
+      if (pendingFiles.size === 0) batchStart = Date.now();
+      pendingFiles.set(relPath, pendingFiles.get(relPath) === true || eventType === "rename");
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(flush, 600);
     });

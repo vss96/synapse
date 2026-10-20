@@ -456,7 +456,7 @@ const updatePlanStatus = defineTool({
 const logFileTouch = defineTool({
   name: "log_file_touch",
   description:
-    "Record that a file was read, created, modified, renamed, or deleted, plus symbol-level `changes` (add, modify, fix, refactor, rename, remove, test) so the user can follow exactly what is changing. If nodeId is omitted, attaches to the currently in_progress task node.",
+    "Record that a file was read, created, modified, renamed, or deleted, plus symbol-level `changes` (add, modify, fix, refactor, rename, remove, test) so the user can follow exactly what is changing. If nodeId is omitted, attaches to the currently in_progress task node; a planned task given as nodeId is started (in_progress).",
   inputSchema: FileTouchInput.safeExtend({
     mindmapId,
     nodeId: NodeId.optional().describe("Task or component node ID. If omitted, attaches to the active in_progress task."),
@@ -468,6 +468,9 @@ const logFileTouch = defineTool({
     const target = fileTouchTarget(doc, input.nodeId);
     const touch = toFileTouch(input);
     upsertFileTouch(target, touch);
+    // Touching a planned task means work on it has started; auto-detected touches then follow it.
+    const started = isTask(target) && target.status === "planned";
+    if (started) target.status = "in_progress";
 
     if (input.createChildNode) {
       const label = `${input.path}${input.lines ? `:${input.lines}` : ""}`;
@@ -485,8 +488,15 @@ const logFileTouch = defineTool({
     const tally = describeChanges(input.changes);
     const summary = `[${touch.action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${target.label}")`;
     store.recordActivity(doc, summary, { nodeId: target.id, file: input.path });
+    if (started) store.recordActivity(doc, `Started task "${target.label}"`, { nodeId: target.id });
     await store.save(doc);
-    return { mindmapId: doc.id, summary, node: ref(target) };
+
+    const stale = Object.values(doc.nodes).filter((n) => n.id !== target.id && isTask(n) && n.status === "in_progress");
+    const hint =
+      stale.length > 0
+        ? `Also in_progress: ${stale.map((n) => `"${n.label}" (${n.id})`).join(", ")}. Call update_plan_status if that work is done.`
+        : undefined;
+    return { mindmapId: doc.id, summary, node: ref(target), ...(hint ? { hint } : {}) };
   },
 });
 
