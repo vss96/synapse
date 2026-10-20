@@ -58,18 +58,21 @@ describe("workspace watcher", () => {
   async function makeRepo(name: string) {
     const repoDir = path.join(tmpDir, name);
     const git = (...args: string[]) => execFileAsync("git", args, { cwd: repoDir });
-    await mkdir(repoDir);
+    await mkdir(path.join(repoDir, "pkg"), { recursive: true });
     await git("init", "-q");
     await git("config", "user.email", "test@example.com");
     await git("config", "user.name", "Test User");
     await writeFile(path.join(repoDir, ".gitignore"), "*.log\n.gradle/\n");
     await writeFile(path.join(repoDir, "a.ts"), "export const a = 1;\n");
     await writeFile(path.join(repoDir, "b.ts"), "export const b = 1;\n");
+    await writeFile(path.join(repoDir, "pkg", "c.ts"), "export const c = 1;\n");
     await git("add", ".");
     await git("commit", "-qm", "initial");
     await git("checkout", "-qb", "other");
     await writeFile(path.join(repoDir, "b.ts"), "export const b = 2;\n");
-    await git("commit", "-qam", "other b");
+    // An old commit: the checkout's time must come from the reflog, not from the commit
+    const old = { ...process.env, GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" };
+    await execFileAsync("git", ["commit", "-qam", "other b"], { cwd: repoDir, env: old });
     await git("checkout", "-q", "-");
     // So the checkout above isn't HEAD's latest move when the tests start
     await git("commit", "-q", "--allow-empty", "-m", "empty");
@@ -144,5 +147,15 @@ describe("workspace watcher", () => {
     // An edit right after the switch differs from HEAD, so it still counts
     await writeFile(path.join(repoDir, "a.ts"), "export const a = 3;\n");
     await eventually(id, (d) => assert.deepEqual(Object.values(d.nodes).flatMap((n) => n.files).map((f) => `${f.action}:${f.path}`), ["modify:a.ts"]));
+  }, 30000);
+
+  it("keeps edits after a branch switch when watching a subdirectory of the repo", async () => {
+    const { repoDir, git } = await makeRepo("subdir");
+    const id = await createMindmap({ title: "Subdir", workspacePath: path.join(repoDir, "pkg"), initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    await git("checkout", "-q", "other");
+    await writeFile(path.join(repoDir, "pkg", "c.ts"), "export const c = 2;\n");
+
+    await eventually(id, (d) => assert.deepEqual(Object.values(d.nodes).flatMap((n) => n.files).map((f) => `${f.action}:${f.path}`), ["modify:c.ts"]));
   }, 30000);
 });

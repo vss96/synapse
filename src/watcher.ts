@@ -145,9 +145,8 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     pendingFiles.clear();
     if (batch.size === 0) return;
 
-    const doc = await store.load(mindmapId);
-    if (!doc) return;
-
+    // Ask git everything first and load the document just before saving it, so a tool call that
+    // saves the mindmap meanwhile isn't overwritten with a stale copy.
     const ignored = await gitIgnored(resolved, [...batch.keys()]);
     const paths = [...batch.keys()].filter((p) => !ignored.has(p));
     if (paths.length === 0) return;
@@ -155,6 +154,8 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       .split("\n")
       .some((p) => p && existsSync(path.resolve(resolved, p)));
     if (rebasing) {
+      const doc = await store.load(mindmapId);
+      if (!doc) return;
       store.recordActivity(doc, `Git rebase in progress: ${paths.length} file change(s) not attributed to a task`);
       await store.save(doc);
       return;
@@ -164,11 +165,16 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     // A checkout, reset, merge or pull rewrites the worktree to match the new HEAD; that churn isn't
     // the agent's edits. HEAD's reflog says what last moved it and when (a commit is the agent's own).
     // Files that now match HEAD came from git; files that differ from it were edited on top.
-    const [operation = "", movedAt = "0"] = (await git(resolved, ["reflog", "-1", "--format=%gs%x00%ct", "HEAD"])).trim().split("\0");
-    const vcsMoved = operation !== "" && !operation.startsWith("commit") && Number(movedAt) * 1000 >= startedAt - VCS_SETTLE_MS;
-    const changed = vcsMoved ? await gitListed(resolved, ["diff", "--name-only", "HEAD"], paths) : new Set<string>();
+    // `%gd` with --date=unix is `HEAD@{<seconds>}`: when HEAD moved (not when its commit was made).
+    const [selector = "", operation = ""] = (await git(resolved, ["reflog", "-1", "--date=unix", "--format=%gd%x00%gs", "HEAD"])).trim().split("\0");
+    const movedAt = Number(/@\{(\d+)\}/.exec(selector)?.[1] ?? 0);
+    const vcsMoved = operation !== "" && !operation.startsWith("commit") && movedAt * 1000 >= startedAt - VCS_SETTLE_MS;
+    // --relative: paths relative to the workspace, like ls-files, even when it's a subdirectory of the repo
+    const changed = vcsMoved ? await gitListed(resolved, ["diff", "--relative", "--name-only", "HEAD"], paths) : new Set<string>();
     let churn = 0;
 
+    const doc = await store.load(mindmapId);
+    if (!doc) return;
     const recorded = new Set(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.path)));
 
     // Classify by the file's state before the batch, not by event type: editors and git replace files
