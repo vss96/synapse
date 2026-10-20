@@ -86,12 +86,25 @@ Every push to `main` that touches `docs/` deploys the site to GitHub Pages throu
 
 The package is published to npm as `synapse-mindmap`. It ships `dist/`, `viewer/index.html`, `docs/public/logo.png`, and `docs/public/favicon.png`, plus `README.md`, `LICENSE`, and `package.json`.
 
-1. Bump `version` in `package.json`. The MCP server reports this version to clients.
-2. Run the tests and publish:
+Releases are published by GitHub Actions ([`.github/workflows/publish.yml`](https://github.com/vss96/synapse/blob/main/.github/workflows/publish.yml)) when a `v*` tag is pushed:
+
+1. Bump `version` in `package.json` in a pull request and merge it. The MCP server reports this version to clients.
+2. Tag the merged commit on `main` and push the tag:
 
    ```sh
-   bun test
-   npm publish
+   git switch main && git pull
+   git tag v1.2.0
+   git push origin v1.2.0
    ```
 
-`prepack` runs `bun run build`, so `npm publish` and `npm pack` always ship a fresh build. Run `npm pack --dry-run` first to check exactly which files will be published.
+The workflow fails unless the tag is `v` plus the `package.json` version. It runs the typecheck and tests, then `npm publish --provenance`. `prepack` runs `bun run build`, so the published package is always a fresh build. Run `npm pack --dry-run` locally to check exactly which files will be published.
+
+The workflow has no npm token. It authenticates with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers), and npm records provenance linking each version to the commit and workflow run that built it.
+
+### One-time setup
+
+Trusted publishing is configured per package, so the package has to exist on npm first:
+
+1. Publish the first version by hand: `npm login`, then `npm publish --access public`.
+2. On npmjs.com, open the package's **Settings → Trusted publishing**, choose **GitHub Actions**, and enter owner `vss96`, repository `synapse`, workflow `publish.yml`.
+3. Optionally, under **Publishing access**, require two-factor authentication and disallow tokens, so only the workflow can publish.
