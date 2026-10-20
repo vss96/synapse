@@ -325,8 +325,9 @@
 
   .session-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
+  /* Hidden until hover or keyboard focus, but still focusable; always shown without hover (touch). */
   .session-action {
-    visibility: hidden;
+    opacity: 0;
     flex-shrink: 0;
     padding: 1px 6px;
     background: var(--panel);
@@ -338,7 +339,8 @@
   }
 
   .session-item:hover .session-action,
-  .session-action:focus-visible { visibility: visible; }
+  .session-action:focus-visible { opacity: 1; }
+  @media (hover: none) { .session-action { opacity: 1; } }
   .session-action:hover { background: #e8e8ed; color: var(--text); }
 
   #viewport {

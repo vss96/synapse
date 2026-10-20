@@ -851,7 +851,11 @@ const collapsedGroups = new Set<string>(
 
 function toggleGroup(key: string) {
   if (!collapsedGroups.delete(key)) collapsedGroups.add(key);
-  localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...collapsedGroups]));
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...collapsedGroups]));
+  } catch {
+    // Storage blocked or full: the group still toggles, it just isn't remembered.
+  }
   renderSessions();
 }
 
@@ -989,7 +993,8 @@ async function init() {
     await fetchMindmapById(currentId);
   } else {
     currentId = "";
-    const first = sessions[0];
+    // Prefer a session that isn't archived: the Archived group starts collapsed.
+    const first = sessions.find((s) => !s.archivedAt) ?? sessions[0];
     if (first) await selectSession(first.id);
   }
 }

@@ -4,7 +4,7 @@
 npx synapse-mindmap viewer --open
 ```
 
-The viewer is a local web page that draws every mindmap in your data directory. It updates live while agents work. It only reads the data directory, except for the **Sync Git** button. Agents don't need it to be running.
+The viewer is a local web page that draws every mindmap in your data directory. It updates live while agents work. It only reads the data directory, except for the **Sync Git** button and archiving or restoring a session. Agents don't need it to be running.
 
 ## Layout
 
@@ -97,4 +97,4 @@ The viewer is for local use only:
 
 - It binds to `127.0.0.1`, so other machines can't connect to it.
 - It answers only requests addressed to `localhost`, `127.0.0.1`, or `[::1]` on its own port, and returns `403` for any other `Host`. This blocks DNS-rebinding attacks.
-- **Sync Git**, its only write action, requires a JSON request from the viewer's own origin, so other websites can't trigger it.
+- Its write actions, **Sync Git** and **Archive**/**Restore**, require a JSON request from the viewer's own origin, so other websites can't trigger them.
