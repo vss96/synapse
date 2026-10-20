@@ -64,6 +64,23 @@ describe("store & renderer", () => {
     assert.ok(node);
   });
 
+  it("archives and restores a mindmap without making it look recently updated", async () => {
+    const doc = emptyDoc("mm_archive", "Old work");
+    await store.save(doc);
+    const { updatedAt } = doc;
+
+    const archived = await store.setArchived(doc.id, true);
+    assert.ok(archived?.archivedAt);
+    assert.equal(archived.updatedAt, updatedAt);
+    assert.equal((await store.list()).find((m) => m.id === doc.id)?.archivedAt, archived.archivedAt);
+
+    const restored = await store.setArchived(doc.id, false);
+    assert.equal(restored?.archivedAt, undefined);
+    assert.equal((await store.load(doc.id))?.archivedAt, undefined);
+    assert.equal(await store.setArchived(MindmapId.parse("mm_missing"), true), null);
+    await store.remove(doc.id);
+  });
+
   it("skips files on disk that aren't valid mindmaps", async () => {
     await writeFile(path.join(tmpDir, "mm_junk.json"), JSON.stringify({ id: "mm_junk", nodes: {} }));
     assert.equal(await store.load(MindmapId.parse("mm_junk")), null);

@@ -47,6 +47,23 @@ export function load(id: MindmapId): Promise<MindmapDocument | null> {
 /** Persist a mindmap after checking it is still a valid document; the write is atomic. */
 export async function save(doc: MindmapDocument): Promise<void> {
   doc.updatedAt = now();
+  await write(doc);
+}
+
+/**
+ * Archive or restore a mindmap. Leaves `updatedAt` alone, so archiving doesn't make a session look recent.
+ * Returns null if the mindmap doesn't exist.
+ */
+export async function setArchived(id: MindmapId, archived: boolean): Promise<MindmapDocument | null> {
+  const doc = await load(id);
+  if (!doc) return null;
+  if (archived) doc.archivedAt ??= now();
+  else delete doc.archivedAt;
+  await write(doc);
+  return doc;
+}
+
+async function write(doc: MindmapDocument): Promise<void> {
   const valid = MindmapDocument.parse(doc);
   await ensureDataDir();
   const file = filePath(valid.id);
@@ -67,6 +84,7 @@ function summarize(doc: MindmapDocument): MindmapListItem {
     updatedAt: doc.updatedAt,
     createdAt: doc.createdAt,
     workspacePath: doc.workspacePath,
+    archivedAt: doc.archivedAt,
     nodeCount: nodes.length,
     completedTasks: tasks.filter((n) => n.status === "completed").length,
     totalTasks: tasks.length,

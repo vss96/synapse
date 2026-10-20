@@ -218,7 +218,7 @@ Get a Markdown status report: completion percentage, a status breakdown, the num
 
 ## `list_mindmaps`
 
-List all stored mindmaps with their IDs, titles, node counts, and last-updated timestamps, most recent first. No parameters.
+List all stored mindmaps with their IDs, titles, node counts, and last-updated timestamps, most recent first. Sessions archived in the viewer are marked `archived`. No parameters.
 
 ## `get_mindmap`
 

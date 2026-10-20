@@ -629,7 +629,7 @@ const listMindmaps = defineTool({
   async run() {
     const items = await store.list();
     if (items.length === 0) return "No mindmaps yet.";
-    return items.map((m) => `• ${m.id}  –  "${m.title}" (${m.nodeCount} nodes, updated ${m.updatedAt})`).join("\n");
+    return items.map((m) => `• ${m.id}  –  "${m.title}" (${m.nodeCount} nodes, updated ${m.updatedAt}${m.archivedAt ? ", archived" : ""})`).join("\n");
   },
 });
 

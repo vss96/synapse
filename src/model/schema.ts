@@ -189,6 +189,8 @@ export const MindmapDocument = z
     workspacePath: z.string().optional(),
     createdAt: Timestamp,
     updatedAt: Timestamp,
+    /** Set when the session is archived in the viewer; archived sessions are listed separately. */
+    archivedAt: Timestamp.optional(),
     nodes: z.record(NodeId, MindmapNode),
     links: z.array(MindmapLink),
     /** Newest first, capped at 100 entries. */
@@ -204,6 +206,7 @@ export interface MindmapListItem {
   updatedAt: string;
   createdAt: string;
   workspacePath?: string;
+  archivedAt?: string;
   nodeCount: number;
   completedTasks: number;
   totalTasks: number;

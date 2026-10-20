@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
+import { MindmapId } from "../src/model/schema.js";
 import { missingAssets, startViewer, type RunningViewer } from "../src/viewer.js";
 import { addChild, emptyDoc } from "./fixtures.js";
 
@@ -93,6 +94,25 @@ describe("viewer server", () => {
     expect((await sync({ "content-type": "application/json" }, JSON.stringify({ mindmapId: "../../x" }))).status).toBe(400);
     // No workspacePath on this mindmap, so a legitimate request is refused without touching git.
     expect((await sync({ "content-type": "application/json", origin: `http://localhost:${viewer.port}` })).status).toBe(400);
+  });
+
+  it("archives and restores sessions, refusing cross-site and invalid requests", async () => {
+    const archive = (body: unknown, headers: Record<string, string> = { "content-type": "application/json" }) =>
+      call(viewer.port, { method: "POST", path: "/api/archive", headers, body: JSON.stringify(body) });
+
+    const res = await archive({ mindmapId: "mm_test", archived: true });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body).archivedAt).toBeString();
+    const list = JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body);
+    expect(list[0].archivedAt).toBeString();
+
+    expect(JSON.parse((await archive({ mindmapId: "mm_test", archived: false })).body)).toEqual({ id: "mm_test", archivedAt: null });
+    expect((await archive({ mindmapId: "mm_nope", archived: true })).status).toBe(404);
+    expect((await archive({ mindmapId: "mm_test" })).status).toBe(400);
+    expect((await archive({ mindmapId: "mm_test", archived: true }, { "content-type": "text/plain" })).status).toBe(415);
+    const crossSite = { "content-type": "application/json", origin: "https://attacker.example" };
+    expect((await archive({ mindmapId: "mm_test", archived: true }, crossSite)).status).toBe(403);
+    expect((await store.load(MindmapId.parse("mm_test")))?.archivedAt).toBeUndefined();
   });
 
   it("logs requests that fail with a 500", async () => {
