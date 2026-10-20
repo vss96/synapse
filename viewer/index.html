@@ -7,18 +7,97 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  /*
+   * Every color is a token here, redefined for dark mode below. Semantic colors (--c-*) are
+   * picked up through `tone-<key>` classes, which set --c; tinted backgrounds and readable
+   * text are mixed from --c, so one value per semantic works in both themes.
+   */
   :root {
+    color-scheme: light dark;
     --bg: #f5f5f7;
     --panel: #ffffff;
+    --panel-2: #f9f9fb;
+    --control: #f2f2f5;
+    --control-hover: #e8e8ed;
     --border: #d2d2d7;
+    --border-soft: #e5e5ea;
     --text: #1d1d1f;
+    --text-2: #3a3a3c;
     --muted: #6e6e73;
+    --grid: #d2d2d7;
+    --edge: #c7c7cc;
+    --shadow: rgba(0,0,0,0.08);
     --blue: #007aff;
-    --green: #28a745;
-    --amber: #f59e0b;
-    --red: #dc2626;
+    --blue-hover: #0062c4;
     --purple: #7c3aed;
-    --teal: #0d9488;
+    /* How much of --c goes into card fills, badge backgrounds and text. */
+    --tint: 7%;
+    --tint-strong: 15%;
+    --tone-text: 70%;
+
+    --c-planned: #8e8e93;
+    --c-in_progress: #007aff;
+    --c-completed: #34c759;
+    --c-blocked: #dc2626;
+    --c-component: #4f46e5;
+    --c-data_flow: #0d9488;
+    --c-hypothesis: #d97706;
+    --c-decision: #7c3aed;
+    --c-risk: #e11d48;
+    --c-add: #16a34a;
+    --c-modify: #2563eb;
+    --c-fix: #ea580c;
+    --c-refactor: #7c3aed;
+    --c-rename: #0d9488;
+    --c-remove: #dc2626;
+    --c-test: #0284c7;
+    --c-read: #9ca3af;
+    --c-flow: #6366f1;
+    --c-live: #059669;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141416;
+      --panel: #1e1e21;
+      --panel-2: #252529;
+      --control: #2a2a2f;
+      --control-hover: #36363c;
+      --border: #3a3a41;
+      --border-soft: #2f2f35;
+      --text: #f2f2f7;
+      --text-2: #d1d1d6;
+      --muted: #9a9aa1;
+      --grid: #2e2e33;
+      --edge: #4a4a52;
+      --shadow: rgba(0,0,0,0.45);
+      --blue: #0a84ff;
+      --blue-hover: #409cff;
+      --purple: #a78bfa;
+      --tint: 16%;
+      --tint-strong: 24%;
+      --tone-text: 75%;
+
+      --c-planned: #8e8e93;
+      --c-in_progress: #0a84ff;
+      --c-completed: #30d158;
+      --c-blocked: #ff453a;
+      --c-component: #818cf8;
+      --c-data_flow: #2dd4bf;
+      --c-hypothesis: #fbbf24;
+      --c-decision: #a78bfa;
+      --c-risk: #fb7185;
+      --c-add: #4ade80;
+      --c-modify: #60a5fa;
+      --c-fix: #fb923c;
+      --c-refactor: #a78bfa;
+      --c-rename: #2dd4bf;
+      --c-remove: #f87171;
+      --c-test: #38bdf8;
+      --c-read: #8e8e93;
+      --c-flow: #818cf8;
+      --c-live: #30d158;
+    }
   }
 
   body {
@@ -48,17 +127,8 @@
     letter-spacing: -0.02em;
   }
 
-  .badge {
-    font-size: 11px;
-    background: #eef4ff;
-    color: var(--blue);
-    border: 1px solid #bfd7ff;
-    border-radius: 5px;
-    padding: 2px 7px;
-    font-weight: 600;
-  }
-
   .live-pill {
+    --c: var(--c-live);
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -66,16 +136,12 @@
     font-weight: 600;
     padding: 3px 8px;
     border-radius: 999px;
-    background: #ecfdf5;
-    color: #059669;
-    border: 1px solid #a7f3d0;
+    background: color-mix(in srgb, var(--c) 12%, var(--panel));
+    color: var(--c);
+    border: 1px solid color-mix(in srgb, var(--c) 35%, var(--panel));
   }
 
-  .live-pill.offline {
-    background: #fef2f2;
-    color: #dc2626;
-    border-color: #fecaca;
-  }
+  .live-pill.offline { --c: var(--c-blocked); }
 
   .live-dot {
     width: 7px;
@@ -93,7 +159,7 @@
   /* ── View Mode Segmented Control ── */
   .view-switcher {
     display: inline-flex;
-    background: #f0f0f5;
+    background: var(--control);
     padding: 2px;
     border-radius: 8px;
     border: 1px solid var(--border);
@@ -112,14 +178,16 @@
 
   .view-switcher button:hover {
     color: var(--text);
-    background: rgba(255,255,255,0.5);
+    background: var(--control-hover);
   }
 
   .view-switcher button.active {
-    background: #fff;
+    background: var(--panel);
     color: var(--blue);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    box-shadow: 0 1px 3px var(--shadow);
   }
+
+  .label-short { display: none; }
 
   .progress-summary {
     display: flex;
@@ -135,14 +203,14 @@
   .progress-bar-wrap {
     width: 90px;
     height: 7px;
-    background: #e5e5ea;
+    background: var(--border-soft);
     border-radius: 999px;
     overflow: hidden;
   }
 
   .progress-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #007aff, #28a745);
+    background: linear-gradient(90deg, var(--c-in_progress), var(--c-completed));
     width: 0%;
     transition: width 0.3s ease;
   }
@@ -169,13 +237,13 @@
     gap: 4px;
   }
 
-  button:hover { background: #0062c4; }
+  button:hover { background: var(--blue-hover); }
   button.secondary {
-    background: #f5f5f7;
+    background: var(--control);
     color: var(--text);
     border: 1px solid var(--border);
   }
-  button.secondary:hover { background: #e8e8ed; }
+  button.secondary:hover { background: var(--control-hover); }
 
   #file-upload { display: none; }
 
@@ -231,6 +299,8 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 12px;
+    background: var(--panel);
+    color: var(--text);
   }
 
   #session-search:focus { outline: none; border-color: var(--blue); }
@@ -249,11 +319,11 @@
     margin-bottom: 4px;
   }
 
-  .session-item:hover { background: #f5f5f7; }
+  .session-item:hover { background: var(--control); }
 
   .session-item.active {
-    background: #eef4ff;
-    border-color: #bfd7ff;
+    background: color-mix(in srgb, var(--blue) 10%, var(--panel));
+    border-color: color-mix(in srgb, var(--blue) 35%, var(--panel));
   }
 
   .session-title {
@@ -271,7 +341,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #059669;
+    background: var(--c-live);
     flex-shrink: 0;
     animation: pulse 1.8s infinite;
   }
@@ -285,7 +355,7 @@
     text-overflow: ellipsis;
   }
 
-  .session-task { color: #1d4ed8; }
+  .session-task { color: color-mix(in srgb, var(--c-in_progress) var(--tone-text), var(--text)); }
 
   .session-progress {
     display: flex;
@@ -303,7 +373,7 @@
     overflow: hidden;
     position: relative;
     cursor: grab;
-    background: radial-gradient(#d2d2d7 1px, transparent 1px);
+    background: radial-gradient(var(--grid) 1px, transparent 1px);
     background-size: 20px 20px;
   }
 
@@ -320,85 +390,52 @@
   .node-group { cursor: pointer; }
 
   .node-rect {
-    fill: #ffffff;
-    stroke: #c7c7cc;
+    fill: var(--panel);
+    stroke: var(--edge);
     stroke-width: 1.5;
     rx: 10;
     ry: 10;
-    transition: stroke 0.15s, stroke-width 0.15s, filter 0.15s;
-    filter: drop-shadow(0 2px 5px rgba(0,0,0,0.04));
+    transition: stroke 0.15s, stroke-width 0.15s;
+    filter: drop-shadow(0 2px 5px var(--shadow));
   }
 
-  .node-group:hover .node-rect {
-    stroke: var(--blue);
-    stroke-width: 2.2;
+  /* Status-colored tasks and type-colored concepts. */
+  .node-group.toned .node-rect {
+    stroke: var(--c);
+    stroke-width: 2;
+    fill: color-mix(in srgb, var(--c) var(--tint), var(--panel));
   }
 
-  .node-group.selected .node-rect {
+  .node-group.status-in_progress .node-rect { stroke-width: 2.4; }
+  .node-group.status-completed .node-rect { stroke-width: 1.5; }
+  .node-group.type-hypothesis .node-rect { stroke-dasharray: 5 3; }
+
+  .node-group:hover .node-rect { stroke-width: 2.6; }
+
+  .node-group.root .node-rect {
+    fill: var(--text);
+    stroke: var(--text);
+  }
+
+  .node-group.root .node-title {
+    fill: var(--panel);
+    font-weight: 700;
+  }
+
+  /* The selection ring sits outside the card, so it shows whatever color the card is. */
+  .node-select-ring {
+    fill: color-mix(in srgb, var(--blue) 10%, transparent);
     stroke: var(--blue);
-    stroke-width: 2.8;
-    filter: drop-shadow(0 0 0 3px rgba(0,122,255,0.2));
+    stroke-width: 3;
+    rx: 14;
+    ry: 14;
+    pointer-events: none;
   }
 
   .node-group.file-highlighted .node-rect {
     stroke: var(--purple) !important;
     stroke-width: 3 !important;
-    fill: #f5f3ff !important;
-  }
-
-  .node-group.root .node-rect {
-    fill: #1d1d1f !important;
-    stroke: #1d1d1f !important;
-  }
-
-  .node-group.root .node-title {
-    fill: #ffffff;
-    font-weight: 700;
-  }
-
-  /* Task Status Colors */
-  .node-group.status-in_progress .node-rect {
-    stroke: var(--blue);
-    stroke-width: 2.2;
-    fill: #f0f7ff;
-  }
-
-  .node-group.status-completed .node-rect {
-    stroke: #34c759;
-    fill: #f4fbf6;
-  }
-
-  .node-group.status-blocked .node-rect {
-    stroke: var(--red);
-    fill: #fef2f2;
-  }
-
-  /* Semantic "Thinking" / HLD Node Types */
-  .node-group.type-component .node-rect {
-    stroke: #4f46e5;
-    stroke-width: 2;
-    fill: #eef2ff;
-  }
-  .node-group.type-data_flow .node-rect {
-    stroke: #0d9488;
-    stroke-width: 2;
-    fill: #f0fdfa;
-  }
-  .node-group.type-hypothesis .node-rect {
-    stroke: #d97706;
-    stroke-width: 1.8;
-    stroke-dasharray: 5 3;
-    fill: #fffbeb;
-  }
-  .node-group.type-decision .node-rect {
-    stroke: #7c3aed;
-    stroke-width: 2;
-    fill: #f5f3ff;
-  }
-  .node-group.type-risk .node-rect {
-    stroke: #e11d48;
-    stroke-width: 2;
-    fill: #fff1f2;
+    fill: color-mix(in srgb, var(--purple) var(--tint-strong), var(--panel)) !important;
   }
 
   .node-title {
@@ -409,6 +446,7 @@
   }
 
   .node-status-pill {
+    fill: var(--muted);
     font-size: 10px;
     font-weight: 600;
     pointer-events: none;
@@ -421,15 +459,16 @@
   }
 
   .node-file-chip {
-    fill: rgba(255,255,255,0.85);
-    stroke: #c7d2fe;
+    --c: var(--c-modify);
+    fill: color-mix(in srgb, var(--panel) 85%, transparent);
+    stroke: var(--c);
     stroke-width: 1;
     rx: 4;
     ry: 4;
   }
 
   .node-file-text {
-    fill: #3730a3;
+    fill: var(--text-2);
     font-size: 10px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     pointer-events: none;
@@ -437,35 +476,37 @@
 
   /* Tree Hierarchy Edges */
   .edge {
-    stroke: #c7c7cc;
+    stroke: var(--edge);
     stroke-width: 1.75;
     fill: none;
   }
 
   .edge.edge-active {
-    stroke: var(--blue);
+    stroke: var(--c-in_progress);
     stroke-width: 2.2;
     stroke-dasharray: 5 3;
   }
 
   .edge.edge-completed {
-    stroke: #34c759;
+    stroke: var(--c-completed);
   }
 
   /* Directed Concept / Flow Links */
   .flow-link {
-    stroke: #6366f1;
+    stroke: var(--c-flow);
     stroke-width: 2;
     fill: none;
     opacity: 0.88;
   }
+
+  .flow-arrow-head { fill: var(--c-flow); }
 
   .flow-link.dashed {
     stroke-dasharray: 6 4;
   }
 
   .flow-link.animated {
-    stroke: #0d9488;
+    stroke: var(--c-data_flow);
     stroke-dasharray: 7 4;
     animation: flowDash 1s linear infinite;
   }
@@ -475,15 +516,15 @@
   }
 
   .flow-label-bg {
-    fill: #ffffff;
-    stroke: #c7d2fe;
+    fill: var(--panel);
+    stroke: color-mix(in srgb, var(--c-flow) 40%, var(--panel));
     stroke-width: 1;
     rx: 6;
     ry: 6;
   }
 
   .flow-label-text {
-    fill: #4338ca;
+    fill: color-mix(in srgb, var(--c-flow) var(--tone-text), var(--text));
     font-size: 10px;
     font-weight: 600;
     text-anchor: middle;
@@ -504,12 +545,12 @@
   .sidebar-tabs {
     display: flex;
     border-bottom: 1px solid var(--border);
-    background: #fafafa;
+    background: var(--panel-2);
   }
 
   .sidebar-tab {
     flex: 1;
-    text-align: center;
+    justify-content: center;
     padding: 10px 6px;
     font-size: 12px;
     font-weight: 600;
@@ -522,13 +563,13 @@
 
   .sidebar-tab:hover {
     color: var(--text);
-    background: #f0f0f5;
+    background: var(--control);
   }
 
   .sidebar-tab.active {
     color: var(--blue);
     border-bottom-color: var(--blue);
-    background: #fff;
+    background: var(--panel);
   }
 
   .sidebar-content {
@@ -550,7 +591,7 @@
   .section-title:first-child { margin-top: 0; }
 
   .inspector-card {
-    background: #f9f9fb;
+    background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px;
@@ -563,7 +604,14 @@
     margin-bottom: 6px;
   }
 
+  /* Badges: tinted background and readable text from the element's tone. */
+  .status-tag, .type-tag, .action-badge, .kind-badge {
+    background: color-mix(in srgb, var(--c) var(--tint-strong), var(--panel));
+    color: color-mix(in srgb, var(--c) var(--tone-text), var(--text));
+  }
+
   .status-tag, .type-tag {
+    --c: var(--c-component);
     display: inline-block;
     font-size: 10.5px;
     font-weight: 600;
@@ -571,24 +619,15 @@
     border-radius: 999px;
     text-transform: uppercase;
   }
-  .status-tag.planned { background: #e5e7eb; color: #374151; }
-  .status-tag.in_progress { background: #dbeafe; color: #1d4ed8; }
-  .status-tag.completed { background: #dcfce7; color: #15803d; }
-  .status-tag.blocked { background: #fee2e2; color: #b91c1c; }
-  .status-tag.none { display: none; }
 
-  .type-tag { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
-  .type-tag.decision { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
-  .type-tag.hypothesis { background: #fffbeb; color: #b45309; border-color: #fde68a; }
-  .type-tag.risk { background: #fff1f2; color: #be123c; border-color: #fecdd3; }
-  .type-tag.data_flow { background: #f0fdfa; color: #0f766e; border-color: #99f6e4; }
+  .type-tag { border: 1px solid color-mix(in srgb, var(--c) 35%, var(--panel)); }
 
   .notes-box {
     font-size: 12.5px;
     line-height: 1.5;
-    color: #3a3a3c;
-    background: #fff;
-    border: 1px solid #e5e5ea;
+    color: var(--text-2);
+    background: var(--panel);
+    border: 1px solid var(--border-soft);
     border-radius: 6px;
     padding: 10px;
     white-space: pre-wrap;
@@ -596,8 +635,8 @@
 
   .link-item {
     font-size: 12px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
+    background: var(--panel-2);
+    border: 1px solid var(--border-soft);
     border-radius: 6px;
     padding: 8px 10px;
     margin-bottom: 6px;
@@ -606,8 +645,8 @@
   .link-item:hover { border-color: var(--blue); }
 
   .file-item {
-    border: 1px solid #e5e5ea;
-    background: #fff;
+    border: 1px solid var(--border-soft);
+    background: var(--panel);
     border-radius: 8px;
     padding: 10px;
     margin-bottom: 8px;
@@ -617,12 +656,12 @@
 
   .file-item:hover {
     border-color: var(--blue);
-    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+    box-shadow: 0 2px 6px var(--shadow);
   }
 
   .file-item.active-highlight {
     border-color: var(--purple);
-    background: #f5f3ff;
+    background: color-mix(in srgb, var(--purple) var(--tint), var(--panel));
   }
 
   .file-header {
@@ -636,6 +675,7 @@
   }
 
   .action-badge {
+    --c: var(--c-modify);
     font-size: 9.5px;
     font-weight: 700;
     padding: 1px 5px;
@@ -643,21 +683,8 @@
     text-transform: uppercase;
     flex-shrink: 0;
   }
-  .action-badge.create { background: #dcfce7; color: #15803d; }
-  .action-badge.modify { background: #dbeafe; color: #1d4ed8; }
-  .action-badge.read { background: #f3f4f6; color: #4b5563; }
-  .action-badge.delete { background: #fee2e2; color: #b91c1c; }
-  .action-badge.rename { background: #ccfbf1; color: #0f766e; }
 
   /* ── Symbol-level change kinds ── */
-  .kind-add { --kind: #15803d; --kind-bg: #dcfce7; }
-  .kind-modify { --kind: #1d4ed8; --kind-bg: #dbeafe; }
-  .kind-fix { --kind: #c2410c; --kind-bg: #ffedd5; }
-  .kind-refactor { --kind: #7c3aed; --kind-bg: #ede9fe; }
-  .kind-rename { --kind: #0f766e; --kind-bg: #ccfbf1; }
-  .kind-remove { --kind: #b91c1c; --kind-bg: #fee2e2; }
-  .kind-test { --kind: #0369a1; --kind-bg: #e0f2fe; }
-
   .kind-badge {
     display: inline-block;
     min-width: 66px;
@@ -666,12 +693,16 @@
     padding: 1px 5px;
     border-radius: 4px;
     text-transform: uppercase;
-    color: var(--kind);
-    background: var(--kind-bg);
     flex-shrink: 0;
   }
 
-  .kind-tally { font-weight: 700; color: var(--kind); margin-right: 6px; }
+  .kind-tally {
+    font-weight: 700;
+    color: color-mix(in srgb, var(--c) var(--tone-text), var(--text));
+    margin-right: 6px;
+  }
+
+  .svg-tone { fill: color-mix(in srgb, var(--c) var(--tone-text), var(--text)); }
 
   .change-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 
@@ -694,23 +725,28 @@
   .kind-filters { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
 
   .kind-filter {
+    --c: var(--blue);
     font-size: 11px;
     font-weight: 600;
     padding: 3px 8px;
     border-radius: 999px;
     border: 1px solid var(--border);
-    background: #fff;
-    color: var(--kind, var(--text));
+    background: var(--panel);
+    color: var(--text);
   }
 
-  .kind-filter:hover { background: var(--kind-bg, #f5f5f7); }
-  .kind-filter.active { background: var(--kind-bg, #eef4ff); border-color: var(--kind, var(--blue)); }
+  .kind-filter.toned { color: color-mix(in srgb, var(--c) var(--tone-text), var(--text)); }
+  .kind-filter:hover { background: color-mix(in srgb, var(--c) var(--tint), var(--panel)); }
+  .kind-filter.active {
+    background: color-mix(in srgb, var(--c) var(--tint-strong), var(--panel));
+    border-color: var(--c);
+  }
 
   .file-item.read-only { padding: 6px 10px; }
 
   .file-summary {
     font-size: 12px;
-    color: #3a3a3c;
+    color: var(--text-2);
     margin-top: 5px;
     line-height: 1.4;
   }
@@ -722,7 +758,7 @@
   }
 
   .activity-item {
-    border-left: 2px solid #d2d2d7;
+    border-left: 2px solid var(--border);
     padding-left: 10px;
     margin-bottom: 12px;
     font-size: 12px;
@@ -741,10 +777,10 @@
     right: 16px;
     display: flex;
     gap: 6px;
-    background: #fff;
+    background: var(--panel);
     padding: 6px 10px;
     border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    box-shadow: 0 2px 10px var(--shadow);
     border: 1px solid var(--border);
   }
 
@@ -755,7 +791,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
-    background: rgba(255,255,255,0.94);
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
     padding: 6px 12px;
     border-radius: 8px;
     border: 1px solid var(--border);
@@ -774,7 +810,11 @@
     width: 10px;
     height: 10px;
     border-radius: 3px;
+    background: color-mix(in srgb, var(--c) var(--tint-strong), var(--panel));
+    border: 1.5px solid var(--c);
   }
+
+  .legend-swatch.tone-hypothesis { border-style: dashed; }
 
   .empty-state {
     position: absolute;
@@ -790,6 +830,62 @@
 
   .empty-state h2 { font-size: 18px; font-weight: 600; color: var(--text); }
   .empty-state p { font-size: 13px; max-width: 360px; text-align: center; line-height: 1.5; }
+
+  /* ── Tones: after the rules above so a tone class overrides their default --c ── */
+  .tone-planned { --c: var(--c-planned); }
+  .tone-in_progress { --c: var(--c-in_progress); }
+  .tone-completed { --c: var(--c-completed); }
+  .tone-blocked { --c: var(--c-blocked); }
+  .tone-component { --c: var(--c-component); }
+  .tone-data_flow { --c: var(--c-data_flow); }
+  .tone-hypothesis { --c: var(--c-hypothesis); }
+  .tone-decision { --c: var(--c-decision); }
+  .tone-risk { --c: var(--c-risk); }
+  .tone-add, .tone-create { --c: var(--c-add); }
+  .tone-modify { --c: var(--c-modify); }
+  .tone-fix { --c: var(--c-fix); }
+  .tone-refactor { --c: var(--c-refactor); }
+  .tone-rename { --c: var(--c-rename); }
+  .tone-remove, .tone-delete { --c: var(--c-remove); }
+  .tone-test { --c: var(--c-test); }
+  .tone-read { --c: var(--c-read); }
+
+  /* ── Narrower screens ── */
+  @media (max-width: 1200px) {
+    #sessions { width: 220px; }
+    #sidebar { width: 310px; }
+  }
+
+  /* Side-pane widths: sessions become a drawer and the sidebar moves below the canvas. */
+  @media (max-width: 900px) {
+    header { flex-wrap: wrap; row-gap: 8px; padding: 8px 12px; }
+    .view-switcher { margin-left: 0; }
+    .label-long, #toolbar .btn-label { display: none; }
+    .label-short { display: inline; }
+    .progress-summary { margin-left: 0; padding-left: 0; border-left: none; }
+    #toolbar button { padding: 5px 9px; }
+
+    .workspace { flex-direction: column; }
+    #sessions, body.sessions-collapsed #sessions { display: none; }
+    body.sessions-open #sessions {
+      display: flex;
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: min(300px, 85vw);
+      z-index: 30;
+      box-shadow: 0 8px 30px var(--shadow);
+    }
+    #viewport { min-height: 200px; }
+    #sidebar {
+      width: auto;
+      flex: 0 0 42%;
+      min-height: 0;
+      border-left: none;
+      border-top: 1px solid var(--border);
+    }
+    .legend { display: none; }
+    .controls { bottom: 10px; right: 10px; }
+  }
 </style>
 </head>
 <body>
@@ -802,9 +898,9 @@
   </span>
 
   <div class="view-switcher" id="view-switcher">
-    <button data-mode="all" class="active">Split View (Plan + HLD)</button>
-    <button data-mode="plan">Plan & Tasks</button>
-    <button data-mode="hld">Code Mental Model (HLD)</button>
+    <button data-mode="all" class="active" title="Split View (Plan + HLD)"><span class="label-long">Split View (Plan + HLD)</span><span class="label-short">Split</span></button>
+    <button data-mode="plan" title="Plan & Tasks"><span class="label-long">Plan & Tasks</span><span class="label-short">Plan</span></button>
+    <button data-mode="hld" title="Code Mental Model (HLD)"><span class="label-long">Code Mental Model (HLD)</span><span class="label-short">HLD</span></button>
   </div>
 
   <div class="progress-summary" id="progress-summary" style="display:none;">
@@ -815,9 +911,9 @@
   </div>
 
   <div id="toolbar">
-    <button id="sync-git-btn" class="secondary" title="Sync uncommitted git status & diff into current mindmap">⎇ Sync Git</button>
-    <button id="refresh-btn" class="secondary">↻ Refresh</button>
-    <button id="upload-btn" class="secondary">📁 Open</button>
+    <button id="sync-git-btn" class="secondary" title="Sync uncommitted git status & diff into current mindmap">⎇<span class="btn-label"> Sync Git</span></button>
+    <button id="refresh-btn" class="secondary" title="Refresh">↻<span class="btn-label"> Refresh</span></button>
+    <button id="upload-btn" class="secondary" title="Open a mindmap JSON file">📁<span class="btn-label"> Open</span></button>
     <input type="file" id="file-upload" accept=".json">
   </div>
 </header>
@@ -841,19 +937,20 @@
       <p>When your agent calls <code>create_mindmap</code>, <code>map_architecture</code>, or <code>log_file_touch</code>, the plan and code mental model will update here live.</p>
     </div>
     <div class="legend">
-      <div class="legend-item"><span class="legend-swatch" style="background:#f0f7ff;border:1.5px solid #007aff"></span> In Progress</div>
-      <div class="legend-item"><span class="legend-swatch" style="background:#f4fbf6;border:1.5px solid #34c759"></span> Completed</div>
-      <div class="legend-item"><span class="legend-swatch" style="background:#eef2ff;border:1.5px solid #4f46e5"></span> 📦 Component</div>
-      <div class="legend-item"><span class="legend-swatch" style="background:#f0fdfa;border:1.5px solid #0d9488"></span> ⇄ Data Flow</div>
-      <div class="legend-item"><span class="legend-swatch" style="background:#f5f3ff;border:1.5px solid #7c3aed"></span> ⚖️ Decision</div>
-      <div class="legend-item"><span class="legend-swatch" style="background:#fffbeb;border:1.5px dashed #d97706"></span> 💡 Hypothesis</div>
-      <div class="legend-item"><span class="legend-swatch" style="background:#fff1f2;border:1.5px solid #e11d48"></span> ⚠️ Risk</div>
+      <div class="legend-item"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
+      <div class="legend-item"><span class="legend-swatch tone-completed"></span> Completed</div>
+      <div class="legend-item"><span class="legend-swatch tone-component"></span> 📦 Component</div>
+      <div class="legend-item"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
+      <div class="legend-item"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
+      <div class="legend-item"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
+      <div class="legend-item"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
       <div class="legend-item" id="legend-kinds"></div>
     </div>
     <div class="controls">
-      <button id="zoom-out" class="secondary">−</button>
-      <button id="zoom-reset" class="secondary">Fit / Reset</button>
-      <button id="zoom-in" class="secondary">+</button>
+      <button id="zoom-out" class="secondary" title="Zoom out">−</button>
+      <button id="zoom-fit" class="secondary" title="Show the whole map">Fit</button>
+      <button id="zoom-focus" class="secondary" title="Center the task the agent is working on at full size">◎ Focus</button>
+      <button id="zoom-in" class="secondary" title="Zoom in">+</button>
     </div>
   </div>
 

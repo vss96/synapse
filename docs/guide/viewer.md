@@ -25,7 +25,7 @@ Each mindmap is a session. Each row in the sidebar shows the title, workspace pa
 - **Filter**: type in the box to narrow the list.
 - **<kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd>** (<kbd>Alt</kbd> on Windows and Linux): switch to the previous or next session in the filtered list.
 - **Links**: the URL hash holds the session ID, for example `http://localhost:4040/#mm_Ab12Cd34`. Bookmark or share it to open that session directly.
-- **☰** collapses the sidebar. The viewer remembers this setting.
+- **☰** collapses the sidebar. The viewer remembers this setting. In narrow windows it opens the list as a drawer instead.
 
 When an agent updates a session you aren't viewing, only the session list refreshes. The canvas keeps showing the session you picked.
 
@@ -43,7 +43,23 @@ Use the view switcher in the header to pick what the canvas shows:
 
 Node cards are colored by status (in progress, completed) or by concept type (component, data flow, decision, hypothesis, risk). See the legend at the bottom of the canvas. Cards with logged changes show a tally such as `+2 ✱1 ⟲1`.
 
-Drag to pan and scroll to zoom. Use the **− / Fit / Reset / +** controls at the bottom right.
+Drag to pan and scroll to zoom. Scrolling zooms around the cursor. The controls at the bottom right are:
+
+- **− / +**: zoom around the middle of the canvas.
+- **Fit**: show the whole map.
+- **◎ Focus**: center the task the agent is working on (the most recently updated task in progress) at full size. If no task in the current view is in progress, it shows the root at the left edge.
+
+When you open a session or switch views, the canvas fits the whole map if its cards are still readable that way. Otherwise it focuses the active task. When the agent starts a different task, the canvas moves to it. Other live updates leave the canvas where you put it. The selected node has a blue ring around it.
+
+## Theme and narrow windows
+
+The viewer follows your system's light or dark setting.
+
+Below 900 pixels wide, for example in a side pane next to your editor, the layout changes:
+
+- The Inspector, Changes, and Activity tabs move below the canvas.
+- **☰** opens the session list as a drawer over the canvas. Picking a session closes the drawer.
+- The view switcher shows short names (**Split**, **Plan**, **HLD**), the toolbar shows icons only, and the legend is hidden.
 
 ## Inspector
 
