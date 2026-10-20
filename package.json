@@ -1,6 +1,6 @@
 {
   "name": "synapse-mindmap",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MCP server + live viewer: a real-time mindmap of what your coding agent is planning, thinking, and changing.",
   "type": "module",
   "license": "MIT",
