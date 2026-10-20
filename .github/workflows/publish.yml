@@ -21,13 +21,15 @@ jobs:
             exit 1
           fi
       - uses: oven-sh/setup-bun@v2
-      # Node 24 ships npm 11, which trusted publishing needs
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      # Staged publishing needs a newer npm than Node 24 may bundle
+      - run: npm install -g npm@11.16.0
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run test
-      # prepack runs `bun run build`, so this publishes a fresh build
-      - run: npm publish --provenance --access public
+      # Stages the release; it goes live once a maintainer approves it on npmjs.com with 2FA.
+      # prepack builds dist/ first, so this stages a fresh build.
+      - run: npm stage publish --provenance --access public
