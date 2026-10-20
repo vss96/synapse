@@ -19,7 +19,7 @@ The Synapse server provides 14 tools. Agents normally only need the first five. 
 | [`render_mindmap`](#render-mindmap) | Render as Mermaid, text, or JSON |
 | [`delete_mindmap`](#delete-mindmap) | Delete a mindmap |
 
-**Return values.** Tools that modify a mindmap return the full updated document as JSON, so the agent can read back generated node IDs. Every input is validated before anything changes. Invalid input (an unknown enum value, a rename without `previousPath`, an ID with characters outside `[A-Za-z0-9_-]`) and impossible requests (an unknown mindmap or node, a status on a node that isn't a task) come back as MCP tool errors (`isError: true`) with a message saying what to fix, and nothing is saved.
+**Return values.** Tools that modify a mindmap return a short JSON acknowledgement, not the whole document (which soon outgrows MCP clients' output limits): `mindmapId`, a one-line `summary`, and the nodes the call created or changed as `{ id, label, type, parent, status? }`, so the agent can read back generated node IDs. `create_mindmap` lists every plan node under `nodes`, `map_architecture` lists each `key` with its node, and `update_plan_status` adds `next`. Use [`get_mindmap`](#get-mindmap) for the full document. Every input is validated before anything changes. Invalid input (an unknown enum value, a rename without `previousPath`, an ID with characters outside `[A-Za-z0-9_-]`) and impossible requests (an unknown mindmap or node, a status on a node that isn't a task) come back as MCP tool errors (`isError: true`) with a message saying what to fix, and nothing is saved.
 
 **Enums used below**
 

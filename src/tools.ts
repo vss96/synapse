@@ -46,7 +46,7 @@ function defineTool<S extends z.ZodObject>(def: {
   name: string;
   description: string;
   inputSchema: S;
-  run: (input: z.infer<S>) => Promise<string | MindmapDocument>;
+  run: (input: z.infer<S>) => Promise<string | MindmapDocument | Ack>;
 }): ToolDefinition {
   return {
     name: def.name,
@@ -64,6 +64,17 @@ function defineTool<S extends z.ZodObject>(def: {
       }
     },
   };
+}
+
+/**
+ * What a tool that changes a mindmap reports back: the ids and statuses the agent needs to carry on,
+ * not the whole document (which outgrows MCP output limits; `get_mindmap` returns it).
+ */
+type Ack = { mindmapId: MindmapId; summary: string } & Record<string, unknown>;
+
+/** A node as reported in an Ack. */
+function ref(node: MindmapNode) {
+  return { id: node.id, label: node.label, type: node.type, parent: node.parent, ...(isTask(node) ? { status: node.status } : {}) };
 }
 
 async function loadMindmap(id: MindmapId): Promise<MindmapDocument> {
@@ -197,7 +208,8 @@ const createMindmap = defineTool({
 
     await store.save(doc);
     ensureWorkspaceWatcher(doc.id, doc.workspacePath);
-    return doc;
+    const nodes = Object.values(doc.nodes).filter((n) => n.type !== "root").map(ref);
+    return { mindmapId: doc.id, summary: `Created mindmap "${doc.title}" with ${nodes.length} node(s)`, nodes };
   },
 });
 
@@ -224,9 +236,10 @@ const addNode = defineTool({
       files: input.files?.map(toFileTouch),
     });
     attachChild(doc, node);
-    store.recordActivity(doc, `Added ${node.type} node "${node.label}"`, { nodeId: node.id });
+    const summary = `Added ${node.type} node "${node.label}"`;
+    store.recordActivity(doc, summary, { nodeId: node.id });
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary, node: ref(node) };
   },
 });
 
@@ -254,9 +267,10 @@ const updateNode = defineTool({
     node.updatedAt = now();
     doc.nodes[node.id] = node;
 
-    store.recordActivity(doc, `Updated node "${node.label}"${status ? ` → ${status}` : ""}`, { nodeId: node.id });
+    const summary = `Updated node "${node.label}"${status ? ` → ${status}` : ""}`;
+    store.recordActivity(doc, summary, { nodeId: node.id });
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary, node: ref(node) };
   },
 });
 
@@ -287,9 +301,10 @@ const linkNodes = defineTool({
     const from = getNode(doc, input.from, "Source node");
     const to = getNode(doc, input.to, "Target node");
     upsertLink(doc, input);
-    store.recordActivity(doc, `Linked "${from.label}" ──[${input.label}]──▶ "${to.label}"`, { nodeId: from.id });
+    const summary = `Linked "${from.label}" ──[${input.label}]──▶ "${to.label}"`;
+    store.recordActivity(doc, summary, { nodeId: from.id });
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary };
   },
 });
 
@@ -394,9 +409,11 @@ const mapArchitecture = defineTool({
       linkCount++;
     }
 
-    store.recordActivity(doc, `Mapped HLD mental model: ${input.nodes.length} node(s), ${linkCount} flow link(s)`, { nodeId: container.id });
+    const summary = `Mapped HLD mental model: ${input.nodes.length} node(s), ${linkCount} flow link(s)`;
+    store.recordActivity(doc, summary, { nodeId: container.id });
     await store.save(doc);
-    return doc;
+    const nodes = [...byKey].map(([key, id]) => ({ key, ...ref(doc.nodes[id]!) }));
+    return { mindmapId: doc.id, summary, containerId: container.id, nodes };
   },
 });
 
@@ -431,7 +448,8 @@ const updatePlanStatus = defineTool({
       store.recordActivity(doc, `Started task "${next.label}"`, { nodeId: next.id });
     }
     await store.save(doc);
-    return doc;
+    const summary = `Task "${node.label}" marked ${input.status}${next ? `; started "${next.label}"` : ""}`;
+    return { mindmapId: doc.id, summary, node: ref(node), ...(next ? { next: ref(next) } : {}) };
   },
 });
 
@@ -465,13 +483,10 @@ const logFileTouch = defineTool({
 
     const renamedFrom = touch.action === "rename" ? `${touch.previousPath} → ` : "";
     const tally = describeChanges(input.changes);
-    store.recordActivity(
-      doc,
-      `[${touch.action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${target.label}")`,
-      { nodeId: target.id, file: input.path },
-    );
+    const summary = `[${touch.action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${target.label}")`;
+    store.recordActivity(doc, summary, { nodeId: target.id, file: input.path });
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary, node: ref(target) };
   },
 });
 
@@ -495,10 +510,11 @@ const syncGitStatus = defineTool({
 
     const target = fileTouchTarget(doc, input.targetNodeId);
     for (const touch of changes) upsertFileTouch(target, touch);
-    store.recordActivity(doc, `Synced ${changes.length} changed file(s) from git status into "${target.label}"`, { nodeId: target.id });
+    const summary = `Synced ${changes.length} changed file(s) from git status into "${target.label}"`;
+    store.recordActivity(doc, summary, { nodeId: target.id });
     await store.save(doc);
     ensureWorkspaceWatcher(doc.id, workspacePath);
-    return doc;
+    return { mindmapId: doc.id, summary, node: ref(target) };
   },
 });
 
@@ -579,9 +595,10 @@ const removeNode = defineTool({
     for (const id of removed) delete doc.nodes[id];
     doc.links = doc.links.filter((l) => !removed.has(l.from) && !removed.has(l.to));
 
-    store.recordActivity(doc, `Removed node "${node.label}" (${removed.size} node(s))`);
+    const summary = `Removed node "${node.label}" (${removed.size} node(s))`;
+    store.recordActivity(doc, summary);
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary };
   },
 });
 
