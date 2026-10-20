@@ -1,4 +1,5 @@
 <p align="center"><img src="docs/public/logo.png" alt="Synapse" width="120"></p>
+<p align="center"><a href="https://www.npmjs.com/package/synapse-mindmap"><img src="https://img.shields.io/npm/v/synapse-mindmap" alt="npm version"></a></p>
 
 # Synapse – Live Plan, Code & Mental Model Mindmap for Any Agent
 
@@ -21,7 +22,7 @@ npx synapse-mindmap init
 npx synapse-mindmap viewer --open
 ```
 
-`init` detects Claude Code, Claude Desktop, Cursor, OpenCode and Codex (which also covers the ChatGPT desktop app), asks before configuring each one, and backs up any config file it edits. Restart your agent afterwards. Mindmaps are stored in `~/.synapse/data` (override with `SYNAPSE_DATA_DIR`). See the [client guide](https://vss96.github.io/synapse/guide/clients) for manual setup.
+`init` detects Claude Code, Claude Desktop, Cursor, OpenCode and Codex (which also covers the ChatGPT desktop app), asks before configuring each one, and backs up any config file it edits. Restart your agent afterwards. Mindmaps are stored in `~/.synapse/data` (override with `SYNAPSE_DATA_DIR`). See the [client guide](https://vss96.github.io/synapse/guide/clients) for manual setup, and [Updating](https://vss96.github.io/synapse/guide/clients#updating) for getting new releases.
 
 ---
 

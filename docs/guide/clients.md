@@ -224,6 +224,35 @@ SYNAPSE_DATA_DIR=/path/to/data npx synapse-mindmap viewer
 
 :::
 
+## Updating
+
+Clients start Synapse with `npx -y synapse-mindmap`. npx keeps a copy of each package it downloads and reuses it, so after a new release your client may keep starting the version it fetched first.
+
+Check which version you're running, and the latest on npm:
+
+```sh
+npx -y synapse-mindmap --version
+npm view synapse-mindmap version
+```
+
+**To update once,** delete npx's cache, then restart the client (and any running viewer):
+
+```sh
+rm -rf ~/.npm/_npx                                          # macOS and Linux
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\npm-cache\_npx"  # Windows PowerShell
+```
+
+This clears everything npx has cached, not just Synapse. Other packages are downloaded again the next time you run them. If you've moved npm's cache, the `_npx` folder is inside that directory instead.
+
+**To always run the latest release,** ask for `synapse-mindmap@latest` instead of `synapse-mindmap` in your client's config. For example, `"args": ["-y", "synapse-mindmap@latest", "mcp"]`, or for Claude Code:
+
+```sh
+claude mcp remove --scope user synapse
+claude mcp add --scope user synapse -- npx -y synapse-mindmap@latest mcp
+```
+
+npx then checks npm for a newer version every time the client starts the server, which makes startup a little slower. `init` writes `synapse-mindmap` without `@latest`, so make this change by hand. Do the same for the viewer: `npx synapse-mindmap@latest viewer --open`.
+
 ## Troubleshooting
 
 ### The tools don't show up
