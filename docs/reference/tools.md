@@ -19,7 +19,7 @@ The Synapse server provides 14 tools. Agents normally only need the first five. 
 | [`render_mindmap`](#render-mindmap) | Render as Mermaid, text, or JSON |
 | [`delete_mindmap`](#delete-mindmap) | Delete a mindmap |
 
-**Return values.** Tools that modify a mindmap return the full updated document as JSON, so the agent can read back generated node IDs. Every input is validated before anything changes. Invalid input (an unknown enum value, a rename without `previousPath`, an ID with characters outside `[A-Za-z0-9_-]`) and impossible requests (an unknown mindmap or node, a status on a node that isn't a task) come back as MCP tool errors (`isError: true`) with a message saying what to fix, and nothing is saved.
+**Return values.** Tools that modify a mindmap return a short JSON acknowledgement, not the whole document (which soon outgrows MCP clients' output limits): `mindmapId`, a one-line `summary`, and the nodes the call created or changed as `{ id, label, type, parent, status? }`, so the agent can read back generated node IDs. `create_mindmap` lists every plan node under `nodes`, `map_architecture` lists each `key` with its node, and `update_plan_status` adds `next`, and `log_file_touch` adds `fileNode` when `createChildNode` is set. `delete_mindmap` returns just `mindmapId` and `summary`. Use [`get_mindmap`](#get-mindmap) for the full document. Every input is validated before anything changes. Invalid input (an unknown enum value, a rename without `previousPath`, an ID with characters outside `[A-Za-z0-9_-]`) and impossible requests (an unknown mindmap or node, a status on a node that isn't a task) come back as MCP tool errors (`isError: true`) with a message saying what to fix, and nothing is saved.
 
 **Enums used below**
 
@@ -104,7 +104,7 @@ Record that a file was read, created, modified, renamed, or deleted, along with 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `mindmapId` | string | ✓ | Mindmap ID |
-| `nodeId` | string | | Task or component to attach to. Defaults to the active `in_progress` node ([how the target is chosen](../guide/how-it-works#where-files-are-attached)). |
+| `nodeId` | string | | Task or component to attach to. Defaults to the active `in_progress` node ([how the target is chosen](../guide/how-it-works#where-files-are-attached)). A `planned` task passed here is started (`in_progress`), so auto-detected changes follow it. |
 | `path` | string | ✓ | File path, such as `src/tools.ts` |
 | `action` | FileAction | | Defaults to `modify` |
 | `previousPath` | string | | The old path, when `action` is `rename` |
@@ -115,6 +115,8 @@ Record that a file was read, created, modified, renamed, or deleted, along with 
 | `createChildNode` | boolean | | If `true`, also creates (or updates) a visible `file` child node under the target |
 
 *CodeChange*: `{ kind: ChangeKind (required), symbol: string (required), previousSymbol?: string, detail?: string }`. For renames, `symbol` is the new name.
+
+If other tasks are still `in_progress`, the reply includes a `hint` naming them, as a reminder to call `update_plan_status` when they're done.
 
 ```json
 {

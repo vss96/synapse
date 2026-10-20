@@ -30,8 +30,13 @@ async function fails(name: string, args: Record<string, unknown>): Promise<strin
   assert.equal(result.isError, true, `${name} should have failed but returned: ${textOf(result).slice(0, 200)}`);
   return textOf(result);
 }
-/** Calls a tool that returns a mindmap; the reply must be a valid document. */
-const docFrom = async (name: string, args: Record<string, unknown>) => MindmapDocument.parse(JSON.parse(await ok(name, args)));
+/** Calls a tool that changes a mindmap and returns its compact acknowledgement. */
+const ackFrom = async (name: string, args: Record<string, unknown>) => JSON.parse(await ok(name, args)) as { mindmapId: string; summary: string } & Record<string, any>;
+/** Calls a tool, then reads back the whole document with get_mindmap (which must be a valid document). */
+async function docFrom(name: string, args: Record<string, unknown>): Promise<MindmapDocument> {
+  const reply = JSON.parse(await ok(name, args));
+  return MindmapDocument.parse(name === "get_mindmap" ? reply : JSON.parse(await ok("get_mindmap", { mindmapId: reply.mindmapId })));
+}
 
 function nodeOf(doc: MindmapDocument, id: NodeId | undefined): MindmapNode {
   const node = id && doc.nodes[id];
@@ -288,6 +293,39 @@ describe("MCP tools integration", () => {
     } finally {
       await rm(repoDir, { recursive: true, force: true });
     }
+  });
+
+  it("acknowledges changes compactly and starts a planned task that gets an explicit file touch", async () => {
+    const created = await ackFrom("create_mindmap", {
+      title: "Compact",
+      initialPlan: [{ label: "Step 1", status: "in_progress" }, { label: "Step 2" }],
+    });
+    assert.equal("nodes" in created && Array.isArray(created.nodes), true);
+    const [step1, step2] = created.nodes as { id: string; label: string; status: string }[];
+    assert.deepEqual([step1?.label, step1?.status, step2?.label, step2?.status], ["Step 1", "in_progress", "Step 2", "planned"]);
+
+    const added = await ackFrom("add_node", { mindmapId: created.mindmapId, parentId: "root", label: "Step 3" });
+    assert.equal(added.node.label, "Step 3");
+    assert.equal(added.node.status, "planned");
+
+    // Make the document big; acknowledgements stay small
+    for (let i = 0; i < 50; i++) await ok("log_file_touch", { mindmapId: created.mindmapId, path: `src/file${i}.ts`, summary: "x".repeat(200) });
+    const touched = await ackFrom("log_file_touch", {
+      mindmapId: created.mindmapId,
+      nodeId: step2!.id,
+      path: "src/b.ts",
+      summary: "y".repeat(5000),
+      createChildNode: true,
+    });
+    assert.ok(JSON.stringify(touched).length < 1000, "the agent's own summary isn't echoed back");
+    assert.equal(touched.node.id, step2!.id);
+    assert.deepEqual([touched.fileNode.type, touched.fileNode.label, touched.fileNode.parent], ["file", "src/b.ts", step2!.id]);
+    assert.equal(touched.node.status, "in_progress", "a planned task that gets a touch has started");
+    assert.match(touched.hint, /Also in_progress: "Step 1"/);
+
+    const doc = await docFrom("get_mindmap", { mindmapId: created.mindmapId });
+    assert.ok(JSON.stringify(doc).length > 10_000);
+    assert.equal(taskOf(doc, step2!.id as NodeId).status, "in_progress");
   });
 
   it("maps HLD mental model concepts and directed flow links via map_architecture and link_nodes", async () => {

@@ -46,7 +46,7 @@ function defineTool<S extends z.ZodObject>(def: {
   name: string;
   description: string;
   inputSchema: S;
-  run: (input: z.infer<S>) => Promise<string | MindmapDocument>;
+  run: (input: z.infer<S>) => Promise<string | MindmapDocument | Ack>;
 }): ToolDefinition {
   return {
     name: def.name,
@@ -64,6 +64,17 @@ function defineTool<S extends z.ZodObject>(def: {
       }
     },
   };
+}
+
+/**
+ * What a tool that changes a mindmap reports back: the ids and statuses the agent needs to carry on,
+ * not the whole document (which outgrows MCP output limits; `get_mindmap` returns it).
+ */
+type Ack = { mindmapId: MindmapId; summary: string } & Record<string, unknown>;
+
+/** A node as reported in an Ack. */
+function ref(node: MindmapNode) {
+  return { id: node.id, label: node.label, type: node.type, parent: node.parent, ...(isTask(node) ? { status: node.status } : {}) };
 }
 
 async function loadMindmap(id: MindmapId): Promise<MindmapDocument> {
@@ -197,7 +208,8 @@ const createMindmap = defineTool({
 
     await store.save(doc);
     ensureWorkspaceWatcher(doc.id, doc.workspacePath);
-    return doc;
+    const nodes = Object.values(doc.nodes).filter((n) => n.type !== "root").map(ref);
+    return { mindmapId: doc.id, summary: `Created mindmap "${doc.title}" with ${nodes.length} node(s)`, nodes };
   },
 });
 
@@ -224,9 +236,10 @@ const addNode = defineTool({
       files: input.files?.map(toFileTouch),
     });
     attachChild(doc, node);
-    store.recordActivity(doc, `Added ${node.type} node "${node.label}"`, { nodeId: node.id });
+    const summary = `Added ${node.type} node "${node.label}"`;
+    store.recordActivity(doc, summary, { nodeId: node.id });
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary, node: ref(node) };
   },
 });
 
@@ -254,9 +267,10 @@ const updateNode = defineTool({
     node.updatedAt = now();
     doc.nodes[node.id] = node;
 
-    store.recordActivity(doc, `Updated node "${node.label}"${status ? ` → ${status}` : ""}`, { nodeId: node.id });
+    const summary = `Updated node "${node.label}"${status ? ` → ${status}` : ""}`;
+    store.recordActivity(doc, summary, { nodeId: node.id });
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary, node: ref(node) };
   },
 });
 
@@ -287,9 +301,10 @@ const linkNodes = defineTool({
     const from = getNode(doc, input.from, "Source node");
     const to = getNode(doc, input.to, "Target node");
     upsertLink(doc, input);
-    store.recordActivity(doc, `Linked "${from.label}" ──[${input.label}]──▶ "${to.label}"`, { nodeId: from.id });
+    const summary = `Linked "${from.label}" ──[${input.label}]──▶ "${to.label}"`;
+    store.recordActivity(doc, summary, { nodeId: from.id });
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary };
   },
 });
 
@@ -394,9 +409,11 @@ const mapArchitecture = defineTool({
       linkCount++;
     }
 
-    store.recordActivity(doc, `Mapped HLD mental model: ${input.nodes.length} node(s), ${linkCount} flow link(s)`, { nodeId: container.id });
+    const summary = `Mapped HLD mental model: ${input.nodes.length} node(s), ${linkCount} flow link(s)`;
+    store.recordActivity(doc, summary, { nodeId: container.id });
     await store.save(doc);
-    return doc;
+    const nodes = [...byKey].map(([key, id]) => ({ key, ...ref(doc.nodes[id]!) }));
+    return { mindmapId: doc.id, summary, containerId: container.id, nodes };
   },
 });
 
@@ -431,14 +448,15 @@ const updatePlanStatus = defineTool({
       store.recordActivity(doc, `Started task "${next.label}"`, { nodeId: next.id });
     }
     await store.save(doc);
-    return doc;
+    const summary = `Task "${node.label}" marked ${input.status}${next ? `; started "${next.label}"` : ""}`;
+    return { mindmapId: doc.id, summary, node: ref(node), ...(next ? { next: ref(next) } : {}) };
   },
 });
 
 const logFileTouch = defineTool({
   name: "log_file_touch",
   description:
-    "Record that a file was read, created, modified, renamed, or deleted, plus symbol-level `changes` (add, modify, fix, refactor, rename, remove, test) so the user can follow exactly what is changing. If nodeId is omitted, attaches to the currently in_progress task node.",
+    "Record that a file was read, created, modified, renamed, or deleted, plus symbol-level `changes` (add, modify, fix, refactor, rename, remove, test) so the user can follow exactly what is changing. If nodeId is omitted, attaches to the currently in_progress task node; a planned task given as nodeId is started (in_progress).",
   inputSchema: FileTouchInput.safeExtend({
     mindmapId,
     nodeId: NodeId.optional().describe("Task or component node ID. If omitted, attaches to the active in_progress task."),
@@ -450,28 +468,45 @@ const logFileTouch = defineTool({
     const target = fileTouchTarget(doc, input.nodeId);
     const touch = toFileTouch(input);
     upsertFileTouch(target, touch);
+    // Touching a planned task means work on it has started; auto-detected touches then follow it.
+    const started = isTask(target) && target.status === "planned";
+    if (started) target.status = "in_progress";
 
+    let fileNode: MindmapNode | undefined;
     if (input.createChildNode) {
       const label = `${input.path}${input.lines ? `:${input.lines}` : ""}`;
-      const existing = target.children.map((id) => doc.nodes[id]).find((c) => c?.type === "file" && c.label.includes(input.path));
-      if (existing) {
-        existing.label = label;
-        existing.notes = input.summary ?? existing.notes;
-        upsertFileTouch(existing, touch);
+      fileNode = target.children.map((id) => doc.nodes[id]).find((c) => c?.type === "file" && c.label.includes(input.path));
+      if (fileNode) {
+        fileNode.label = label;
+        fileNode.notes = input.summary ?? fileNode.notes;
+        upsertFileTouch(fileNode, touch);
       } else {
-        attachChild(doc, createChild({ type: "file", label, parent: target.id, notes: input.summary, files: [touch] }));
+        fileNode = createChild({ type: "file", label, parent: target.id, notes: input.summary, files: [touch] });
+        attachChild(doc, fileNode);
       }
     }
 
     const renamedFrom = touch.action === "rename" ? `${touch.previousPath} → ` : "";
     const tally = describeChanges(input.changes);
-    store.recordActivity(
-      doc,
-      `[${touch.action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${target.label}")`,
-      { nodeId: target.id, file: input.path },
-    );
+    const what = `[${touch.action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}`;
+    const on = ` (on "${target.label}")`;
+    store.recordActivity(doc, `${what}${input.summary ? ` — ${input.summary}` : ""}${on}`, { nodeId: target.id, file: input.path });
+    if (started) store.recordActivity(doc, `Started task "${target.label}"`, { nodeId: target.id });
     await store.save(doc);
-    return doc;
+
+    const stale = Object.values(doc.nodes).filter((n) => n.id !== target.id && isTask(n) && n.status === "in_progress");
+    const hint =
+      stale.length > 0
+        ? `Also in_progress: ${stale.map((n) => `"${n.label}" (${n.id})`).join(", ")}. Call update_plan_status if that work is done.`
+        : undefined;
+    // The reply leaves out the agent's own free-text summary (it's in the activity log), so it stays short.
+    return {
+      mindmapId: doc.id,
+      summary: `${what}${on}`,
+      node: ref(target),
+      ...(fileNode ? { fileNode: ref(fileNode) } : {}),
+      ...(hint ? { hint } : {}),
+    };
   },
 });
 
@@ -495,10 +530,11 @@ const syncGitStatus = defineTool({
 
     const target = fileTouchTarget(doc, input.targetNodeId);
     for (const touch of changes) upsertFileTouch(target, touch);
-    store.recordActivity(doc, `Synced ${changes.length} changed file(s) from git status into "${target.label}"`, { nodeId: target.id });
+    const summary = `Synced ${changes.length} changed file(s) from git status into "${target.label}"`;
+    store.recordActivity(doc, summary, { nodeId: target.id });
     await store.save(doc);
     ensureWorkspaceWatcher(doc.id, workspacePath);
-    return doc;
+    return { mindmapId: doc.id, summary, node: ref(target) };
   },
 });
 
@@ -579,9 +615,10 @@ const removeNode = defineTool({
     for (const id of removed) delete doc.nodes[id];
     doc.links = doc.links.filter((l) => !removed.has(l.from) && !removed.has(l.to));
 
-    store.recordActivity(doc, `Removed node "${node.label}" (${removed.size} node(s))`);
+    const summary = `Removed node "${node.label}" (${removed.size} node(s))`;
+    store.recordActivity(doc, summary);
     await store.save(doc);
-    return doc;
+    return { mindmapId: doc.id, summary };
   },
 });
 
@@ -618,7 +655,7 @@ const deleteMindmap = defineTool({
   inputSchema: z.object({ mindmapId }),
   async run(input) {
     if (!(await store.remove(input.mindmapId))) throw new ToolError(`Mindmap "${input.mindmapId}" not found.`);
-    return `Mindmap "${input.mindmapId}" deleted.`;
+    return { mindmapId: input.mindmapId, summary: `Mindmap "${input.mindmapId}" deleted.` };
   },
 });
 
