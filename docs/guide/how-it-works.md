@@ -63,11 +63,12 @@ Git only reports a rename when it's **staged** (`git mv`, or `git add` on both p
 When a mindmap has a `workspacePath`, the MCP server watches that directory recursively. It starts watching when `create_mindmap` is called with `workspacePath`, or after `sync_git_status`. File events are batched every 600 ms and attached to the active task as `create`, `modify`, or `delete`, with the summary `Auto-detected file <action>`. The watcher:
 
 - Classifies a file by its state before the batch, not by the kind of file event: a file git tracks or that the mindmap already lists is a `modify`, even when an editor or git saved it by renaming a temp file over it. A file that appears and disappears within one batch is skipped.
-- Honours the workspace's `.gitignore` (and `.git/info/exclude` and global excludes).
+- In a git repo, skips whatever the repo ignores: its `.gitignore` files, `.git/info/exclude` and global excludes.
 - Leaves out changes made by git itself. After a checkout, reset, merge or pull, files that now match `HEAD` exactly are recorded as one activity entry, such as `Git checkout: moving from main to fix: 277 file change(s) not attributed to a task`; files that differ from `HEAD` are still recorded. While a rebase is in progress, no changes are recorded.
 
 - Runs inside the MCP server process, so it stops when the client stops the server. After a restart it starts again on the next `sync_git_status` call.
-- Ignores `.git`, `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv`, `__pycache__`, `data/*.json`, and editor and atomic-write temp files (`*~`, `*.swp`, `*.tmp`, `*.tmp.<pid>.<hex>`, `.!<pid>!*`), with or without git.
+- Outside a git repo, skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__` instead.
+- Always skips `.git`, `data/*.json`, directories, and editor and atomic-write temp files (`*~`, `*.swp`, `*.tmp`, `*.tmp.<pid>.<hex>`, `.!<pid>!*`).
 - Doesn't detect renames.
 - Fails silently where recursive file watching isn't supported.
 

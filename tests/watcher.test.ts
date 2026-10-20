@@ -34,14 +34,19 @@ async function eventually(id: MindmapId, check: (doc: MindmapDocument) => void, 
 const settle = () => new Promise((r) => setTimeout(r, 1500));
 
 describe("shouldIgnorePath", () => {
-  it("skips tool caches and atomic-write temp files", () => {
-    for (const p of [".gradle/9.8.1/fileHashes/fileHashes.lock", "buildSrc/.gradle/x", "app/__pycache__/m.pyc", ".idea/workspace.xml"]) {
-      assert.ok(shouldIgnorePath(p), p);
+  it("always skips git internals and atomic-write temp files", () => {
+    for (const p of [".git/HEAD", "src/Foo.context.tsx.tmp.51496.f30edae39d38", "src/.!51496!index.ts", "a.ts~", ".a.ts.swp", "a.tmp"]) {
+      assert.ok(shouldIgnorePath(p, true), p);
+      assert.ok(shouldIgnorePath(p, false), p);
     }
-    for (const p of ["src/Foo.context.tsx.tmp.51496.f30edae39d38", "src/.!51496!index.ts", "a.ts~", ".a.ts.swp", "a.tmp"]) {
-      assert.ok(shouldIgnorePath(p), p);
+    for (const p of ["src/index.ts", "src/target/x.ts", "src/tmp.ts", "docs/out.md"]) assert.ok(!shouldIgnorePath(p, false), p);
+  });
+
+  it("skips tool caches only outside git, where no ignore rules apply", () => {
+    for (const p of [".gradle/9.8.1/fileHashes/fileHashes.lock", "buildSrc/.gradle/x", "app/__pycache__/m.pyc", ".idea/workspace.xml", "node_modules/x/index.js"]) {
+      assert.ok(shouldIgnorePath(p, false), p);
+      assert.ok(!shouldIgnorePath(p, true), p);
     }
-    for (const p of ["src/index.ts", "src/target/x.ts", "src/tmp.ts", "docs/out.md"]) assert.ok(!shouldIgnorePath(p), p);
   });
 });
 
@@ -57,7 +62,7 @@ describe("workspace watcher", () => {
     await git("init", "-q");
     await git("config", "user.email", "test@example.com");
     await git("config", "user.name", "Test User");
-    await writeFile(path.join(repoDir, ".gitignore"), "*.log\n");
+    await writeFile(path.join(repoDir, ".gitignore"), "*.log\n.gradle/\n");
     await writeFile(path.join(repoDir, "a.ts"), "export const a = 1;\n");
     await writeFile(path.join(repoDir, "b.ts"), "export const b = 1;\n");
     await git("add", ".");
@@ -83,7 +88,7 @@ describe("workspace watcher", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("records atomic writes as modify and skips temp, cache and gitignored files", async () => {
+  it("records atomic writes as modify and skips temp and gitignored files", async () => {
     const { repoDir } = await makeRepo("edits");
     const id = await createMindmap({ title: "Watch", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
     await settle();
@@ -98,17 +103,33 @@ describe("workspace watcher", () => {
     await mkdir(path.join(repoDir, ".gradle"));
     await writeFile(path.join(repoDir, ".gradle", "fileHashes.lock"), "x");
     await writeFile(path.join(repoDir, "debug.log"), "x");
+    // Not in this repo's .gitignore, so it counts even though it's in the built-in list
+    await mkdir(path.join(repoDir, ".idea"));
+    await writeFile(path.join(repoDir, ".idea", "workspace.xml"), "x");
     await writeFile(path.join(repoDir, "new.ts"), "export const n = 1;\n");
 
     const doc = await eventually(id, (d) => {
       const files = Object.values(d.nodes).flatMap((n) => n.files);
-      assert.deepEqual(files.map((f) => `${f.action}:${f.path}`).sort(), ["create:new.ts", "modify:a.ts"]);
+      assert.deepEqual(files.map((f) => `${f.action}:${f.path}`).sort(), ["create:.idea/workspace.xml", "create:new.ts", "modify:a.ts"]);
     });
     const step = Object.values(doc.nodes).find((n) => n.label === "Edit")!;
-    assert.equal(step.files.length, 2, "attached to the in_progress task");
+    assert.equal(step.files.length, 3, "attached to the in_progress task");
     await settle();
     const later = (await store.load(id))!;
-    assert.deepEqual(Object.values(later.nodes).flatMap((n) => n.files).map((f) => f.path).sort(), ["a.ts", "new.ts"]);
+    assert.deepEqual(Object.values(later.nodes).flatMap((n) => n.files).map((f) => f.path).sort(), [".idea/workspace.xml", "a.ts", "new.ts"]);
+  }, 20000);
+
+  it("falls back to the built-in ignore list outside git", async () => {
+    const dir = path.join(tmpDir, "plain");
+    await mkdir(path.join(dir, ".gradle"), { recursive: true });
+    const id = await createMindmap({ title: "Plain", workspacePath: dir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+    await writeFile(path.join(dir, ".gradle", "fileHashes.lock"), "x");
+    await writeFile(path.join(dir, "main.py"), "print(1)\n");
+
+    await eventually(id, (d) => assert.deepEqual(Object.values(d.nodes).flatMap((n) => n.files).map((f) => `${f.action}:${f.path}`), ["create:main.py"]));
+    await settle();
+    assert.deepEqual(Object.values((await store.load(id))!.nodes).flatMap((n) => n.files).map((f) => f.path), ["main.py"]);
   }, 20000);
 
   it("collapses a branch switch into one activity entry instead of file touches", async () => {

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { watch, existsSync, type FSWatcher } from "node:fs";
+import { watch, existsSync, statSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as store from "./store.js";
 import { fileTouchTarget, upsertFileTouch } from "./model/file-touch.js";
@@ -8,9 +8,8 @@ import { MindmapId, now, type EditTouch } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
 
-/** Tool, cache and build directories, ignored even outside git. In a repo, its .gitignore rules apply as well. */
-const IGNORED_SEGMENTS = new Set([
-  ".git",
+/** Tool, cache and build directories. Only used outside git: in a repo, its own ignore rules decide. */
+const FALLBACK_IGNORED_SEGMENTS = new Set([
   "node_modules",
   "dist",
   "build",
@@ -28,11 +27,14 @@ const IGNORED_SEGMENTS = new Set([
 /** Editor and atomic-write temp files: `x~`, `.x.swp`, `x.tmp`, Claude Code's `x.tmp.<pid>.<hex>`, BSD `sed -i`'s `.!<pid>!x`. */
 const TEMP_FILE = /(~|\.swp|\.tmp|\.tmp\.\d+\.[0-9a-f]+)$|(^|\/)\.!\d+!/;
 
-export function shouldIgnorePath(relPath: string): boolean {
+/**
+ * Paths never worth recording: git's own files, temp files and synapse's data. Outside a git repo,
+ * also common tool, cache and build directories (in a repo, `gitIgnored` applies its ignore rules).
+ */
+export function shouldIgnorePath(relPath: string, inRepo: boolean): boolean {
   const parts = relPath.split(/[\\/]/);
-  for (const part of parts) {
-    if (IGNORED_SEGMENTS.has(part)) return true;
-  }
+  if (parts.includes(".git")) return true;
+  if (!inRepo && parts.some((part) => FALLBACK_IGNORED_SEGMENTS.has(part))) return true;
   // Ignore synapse's own data JSON files if watching the synapse repo itself
   if (parts[0] === "data" && relPath.endsWith(".json")) return true;
   return TEMP_FILE.test(relPath);
@@ -57,8 +59,13 @@ async function gitIgnored(cwd: string, paths: string[]): Promise<Set<string>> {
 
 /** Those of `paths` that git lists with `args` (`ls-files` for tracked, `diff --name-only HEAD` for changed). */
 async function gitListed(cwd: string, args: string[], paths: string[]): Promise<Set<string>> {
-  const out = await git(cwd, ["--literal-pathspecs", ...args, "-z", "--", ...paths]);
-  return new Set(out.split("\0").filter(Boolean));
+  const listed = new Set<string>();
+  // Paths go on the command line, so pass them in chunks to stay under the OS argument limit
+  for (let i = 0; i < paths.length; i += 1000) {
+    const out = await git(cwd, ["--literal-pathspecs", ...args, "-z", "--", ...paths.slice(i, i + 1000)]);
+    for (const p of out.split("\0")) if (p) listed.add(p);
+  }
+  return listed;
 }
 
 /** How long after a checkout, rebase, reset, merge or pull its file events may still arrive. */
@@ -95,7 +102,7 @@ export async function inspectGitChanges(workspacePath: string): Promise<EditTouc
     const [from, to] = line.slice(3).trim().split(" -> ");
     const filePath = (to ?? from ?? "").trim();
     const previousPath = to !== undefined ? from?.trim() : undefined;
-    if (!filePath || shouldIgnorePath(filePath)) continue;
+    if (!filePath || shouldIgnorePath(filePath, true)) continue;
 
     const diffStat = statsMap.get(filePath);
     const describe = (action: string) => (diffStat ? `Git ${action} (${diffStat})` : `Git ${action}`);
@@ -128,6 +135,9 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
   let batchStart = 0;
   let debounceTimer: NodeJS.Timeout | null = null;
   let flushing = Promise.resolve();
+  // Until git answers, assume no repo: the fallback list filters more, never less.
+  let inRepo = false;
+  void git(resolved, ["rev-parse", "--is-inside-work-tree"]).then((out) => (inRepo = out.trim() === "true"));
 
   const flushBatch = async () => {
     const batch = new Map(pendingFiles);
@@ -138,16 +148,18 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     const doc = await store.load(mindmapId);
     if (!doc) return;
 
-    const paths = [...batch.keys()];
+    const ignored = await gitIgnored(resolved, [...batch.keys()]);
+    const paths = [...batch.keys()].filter((p) => !ignored.has(p));
+    if (paths.length === 0) return;
     const rebasing = (await git(resolved, ["rev-parse", "--git-path", "rebase-merge", "--git-path", "rebase-apply"]))
       .split("\n")
       .some((p) => p && existsSync(path.resolve(resolved, p)));
     if (rebasing) {
-      store.recordActivity(doc, `Git rebase in progress: ${batch.size} file change(s) not attributed to a task`);
+      store.recordActivity(doc, `Git rebase in progress: ${paths.length} file change(s) not attributed to a task`);
       await store.save(doc);
       return;
     }
-    const [ignored, tracked] = await Promise.all([gitIgnored(resolved, paths), gitListed(resolved, ["ls-files"], paths)]);
+    const tracked = await gitListed(resolved, ["ls-files"], paths);
 
     // A checkout, reset, merge or pull rewrites the worktree to match the new HEAD; that churn isn't
     // the agent's edits. HEAD's reflog says what last moved it and when (a commit is the agent's own).
@@ -162,9 +174,11 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     // Classify by the file's state before the batch, not by event type: editors and git replace files
     // by renaming a temp over them, which fs.watch reports as `rename` just like a new file.
     const touches: [string, "create" | "modify" | "delete"][] = [];
-    for (const [relPath, renamed] of batch) {
-      if (ignored.has(relPath)) continue;
-      const exists = existsSync(path.join(resolved, relPath));
+    for (const relPath of paths) {
+      const renamed = batch.get(relPath)!;
+      const stat = statSync(path.join(resolved, relPath), { throwIfNoEntry: false });
+      if (stat?.isDirectory()) continue; // a new directory; the files written into it have their own events
+      const exists = stat !== undefined;
       if (vcsMoved && (tracked.has(relPath) ? !changed.has(relPath) : !exists)) {
         churn++;
         continue;
@@ -200,7 +214,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     const watcher = watch(resolved, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
       const relPath = filename.replace(/\\/g, "/");
-      if (shouldIgnorePath(relPath)) return;
+      if (shouldIgnorePath(relPath, inRepo)) return;
 
       if (pendingFiles.size === 0) batchStart = Date.now();
       pendingFiles.set(relPath, pendingFiles.get(relPath) === true || eventType === "rename");
