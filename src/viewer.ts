@@ -5,7 +5,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { watch, type FSWatcher } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import { connect } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,13 @@ const STATIC_FILES: Record<string, { file: string; type: string }> = {
   "/logo.png": { file: path.join(PACKAGE_ROOT, "docs", "public", "logo.png"), type: "image/png" },
   "/favicon.png": { file: path.join(PACKAGE_ROOT, "docs", "public", "favicon.png"), type: "image/png" },
 };
+
+/** The files the viewer serves that don't exist, relative to the package root (e.g. a build that skipped the bundle). */
+export function missingAssets(files: Record<string, { file: string }> = STATIC_FILES): string[] {
+  return Object.values(files)
+    .filter((asset) => !existsSync(asset.file))
+    .map((asset) => path.relative(PACKAGE_ROOT, asset.file));
+}
 
 export interface ViewerOptions {
   /** Port to listen on. Defaults to 4040, moving to the next free port when it is taken. */
@@ -176,6 +183,12 @@ async function listenOnFreePort(server: Server, start: number): Promise<number> 
 }
 
 export async function startViewer(options: ViewerOptions = {}): Promise<RunningViewer> {
+  // Without these the page loads but stays on its empty state, which looks like "no mindmaps yet".
+  const missing = missingAssets();
+  if (missing.length > 0) {
+    throw new Error(`viewer files are missing: ${missing.join(", ")}. Rebuild with "npm run build".`);
+  }
+
   const dataDir = await store.ensureDataDir();
   const sseClients = new Set<ServerResponse>();
   let port = 0;
@@ -222,6 +235,7 @@ export async function startViewer(options: ViewerOptions = {}): Promise<RunningV
       res.writeHead(200, { "Content-Type": asset.type, "Cache-Control": "no-cache" });
       res.end(content);
     } catch (err) {
+      console.error(`[synapse viewer] ${req.method} ${req.url} failed:`, err);
       if (!res.headersSent) sendJson(res, 500, { error: String(err) });
       else res.end();
     }
