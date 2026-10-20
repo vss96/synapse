@@ -22,7 +22,7 @@ Run every check that applies to your change:
 | Anything that ships | `bun run build` |
 | Docs (`docs/`) | `bun run docs:build` (fails on dead links) |
 
-Add or update tests in `tests/` for any change in behavior.
+Add or update tests in `tests/` for any change in behavior. CI (`.github/workflows/ci.yml`) runs all of these on every pull request.
 
 ## Rules
 
