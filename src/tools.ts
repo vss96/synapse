@@ -472,22 +472,25 @@ const logFileTouch = defineTool({
     const started = isTask(target) && target.status === "planned";
     if (started) target.status = "in_progress";
 
+    let fileNode: MindmapNode | undefined;
     if (input.createChildNode) {
       const label = `${input.path}${input.lines ? `:${input.lines}` : ""}`;
-      const existing = target.children.map((id) => doc.nodes[id]).find((c) => c?.type === "file" && c.label.includes(input.path));
-      if (existing) {
-        existing.label = label;
-        existing.notes = input.summary ?? existing.notes;
-        upsertFileTouch(existing, touch);
+      fileNode = target.children.map((id) => doc.nodes[id]).find((c) => c?.type === "file" && c.label.includes(input.path));
+      if (fileNode) {
+        fileNode.label = label;
+        fileNode.notes = input.summary ?? fileNode.notes;
+        upsertFileTouch(fileNode, touch);
       } else {
-        attachChild(doc, createChild({ type: "file", label, parent: target.id, notes: input.summary, files: [touch] }));
+        fileNode = createChild({ type: "file", label, parent: target.id, notes: input.summary, files: [touch] });
+        attachChild(doc, fileNode);
       }
     }
 
     const renamedFrom = touch.action === "rename" ? `${touch.previousPath} → ` : "";
     const tally = describeChanges(input.changes);
-    const summary = `[${touch.action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}${input.summary ? ` — ${input.summary}` : ""} (on "${target.label}")`;
-    store.recordActivity(doc, summary, { nodeId: target.id, file: input.path });
+    const what = `[${touch.action.toUpperCase()}] ${renamedFrom}${input.path}${input.lines ? `:${input.lines}` : ""}${tally ? ` (${tally})` : ""}`;
+    const on = ` (on "${target.label}")`;
+    store.recordActivity(doc, `${what}${input.summary ? ` — ${input.summary}` : ""}${on}`, { nodeId: target.id, file: input.path });
     if (started) store.recordActivity(doc, `Started task "${target.label}"`, { nodeId: target.id });
     await store.save(doc);
 
@@ -496,7 +499,14 @@ const logFileTouch = defineTool({
       stale.length > 0
         ? `Also in_progress: ${stale.map((n) => `"${n.label}" (${n.id})`).join(", ")}. Call update_plan_status if that work is done.`
         : undefined;
-    return { mindmapId: doc.id, summary, node: ref(target), ...(hint ? { hint } : {}) };
+    // The reply leaves out the agent's own free-text summary (it's in the activity log), so it stays short.
+    return {
+      mindmapId: doc.id,
+      summary: `${what}${on}`,
+      node: ref(target),
+      ...(fileNode ? { fileNode: ref(fileNode) } : {}),
+      ...(hint ? { hint } : {}),
+    };
   },
 });
 
@@ -645,7 +655,7 @@ const deleteMindmap = defineTool({
   inputSchema: z.object({ mindmapId }),
   async run(input) {
     if (!(await store.remove(input.mindmapId))) throw new ToolError(`Mindmap "${input.mindmapId}" not found.`);
-    return `Mindmap "${input.mindmapId}" deleted.`;
+    return { mindmapId: input.mindmapId, summary: `Mindmap "${input.mindmapId}" deleted.` };
   },
 });
 

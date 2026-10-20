@@ -310,9 +310,16 @@ describe("MCP tools integration", () => {
 
     // Make the document big; acknowledgements stay small
     for (let i = 0; i < 50; i++) await ok("log_file_touch", { mindmapId: created.mindmapId, path: `src/file${i}.ts`, summary: "x".repeat(200) });
-    const touched = await ackFrom("log_file_touch", { mindmapId: created.mindmapId, nodeId: step2!.id, path: "src/b.ts" });
-    assert.ok(JSON.stringify(touched).length < 1000);
+    const touched = await ackFrom("log_file_touch", {
+      mindmapId: created.mindmapId,
+      nodeId: step2!.id,
+      path: "src/b.ts",
+      summary: "y".repeat(5000),
+      createChildNode: true,
+    });
+    assert.ok(JSON.stringify(touched).length < 1000, "the agent's own summary isn't echoed back");
     assert.equal(touched.node.id, step2!.id);
+    assert.deepEqual([touched.fileNode.type, touched.fileNode.label, touched.fileNode.parent], ["file", "src/b.ts", step2!.id]);
     assert.equal(touched.node.status, "in_progress", "a planned task that gets a touch has started");
     assert.match(touched.hint, /Also in_progress: "Step 1"/);
 
