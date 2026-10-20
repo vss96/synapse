@@ -87,7 +87,7 @@ Every push to `main` that touches `docs/` deploys the site to GitHub Pages throu
 
 The package is published to npm as `synapse-mindmap`. It ships `dist/`, `viewer/index.html`, `docs/public/logo.png`, and `docs/public/favicon.png`, plus `README.md`, `LICENSE`, and `package.json`.
 
-Releases are published by GitHub Actions ([`.github/workflows/publish.yml`](https://github.com/vss96/synapse/blob/main/.github/workflows/publish.yml)) when a `v*` tag is pushed:
+Releases are staged by GitHub Actions ([`.github/workflows/publish.yml`](https://github.com/vss96/synapse/blob/main/.github/workflows/publish.yml)) when a `v*` tag is pushed, and go live once a maintainer approves them:
 
 1. Bump `version` in `package.json` in a pull request and merge it. The MCP server reports this version to clients.
 2. Tag the merged commit on `main` and push the tag:
@@ -98,14 +98,23 @@ Releases are published by GitHub Actions ([`.github/workflows/publish.yml`](http
    git push origin v1.2.0
    ```
 
-The workflow fails unless the tag is `v` plus the `package.json` version. It runs the typecheck and tests, then `npm publish --provenance`. `prepack` runs `npm run build`, so the published package is always a fresh build. Run `npm pack --dry-run` locally to check exactly which files will be published.
+3. When the workflow has finished, approve the staged version. Approving asks for your npm two-factor code:
 
-The workflow has no npm token. It authenticates with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers), and npm records provenance linking each version to the commit and workflow run that built it.
+   ```sh
+   npm stage list synapse-mindmap
+   npm stage approve <stage-id>
+   ```
+
+   To inspect it first, `npm stage download <stage-id>` saves the tarball. `npm stage reject <stage-id>` discards it.
+
+The workflow fails unless the tag is `v` plus the `package.json` version. It runs the typecheck and tests, then `npm stage publish --provenance`. `prepack` runs `npm run build`, so the published package is always a fresh build. Run `npm pack --dry-run` locally to check exactly which files will be published.
+
+The workflow has no npm token. It authenticates with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers), and npm records provenance linking each version to the commit and workflow run that built it. It can only stage: nothing reaches npm users without a maintainer's two-factor approval, so a leaked GitHub credential or a stray tag can't publish on its own.
 
 ### One-time setup
 
 Trusted publishing is configured per package, so the package has to exist on npm first:
 
 1. Publish the first version by hand: `npm login`, then `npm publish --access public`.
-2. On npmjs.com, open the package's **Settings → Trusted publishing**, choose **GitHub Actions**, and enter owner `vss96`, repository `synapse`, workflow `publish.yml`.
-3. Optionally, under **Publishing access**, require two-factor authentication and disallow tokens, so only the workflow can publish.
+2. On npmjs.com, open the package's **Settings → Trusted publishing**, choose **GitHub Actions**, and enter owner `vss96`, repository `synapse`, workflow `publish.yml`. Leave **Allow npm publish** and **Allow npm dist-tag** unchecked, so the workflow can only stage.
+3. Optionally, under **Publishing access**, require two-factor authentication and disallow tokens, so releases only come from the workflow plus your approval.
