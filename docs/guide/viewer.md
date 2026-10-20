@@ -23,6 +23,8 @@ Each mindmap is a session. Sessions are grouped by repository (the `workspacePat
 
 - **Groups**: click a group name to collapse or expand it. The viewer remembers which groups you collapsed. While you filter, every match is shown.
 - **Archive**: hover over a session and click **Archive** to move it to the **Archived** group at the bottom (collapsed by default), and **Restore** to bring it back. Archiving hides a finished session without deleting it, and the agent can keep writing to it. To delete a mindmap for good, the agent calls [`delete_mindmap`](../reference/tools#delete-mindmap).
+
+  <img src="../screenshots/archive-sessions.png" alt="Sessions panel with the Archive button on a hovered session and the Archived group expanded" width="260">
 - **Live dot**: shown on sessions updated in the last 2 minutes.
 - **Filter**: type in the box to narrow the list.
 - **<kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd>** (<kbd>Alt</kbd> on Windows and Linux): switch to the previous or next session in the list as shown, skipping collapsed groups.
