@@ -4,7 +4,7 @@
 npx synapse-mindmap viewer --open
 ```
 
-The viewer is a local web page that draws every mindmap in your data directory. It updates live while agents work. It only reads the data directory, except for the **Sync Git** button. Agents don't need it to be running.
+The viewer is a local web page that draws every mindmap in your data directory. It updates live while agents work. It only reads the data directory, except for the **Sync Git** button and archiving or restoring a session. Agents don't need it to be running.
 
 ## Layout
 
@@ -13,17 +13,19 @@ The viewer is a local web page that draws every mindmap in your data directory. 
 | Area | What it shows |
 |---|---|
 | Header | The sessions toggle (☰), the **Live** indicator, the view switcher, the task progress bar, and the **Sync Git**, **Refresh**, and **Open** buttons |
-| Left: Sessions | Every mindmap, most recently updated first |
+| Left: Sessions | Every mindmap, grouped by repository, most recently updated first |
 | Center: canvas | The plan tree and/or the code mental model |
 | Right: sidebar | The **Inspector**, **Changes**, and **Activity** tabs |
 
 ## Sessions
 
-Each mindmap is a session. Each row in the sidebar shows the title, workspace path, active task, progress (completed/total tasks), number of files touched, and when it was last updated.
+Each mindmap is a session. Sessions are grouped by repository (the `workspacePath` the agent passed to `create_mindmap`). The group with the most recently updated session comes first, and sessions without a workspace go under **No repository**. Each row shows the title, active task, progress (completed/total tasks), number of files touched, and when it was last updated. Hover over a group name to see the full path.
 
+- **Groups**: click a group name to collapse or expand it. The viewer remembers which groups you collapsed. While you filter, every match is shown.
+- **Archive**: hover over a session and click **Archive** to move it to the **Archived** group at the bottom (collapsed by default), and **Restore** to bring it back. Archiving hides a finished session without deleting it, and the agent can keep writing to it. To delete a mindmap for good, the agent calls [`delete_mindmap`](../reference/tools#delete-mindmap).
 - **Live dot**: shown on sessions updated in the last 2 minutes.
 - **Filter**: type in the box to narrow the list.
-- **<kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd>** (<kbd>Alt</kbd> on Windows and Linux): switch to the previous or next session in the filtered list.
+- **<kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd>** (<kbd>Alt</kbd> on Windows and Linux): switch to the previous or next session in the list as shown, skipping collapsed groups.
 - **Links**: the URL hash holds the session ID, for example `http://localhost:4040/#mm_Ab12Cd34`. Bookmark or share it to open that session directly.
 - **☰** collapses the sidebar. The viewer remembers this setting. In narrow windows it opens the list as a drawer instead.
 
@@ -111,4 +113,4 @@ The viewer is for local use only:
 
 - It binds to `127.0.0.1`, so other machines can't connect to it.
 - It answers only requests addressed to `localhost`, `127.0.0.1`, or `[::1]` on its own port, and returns `403` for any other `Host`. This blocks DNS-rebinding attacks.
-- **Sync Git**, its only write action, requires a JSON request from the viewer's own origin, so other websites can't trigger it.
+- Its write actions, **Sync Git** and **Archive**/**Restore**, require a JSON request from the viewer's own origin, so other websites can't trigger them.

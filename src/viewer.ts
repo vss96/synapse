@@ -67,19 +67,27 @@ function isTrustedRequest(req: IncomingMessage, port: number): boolean {
 }
 
 const SyncGitRequest = z.object({ mindmapId: MindmapId, workspacePath: z.string().optional() });
+const ArchiveRequest = z.object({ mindmapId: MindmapId, archived: z.boolean() });
 
-async function handleGitSync(req: IncomingMessage, res: ServerResponse): Promise<void> {
+/** Read a JSON request body, or answer the request with an error and return undefined. */
+async function readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<unknown> {
   if (!(req.headers["content-type"] ?? "").startsWith("application/json")) {
-    return sendJson(res, 415, { error: "Expected application/json" });
+    sendJson(res, 415, { error: "Expected application/json" });
+    return undefined;
   }
   let body = "";
   for await (const chunk of req) body += chunk;
-  let json: unknown;
   try {
-    json = JSON.parse(body || "{}");
+    return JSON.parse(body || "{}");
   } catch {
-    return sendJson(res, 400, { error: "Body must be JSON" });
+    sendJson(res, 400, { error: "Body must be JSON" });
+    return undefined;
   }
+}
+
+async function handleGitSync(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const json = await readJsonBody(req, res);
+  if (json === undefined) return;
   const request = SyncGitRequest.safeParse(json);
   if (!request.success) return sendJson(res, 400, { error: "A valid mindmapId is required" });
   const { mindmapId, workspacePath } = request.data;
@@ -100,6 +108,16 @@ async function handleGitSync(req: IncomingMessage, res: ServerResponse): Promise
     await store.save(doc);
   }
   sendJson(res, 200, { synced: changes.length, mindmap: doc });
+}
+
+async function handleArchive(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const json = await readJsonBody(req, res);
+  if (json === undefined) return;
+  const request = ArchiveRequest.safeParse(json);
+  if (!request.success) return sendJson(res, 400, { error: "A valid mindmapId and archived flag are required" });
+  const doc = await store.setArchived(request.data.mindmapId, request.data.archived);
+  if (!doc) return sendJson(res, 404, { error: "Mindmap not found" });
+  sendJson(res, 200, { id: doc.id, archivedAt: doc.archivedAt ?? null });
 }
 
 /** Watch the data directory and tell connected pages which mindmap changed. */
@@ -224,6 +242,9 @@ export async function startViewer(options: ViewerOptions = {}): Promise<RunningV
       }
       if (pathname === "/api/sync-git" && req.method === "POST") {
         return await handleGitSync(req, res);
+      }
+      if (pathname === "/api/archive" && req.method === "POST") {
+        return await handleArchive(req, res);
       }
 
       const asset = STATIC_FILES[pathname === "/index.html" ? "/" : pathname];

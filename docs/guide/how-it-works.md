@@ -30,12 +30,13 @@
 | `GET /` | The viewer page (`viewer/index.html`) |
 | `GET /app.js` | The bundled viewer script |
 | `GET /logo.png`, `GET /favicon.png` | Images |
-| `GET /api/mindmaps` | Session list, newest first: `id`, `title`, `workspacePath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `activeTask`, `fileCount` |
+| `GET /api/mindmaps` | Session list, newest first: `id`, `title`, `workspacePath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `activeTask`, `fileCount`, and `archivedAt` when the session is archived |
 | `GET /api/mindmaps/:id` | One full mindmap document |
 | `POST /api/sync-git` | Body `{ "mindmapId": "…", "workspacePath"?: "…" }`. Runs [git sync](#git-sync) and returns `{ synced, mindmap }` |
+| `POST /api/archive` | Body `{ "mindmapId": "…", "archived": true \| false }`. Archives or restores a session without changing its `updatedAt`, and returns `{ id, archivedAt }` (`null` once restored) |
 | `GET /events` | SSE stream of `{ type: "connected" \| "mindmap_updated", id?, timestamp }` |
 
-All routes return `403` unless the `Host` header is `localhost`, `127.0.0.1`, or `[::1]` on the viewer's port. This protects against DNS rebinding. `POST /api/sync-git` also requires `Content-Type: application/json`, rejects a cross-origin `Origin` with `403`, validates `mindmapId`, and needs a `workspacePath`, either from the mindmap or from the request body.
+All routes return `403` unless the `Host` header is `localhost`, `127.0.0.1`, or `[::1]` on the viewer's port. This protects against DNS rebinding. Both `POST` routes also require `Content-Type: application/json`, reject a cross-origin `Origin` with `403`, and validate `mindmapId`. `POST /api/sync-git` also needs a `workspacePath`, either from the mindmap or from the request body.
 
 ## Git sync and the workspace watcher
 
@@ -116,6 +117,8 @@ A mindmap is one JSON document:
   "activityLog": [{ "timestamp": "2026-10-17T09:12:41.000Z", "message": "[CREATE] src/middleware/rateLimit.ts (1 add) …" }]
 }
 ```
+
+An archived session also has `archivedAt`, the time it was archived in the viewer.
 
 IDs are generated: `mm_…` for mindmaps, `n_…` for nodes, and `l_…` for links. The root node is always `root`.
 

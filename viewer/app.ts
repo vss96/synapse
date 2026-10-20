@@ -872,36 +872,134 @@ function filteredSessions() {
   return sessions.filter((s) => `${s.title} ${s.workspacePath || ""} ${s.activeTask || ""}`.toLowerCase().includes(q));
 }
 
+// Sessions are grouped by repository (workspacePath); archived ones go in a last group of their own.
+// Not a path, so it can't collide with a repository group.
+const ARCHIVED_GROUP = "archived:";
+const COLLAPSED_GROUPS_KEY = "synapse.collapsedGroups";
+
+/** Group keys the user collapsed; the archived group starts collapsed. */
+const collapsedGroups = new Set<string>(
+  (() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(COLLAPSED_GROUPS_KEY) ?? "null");
+      return Array.isArray(saved) ? saved.filter((k): k is string => typeof k === "string") : [ARCHIVED_GROUP];
+    } catch {
+      return [ARCHIVED_GROUP];
+    }
+  })(),
+);
+
+function toggleGroup(key: string) {
+  if (!collapsedGroups.delete(key)) collapsedGroups.add(key);
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...collapsedGroups]));
+  } catch {
+    // Storage blocked or full: the group still toggles, it just isn't remembered.
+  }
+  renderSessions();
+}
+
+interface SessionGroup {
+  key: string;
+  name: string;
+  /** Shown on hover: the full repository path. */
+  hint: string;
+  items: MindmapListItem[];
+}
+
+/** Groups in order of their most recently updated session (the list arrives newest first). */
+function groupSessions(items: MindmapListItem[]): SessionGroup[] {
+  const groups = new Map<string, SessionGroup>();
+  const archived: SessionGroup = { key: ARCHIVED_GROUP, name: "Archived", hint: "Archived sessions", items: [] };
+  for (const s of items) {
+    if (s.archivedAt) {
+      archived.items.push(s);
+      continue;
+    }
+    const key = s.workspacePath ?? "";
+    let group = groups.get(key);
+    if (!group) {
+      const name = key ? key.split(/[\\/]/).filter(Boolean).pop() ?? key : "No repository";
+      group = { key, name, hint: key || "Sessions without a workspacePath", items: [] };
+      groups.set(key, group);
+    }
+    group.items.push(s);
+  }
+  return archived.items.length ? [...groups.values(), archived] : [...groups.values()];
+}
+
+function sessionItemHtml(s: MindmapListItem) {
+  const pct = s.totalTasks > 0 ? Math.round((s.completedTasks / s.totalTasks) * 100) : 0;
+  const live = Date.now() - new Date(s.updatedAt).getTime() < LIVE_WINDOW_MS;
+  const action = s.archivedAt ? "restore" : "archive";
+  return `
+    <div class="session-item ${s.id === currentId ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
+      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<span class="session-title-text">${escXml(s.title)}</span>
+        <button class="session-action" data-action="${action}" title="${s.archivedAt ? "Restore this session" : "Archive this session"}">${s.archivedAt ? "Restore" : "Archive"}</button>
+      </div>
+      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}</div>
+      ${s.activeTask ? `<div class="session-task">◐ ${escXml(s.activeTask)}</div>` : ""}
+      <div class="session-progress">
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+        <span>${s.completedTasks}/${s.totalTasks} tasks · ${s.fileCount} files</span>
+      </div>
+    </div>`;
+}
+
+async function setArchived(id: string, archived: boolean) {
+  try {
+    const res = await fetch("/api/archive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mindmapId: id, archived }),
+    });
+    if (!res.ok) throw new Error(((await res.json()) as { error?: string }).error ?? `HTTP ${res.status}`);
+  } catch (err) {
+    alert(`Could not ${archived ? "archive" : "restore"} the session: ${errorMessage(err)}`);
+  }
+  await refreshSessions();
+}
+
 function renderSessions() {
   const list = byId("session-list");
   const visible = filteredSessions();
-  byId("sessions-count").textContent = `Sessions (${sessions.length})`;
+  const archivedCount = sessions.filter((s) => s.archivedAt).length;
+  byId("sessions-count").textContent = `Sessions (${sessions.length - archivedCount})`;
 
   if (visible.length === 0) {
     list.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px;">${sessions.length ? "No matching sessions." : "No sessions yet."}</div>`;
     return;
   }
 
-  list.innerHTML = visible
-    .map((s) => {
-      const pct = s.totalTasks > 0 ? Math.round((s.completedTasks / s.totalTasks) * 100) : 0;
-      const live = Date.now() - new Date(s.updatedAt).getTime() < LIVE_WINDOW_MS;
-      const workspace = s.workspacePath ? s.workspacePath.split("/").filter(Boolean).pop() : "";
+  // While filtering, show every match rather than hiding some in collapsed groups.
+  const filtering = sessionQuery.trim() !== "";
+  list.innerHTML = groupSessions(visible)
+    .map((g) => {
+      const collapsed = !filtering && collapsedGroups.has(g.key);
       return `
-        <div class="session-item ${s.id === currentId ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
-          <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}${escXml(s.title)}</div>
-          <div class="session-sub">${[workspace, timeAgo(s.updatedAt)].filter(Boolean).map(escXml).join(" · ")}</div>
-          ${s.activeTask ? `<div class="session-task">◐ ${escXml(s.activeTask)}</div>` : ""}
-          <div class="session-progress">
-            <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-            <span>${s.completedTasks}/${s.totalTasks} tasks · ${s.fileCount} files</span>
-          </div>
+        <div class="session-group ${g.key === ARCHIVED_GROUP ? "archived" : ""}">
+          <button class="session-group-head" data-group="${escXml(g.key)}" title="${escXml(g.hint)}" aria-expanded="${!collapsed}">
+            <span class="session-group-chevron">${collapsed ? "▸" : "▾"}</span>
+            <span class="session-group-name">${escXml(g.name)}</span>
+            <span class="session-group-count">${g.items.length}</span>
+          </button>
+          ${collapsed ? "" : g.items.map(sessionItemHtml).join("")}
         </div>`;
     })
     .join("");
 
+  list.querySelectorAll<HTMLElement>(".session-group-head").forEach((el) => {
+    el.addEventListener("click", () => toggleGroup(el.dataset.group ?? ""));
+  });
   list.querySelectorAll<HTMLElement>(".session-item").forEach((el) => {
     el.addEventListener("click", () => selectSession(el.dataset.sessionId));
+  });
+  list.querySelectorAll<HTMLElement>(".session-action").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = el.closest<HTMLElement>(".session-item")?.dataset.sessionId;
+      if (id) setArchived(id, el.dataset.action === "archive");
+    });
   });
 }
 
@@ -935,7 +1033,8 @@ async function init() {
     await fetchMindmapById(currentId);
   } else {
     currentId = "";
-    const first = sessions[0];
+    // Prefer a session that isn't archived: the Archived group starts collapsed.
+    const first = sessions.find((s) => !s.archivedAt) ?? sessions[0];
     if (first) await selectSession(first.id);
   }
 }
@@ -948,13 +1047,13 @@ sessionSearch.addEventListener("input", () => {
 
 document.addEventListener("keydown", (e) => {
   if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
-  const visible = filteredSessions();
+  // Follow the list as shown: grouped, and skipping collapsed groups.
+  const visible = [...document.querySelectorAll<HTMLElement>("#session-list .session-item")].map((el) => el.dataset.sessionId);
   if (visible.length === 0) return;
   e.preventDefault();
-  const idx = visible.findIndex((s) => s.id === currentId);
+  const idx = visible.indexOf(currentId);
   const next = e.key === "ArrowDown" ? Math.min(visible.length - 1, idx + 1) : Math.max(0, idx - 1);
-  const target = visible[next];
-  if (target) selectSession(target.id);
+  selectSession(visible[next]);
 });
 
 // Wide screens dock the sessions list (remembered); narrow ones show it as a drawer over the canvas.

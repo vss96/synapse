@@ -368,6 +368,51 @@
 
   .session-progress .progress-bar-wrap { width: 60px; height: 5px; }
 
+  .session-group + .session-group { margin-top: 6px; }
+
+  .session-group-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 4px 6px;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .session-group-head:hover { background: var(--control); }
+  .session-group-chevron { width: 10px; flex-shrink: 0; }
+  .session-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-group-count { font-weight: 500; }
+
+  .session-group.archived .session-item { opacity: 0.75; }
+
+  .session-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Hidden until hover or keyboard focus, but still focusable; always shown without hover (touch). */
+  .session-action {
+    opacity: 0;
+    flex-shrink: 0;
+    padding: 1px 6px;
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 10.5px;
+    font-weight: 500;
+  }
+
+  .session-item:hover .session-action,
+  .session-action:focus-visible { opacity: 1; }
+  @media (hover: none) { .session-action { opacity: 1; } }
+  .session-action:hover { background: var(--control-hover); color: var(--text); }
+
   #viewport {
     flex: 1;
     overflow: hidden;
