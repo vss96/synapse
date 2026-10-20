@@ -1,5 +1,6 @@
 import { isChangeKind, isConceptType, isTask, type ChangeKind, type FileAction, type NodeType, type TaskStatus } from "../src/model/kinds.js";
 import type { CodeChange, FileTouch, MindmapDocument, MindmapListItem, MindmapNode, NodeId } from "../src/model/schema.js";
+import { READABLE_SCALE, centerCamera, fitCamera, fitScale, zoomAt, type Camera, type Size } from "./camera.js";
 
 type ViewMode = "all" | "plan" | "hld";
 type SidebarTab = "inspector" | "files" | "activity";
@@ -62,13 +63,6 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   blocked: "✖ Blocked",
 };
 
-const STATUS_COLORS: Record<TaskStatus, string> = {
-  planned: "#6e6e73",
-  in_progress: "#007aff",
-  completed: "#15803d",
-  blocked: "#dc2626",
-};
-
 const TYPE_BADGES: Partial<Record<NodeType, string>> = {
   component: "📦 Component",
   data_flow: "⇄ Data Flow",
@@ -77,33 +71,21 @@ const TYPE_BADGES: Partial<Record<NodeType, string>> = {
   risk: "⚠️ Risk",
 };
 
-const TYPE_COLORS: Partial<Record<NodeType, string>> = {
-  component: "#4338ca",
-  data_flow: "#0f766e",
-  hypothesis: "#b45309",
-  decision: "#6d28d9",
-  risk: "#be123c",
-};
+// Colors live in index.html: a `tone-<key>` class (task status, concept type, change kind or
+// file action) sets the --c color that badges, tallies and cards use, in light and dark mode.
+const toneClass = (key: TaskStatus | NodeType | ChangeKind | FileAction) => `tone-${escXml(key)}`;
 
-// Symbol-level change kinds (order = display order). Colors mirror the .kind-* CSS classes.
-const CHANGE_KINDS: Record<ChangeKind, { glyph: string; label: string; color: string }> = {
-  add: { glyph: "+", label: "Added", color: "#15803d" },
-  modify: { glyph: "~", label: "Modified", color: "#1d4ed8" },
-  fix: { glyph: "✱", label: "Fixed", color: "#c2410c" },
-  refactor: { glyph: "⟲", label: "Refactored", color: "#7c3aed" },
-  rename: { glyph: "↦", label: "Renamed", color: "#0f766e" },
-  remove: { glyph: "−", label: "Removed", color: "#b91c1c" },
-  test: { glyph: "✓", label: "Tested", color: "#0369a1" },
+// Symbol-level change kinds (order = display order).
+const CHANGE_KINDS: Record<ChangeKind, { glyph: string; label: string }> = {
+  add: { glyph: "+", label: "Added" },
+  modify: { glyph: "~", label: "Modified" },
+  fix: { glyph: "✱", label: "Fixed" },
+  refactor: { glyph: "⟲", label: "Refactored" },
+  rename: { glyph: "↦", label: "Renamed" },
+  remove: { glyph: "−", label: "Removed" },
+  test: { glyph: "✓", label: "Tested" },
 };
 const KIND_ORDER = Object.keys(CHANGE_KINDS) as ChangeKind[];
-
-const ACTION_COLORS: Record<FileAction, string> = {
-  read: "#9ca3af",
-  create: "#15803d",
-  modify: "#1d4ed8",
-  delete: "#b91c1c",
-  rename: "#0f766e",
-};
 
 let currentId = decodeURIComponent(location.hash.slice(1));
 let currentDoc: MindmapDocument | null = null;
@@ -143,13 +125,13 @@ function tallyChanges(changes: readonly CodeChange[]): Array<[ChangeKind, number
 
 function tallySvg(changes: readonly CodeChange[]) {
   return tallyChanges(changes)
-    .map(([k, n]) => `<tspan fill="${CHANGE_KINDS[k].color}" font-weight="700">${CHANGE_KINDS[k].glyph}${n} </tspan>`)
+    .map(([k, n]) => `<tspan class="svg-tone ${toneClass(k)}" font-weight="700">${CHANGE_KINDS[k].glyph}${n} </tspan>`)
     .join("");
 }
 
 function tallyHtml(changes: readonly CodeChange[]) {
   return tallyChanges(changes)
-    .map(([k, n]) => `<span class="kind-tally kind-${k}" title="${CHANGE_KINDS[k].label}">${CHANGE_KINDS[k].glyph}${n}</span>`)
+    .map(([k, n]) => `<span class="kind-tally ${toneClass(k)}" title="${CHANGE_KINDS[k].label}">${CHANGE_KINDS[k].glyph}${n}</span>`)
     .join("");
 }
 
@@ -157,7 +139,7 @@ function changeRowHtml(c: CodeChange, via?: string) {
   const k = kindOf(c);
   const name = c.kind === "rename" ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
   return `
-    <div class="change-row kind-${k}">
+    <div class="change-row ${toneClass(k)}">
       <span class="kind-badge">${CHANGE_KINDS[k].glyph} ${escXml(c.kind)}</span>
       <span><code>${escXml(name)}</code>${c.detail ? ` <span class="change-detail">— ${escXml(c.detail)}</span>` : ""}${via ? ` <span class="change-detail">(${escXml(via)})</span>` : ""}</span>
     </div>`;
@@ -176,7 +158,7 @@ function fileItemHtml(
   return `
     <div class="file-item ${highlightedFilePath === f.path ? "active-highlight" : ""}" data-file-path="${escXml(f.path)}">
       <div class="file-header">
-        <span class="action-badge ${escXml(action)}">${escXml(action)}</span>
+        <span class="action-badge ${toneClass(action)}">${escXml(action)}</span>
         <span>${filePathHtml(f)}</span>
       </div>
       ${f.summary ? `<div class="file-summary">${escXml(f.summary)}</div>` : ""}
@@ -312,10 +294,10 @@ function render(doc: MindmapDocument | null) {
   }
 
   const PAD = 80;
-  const W = Math.max(850, maxX - minX + PAD * 2);
-  const H = Math.max(520, maxY - minY + PAD * 2);
+  sceneSize = { w: maxX - minX + PAD * 2, h: maxY - minY + PAD * 2 };
   const OFX = PAD - minX;
   const OFY = PAD - minY;
+  nodeCenters.clear();
 
   let edges = "";
   let flowLinksSvg = "";
@@ -326,6 +308,7 @@ function render(doc: MindmapDocument | null) {
     if (!node) continue;
     const px = p.x + OFX;
     const py = p.y + OFY;
+    nodeCenters.set(id, { x: px + p.w / 2, y: py, left: px });
 
     // Draw cubic bezier tree edges to children
     for (const cid of node.children) {
@@ -347,7 +330,11 @@ function render(doc: MindmapDocument | null) {
     if (node.type === "root") classes.push("root");
     classes.push(`type-${node.type}`);
     if (isTask(node)) classes.push(`status-${node.status}`);
-    if (id === selectedNodeId) classes.push("selected");
+    // Concepts are colored by type, tasks by status (planned tasks stay neutral).
+    const tone = TYPE_BADGES[node.type] ? node.type : isTask(node) ? node.status : undefined;
+    if (tone && tone !== "planned") classes.push("toned", toneClass(tone));
+    const selected = id === selectedNodeId;
+    if (selected) classes.push("selected");
     if (
       (highlightedFilePath && node.files.some((f) => f.path === highlightedFilePath)) ||
       (changeKindFilter && nodeChanges(node).some((c) => kindOf(c) === changeKindFilter))
@@ -368,8 +355,7 @@ function render(doc: MindmapDocument | null) {
     if (node.type !== "root" && (typeLabel || stLabel)) {
       cursorY += 16;
       const combined = [typeLabel, stLabel].filter(Boolean).join("  ·  ");
-      const pillColor = TYPE_COLORS[node.type] || (isTask(node) ? STATUS_COLORS[node.status] : "") || "#6e6e73";
-      innerContent += `<text class="node-status-pill" fill="${pillColor}" x="${px + 12}" y="${cursorY}">${escXml(combined)}</text>`;
+      innerContent += `<text class="node-status-pill svg-tone ${tone ? toneClass(tone) : ""}" x="${px + 12}" y="${cursorY}">${escXml(combined)}</text>`;
     }
 
     // Notes preview row
@@ -395,15 +381,15 @@ function render(doc: MindmapDocument | null) {
       const extraCount = i === 1 && files.length > 2 ? ` +${files.length - 2}` : "";
       const changes = touchChanges(f);
       const tallyLen = tallyChanges(changes).reduce((n, [, c]) => n + String(c).length + 2, 0);
-      const color = ACTION_COLORS[action] || ACTION_COLORS.modify;
       innerContent += `
-        <rect class="node-file-chip" style="stroke:${color}" x="${px + 10}" y="${cursorY - 12}" width="${p.w - 20}" height="16"/>
-        <text class="node-file-text" x="${px + 15}" y="${cursorY - 1}"><tspan fill="${color}" font-weight="700">${escXml(action.charAt(0).toUpperCase())}</tspan> ${escXml(truncate(shownName + extraCount, Math.max(10, 31 - tallyLen)))} ${tallySvg(changes)}</text>
+        <rect class="node-file-chip ${toneClass(action)}" x="${px + 10}" y="${cursorY - 12}" width="${p.w - 20}" height="16"/>
+        <text class="node-file-text" x="${px + 15}" y="${cursorY - 1}"><tspan class="svg-tone ${toneClass(action)}" font-weight="700">${escXml(action.charAt(0).toUpperCase())}</tspan> ${escXml(truncate(shownName + extraCount, Math.max(10, 31 - tallyLen)))} ${tallySvg(changes)}</text>
       `;
     });
 
     nodeEls += `
       <g class="${classes.join(" ")}" data-node-id="${escXml(id)}">
+        ${selected ? `<rect class="node-select-ring" x="${px - 5}" y="${topY - 5}" width="${p.w + 10}" height="${p.h + 10}"/>` : ""}
         <rect class="node-rect" x="${px}" y="${topY}" width="${p.w}" height="${p.h}"/>
         ${innerContent}
       </g>`;
@@ -473,17 +459,23 @@ function render(doc: MindmapDocument | null) {
   }
 
   svg.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 1 L 10 5 L 0 9 z" fill="#6366f1"/>
-        </marker>
-      </defs>
+    <defs>
+      <marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path class="flow-arrow-head" d="M 0 1 L 10 5 L 0 9 z"/>
+      </marker>
+    </defs>
+    <g class="scene">
       ${edges}
       ${nodeEls}
       ${flowLinksSvg}
-    </svg>`;
+    </g>`;
 
+  // Move the camera only for a new session or view, or when the agent moves on to another task;
+  // otherwise live updates and clicks keep whatever the user panned to.
+  const active = activeNodeId(doc);
+  if (viewPending || active !== lastActiveId) initialView();
+  viewPending = false;
+  lastActiveId = active;
   applyTransform();
 
   document.querySelectorAll<SVGGElement>(".node-group").forEach((el) => {
@@ -610,8 +602,8 @@ function renderSidebar(doc: MindmapDocument | null) {
       <div class="inspector-card">
         <div class="inspector-title">${escXml(node.label)}</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;">
-          <span class="type-tag ${escXml(node.type)}">${escXml(TYPE_BADGES[node.type] || node.type)}</span>
-          ${isTask(node) ? `<span class="status-tag ${escXml(node.status)}">${escXml(node.status.replace("_", " "))}</span>` : ""}
+          <span class="type-tag ${toneClass(node.type)}">${escXml(TYPE_BADGES[node.type] || node.type)}</span>
+          ${isTask(node) ? `<span class="status-tag ${toneClass(node.status)}">${escXml(node.status.replace("_", " "))}</span>` : ""}
           <span style="font-size:11px;color:var(--muted);">ID: <code>${escXml(node.id)}</code></span>
         </div>
       </div>
@@ -651,7 +643,7 @@ function renderSidebar(doc: MindmapDocument | null) {
       `<button class="kind-filter ${changeKindFilter ? "" : "active"}" data-kind="">All ${allChanges.length}</button>`,
       ...tallyChanges(allChanges).map(
         ([k, n]) =>
-          `<button class="kind-filter kind-${k} ${changeKindFilter === k ? "active" : ""}" data-kind="${k}">${CHANGE_KINDS[k].glyph} ${CHANGE_KINDS[k].label} ${n}</button>`
+          `<button class="kind-filter toned ${toneClass(k)} ${changeKindFilter === k ? "active" : ""}" data-kind="${k}">${CHANGE_KINDS[k].glyph} ${CHANGE_KINDS[k].label} ${n}</button>`
       ),
     ].join("");
 
@@ -743,6 +735,7 @@ document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((btn) =>
     document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((b) =>
       b.classList.toggle("active", b.dataset.mode === viewMode)
     );
+    viewPending = true;
     render(currentDoc);
   });
 });
@@ -751,28 +744,74 @@ document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((btn) =>
 const viewport = byId("viewport");
 const svgEl = byId<SVGSVGElement>("svg");
 
-let scale = 1;
-let tx = 0, ty = 0;
+let camera: Camera = { scale: 1, tx: 0, ty: 0 };
 let panning = false, startX = 0, startY = 0, startTx = 0, startTy = 0;
+/** Size of the laid-out tree and the center of each visible card, in scene coordinates. */
+let sceneSize: Size = { w: 0, h: 0 };
+const nodeCenters = new Map<string, { x: number; y: number; left: number }>();
+/** Set when a session or view is opened, so the next render picks a fresh camera. */
+let viewPending = true;
+let lastActiveId: string | null = null;
 
 function applyTransform() {
-  const inner = svgEl.querySelector("svg");
-  if (!inner) return;
-  inner.setAttribute("transform", `translate(${tx}, ${ty}) scale(${scale})`);
-  inner.style.transformOrigin = "0 0";
+  const { scale, tx, ty } = camera;
+  svgEl.querySelector(".scene")?.setAttribute("transform", `translate(${tx} ${ty}) scale(${scale})`);
 }
 
-byId("zoom-in").onclick = () => { scale = Math.min(4, scale * 1.2); applyTransform(); };
-byId("zoom-out").onclick = () => { scale = Math.max(0.2, scale / 1.2); applyTransform(); };
-byId("zoom-reset").onclick = () => { scale = 1; tx = 0; ty = 0; applyTransform(); };
+function viewSize(): Size {
+  const r = svgEl.getBoundingClientRect();
+  return { w: r.width, h: r.height };
+}
 
-// The canvas fits the tree into #svg, so end #svg above the bottom overlays (legend, zoom
-// controls); panned content still shows beneath them because #svg doesn't clip.
+/** The task the agent is working on (latest updated in progress) if it is in this view, else the root. */
+function activeNodeId(doc: MindmapDocument): string {
+  const active = Object.values(doc.nodes)
+    .filter((n) => isTask(n) && n.status === "in_progress" && nodeCenters.has(n.id))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  return active?.id ?? ROOT;
+}
+
+function focusActive() {
+  if (!currentDoc) return;
+  const id = activeNodeId(currentDoc);
+  const center = nodeCenters.get(id);
+  const view = viewSize();
+  // With no active task, keep the root at the left edge so its branches fill the view.
+  if (center) camera = centerCamera(id === ROOT ? center.left - 40 + view.w / 2 : center.x, center.y, view);
+  applyTransform();
+}
+
+function fitView() {
+  camera = fitCamera(sceneSize, viewSize());
+  applyTransform();
+}
+
+/** Fit the whole map when it is readable that way, otherwise show the active task at full size. */
+function initialView() {
+  if (fitScale(sceneSize, viewSize()) >= READABLE_SCALE) fitView();
+  else focusActive();
+}
+
+function zoomFromCenter(factor: number) {
+  const { w, h } = viewSize();
+  camera = zoomAt(camera, factor, w / 2, h / 2);
+  applyTransform();
+}
+
+byId("zoom-in").onclick = () => zoomFromCenter(1.2);
+byId("zoom-out").onclick = () => zoomFromCenter(1 / 1.2);
+byId("zoom-fit").onclick = fitView;
+byId("zoom-focus").onclick = focusActive;
+
+// End #svg above the bottom overlays (legend, zoom controls) so fitting and centering use the
+// unobstructed area; panned content still shows beneath them because #svg doesn't clip.
 const bottomOverlays = [query(".legend"), query(".controls")];
 const fitAboveOverlays = () => {
-  const top = Math.min(...bottomOverlays.map((el) => el.offsetTop));
+  const shown = bottomOverlays.filter((el) => el.offsetParent !== null);
+  const top = shown.length ? Math.min(...shown.map((el) => el.offsetTop)) : viewport.clientHeight;
   svgEl.style.height = `${Math.max(0, top - 8)}px`;
 };
+fitAboveOverlays(); // now, not only when observed: the first view is measured against this size
 const overlayObserver = new ResizeObserver(fitAboveOverlays);
 [viewport, ...bottomOverlays].forEach((el) => overlayObserver.observe(el));
 
@@ -780,25 +819,26 @@ viewport.addEventListener("mousedown", (e) => {
   if (e.target instanceof Element && (e.target.closest(".node-group") || e.target.closest(".controls"))) return;
   panning = true;
   startX = e.clientX; startY = e.clientY;
-  startTx = tx; startTy = ty;
+  startTx = camera.tx; startTy = camera.ty;
 });
 window.addEventListener("mousemove", (e) => {
   if (!panning) return;
-  tx = startTx + (e.clientX - startX);
-  ty = startTy + (e.clientY - startY);
+  camera = { ...camera, tx: startTx + (e.clientX - startX), ty: startTy + (e.clientY - startY) };
   applyTransform();
 });
 window.addEventListener("mouseup", () => { panning = false; });
 
+// Zoom around the cursor, so whatever is under it stays put.
 viewport.addEventListener("wheel", (e) => {
   e.preventDefault();
-  const delta = e.deltaY > 0 ? 0.92 : 1.08;
-  scale = Math.max(0.2, Math.min(4, scale * delta));
+  const r = svgEl.getBoundingClientRect();
+  camera = zoomAt(camera, e.deltaY > 0 ? 0.92 : 1.08, e.clientX - r.left, e.clientY - r.top);
   applyTransform();
 }, { passive: false });
 
 // ── Load & Refresh Mindmaps ─────────────────────────────────────
 function loadMindmap(doc: MindmapDocument) {
+  if (doc.id !== currentDoc?.id) viewPending = true;
   currentDoc = doc;
   currentId = doc.id;
   if (!nodeById(doc, selectedNodeId)) selectedNodeId = ROOT;
@@ -970,7 +1010,7 @@ async function selectSession(id: string | undefined) {
   selectedNodeId = ROOT;
   highlightedFilePath = null;
   changeKindFilter = null;
-  scale = 1; tx = 0; ty = 0;
+  document.body.classList.remove("sessions-open");
   renderSessions();
   document.querySelector(".session-item.active")?.scrollIntoView({ block: "nearest" });
   await fetchMindmapById(id);
@@ -1016,8 +1056,14 @@ document.addEventListener("keydown", (e) => {
   selectSession(visible[next]);
 });
 
+// Wide screens dock the sessions list (remembered); narrow ones show it as a drawer over the canvas.
+const narrowScreen = matchMedia("(max-width: 900px)");
 if (localStorage.getItem("synapse.sessionsCollapsed") === "1") document.body.classList.add("sessions-collapsed");
 byId("sessions-toggle").onclick = () => {
+  if (narrowScreen.matches) {
+    document.body.classList.toggle("sessions-open");
+    return;
+  }
   const collapsed = document.body.classList.toggle("sessions-collapsed");
   localStorage.setItem("synapse.sessionsCollapsed", collapsed ? "1" : "0");
 };
@@ -1025,7 +1071,7 @@ byId("sessions-toggle").onclick = () => {
 setInterval(renderSessions, 30000); // keep "x m ago" and live dots fresh
 
 byId("legend-kinds").innerHTML = Object.entries(CHANGE_KINDS)
-  .map(([k, m]) => `<span class="kind-tally kind-${k}" title="${m.label}">${m.glyph} ${k}</span>`)
+  .map(([k, m]) => `<span class="kind-tally ${toneClass(k as ChangeKind)}" title="${m.label}">${m.glyph} ${k}</span>`)
   .join("");
 
 byId("refresh-btn").onclick = async () => {
