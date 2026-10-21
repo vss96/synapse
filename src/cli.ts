@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
+import { errorCode } from "./errors.js";
 import { CLIENTS, init, isClientId } from "./installer.js";
 import * as store from "./store.js";
 import { VERSION } from "./version.js";
@@ -91,7 +92,7 @@ async function runViewer(args: string[]): Promise<void> {
   try {
     viewer = await startViewer({ port, strictPort: port !== undefined });
   } catch (err) {
-    if (err instanceof Error && "code" in err && err.code === "EADDRINUSE") fail(`port ${port} is already in use`);
+    if (errorCode(err) === "EADDRINUSE") fail(`port ${port} is already in use`);
     throw err;
   }
   if (port === undefined && viewer.port !== DEFAULT_VIEWER_PORT) {

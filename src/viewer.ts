@@ -10,6 +10,7 @@ import { connect } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { errorCode } from "./errors.js";
 import * as store from "./store.js";
 import { fileTouchTarget, upsertFileTouch } from "./model/file-touch.js";
 import { MindmapId } from "./model/schema.js";
@@ -197,7 +198,7 @@ async function listenOnFreePort(server: Server, start: number): Promise<number> 
     try {
       return await listen(server, port);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EADDRINUSE") throw err;
+      if (errorCode(err) !== "EADDRINUSE") throw err;
     }
   }
   return listen(server, 0);

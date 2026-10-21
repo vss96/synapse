@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile, mkdir, unlink, rename, open, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { errorCode } from "./errors.js";
 import { isTask } from "./model/kinds.js";
 import { MindmapDocument, MindmapId, now, type MindmapListItem, type NodeId } from "./model/schema.js";
 
@@ -114,7 +115,7 @@ async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
       await (await open(lock, "wx")).close();
       break;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if (errorCode(err) !== "EEXIST") throw err;
       const held = await stat(lock).catch(() => null);
       if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) await unlink(lock).catch(() => {});
       else await new Promise((resolve) => setTimeout(resolve, 10));
