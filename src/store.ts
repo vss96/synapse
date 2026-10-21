@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { errorCode } from "./errors.js";
 import { isTask } from "./model/kinds.js";
-import { MindmapDocument, MindmapId, now, type MindmapListItem, type NodeId } from "./model/schema.js";
+import { MindmapDocument, now, type MindmapId, type MindmapListItem, type NodeId } from "./model/schema.js";
 
 /** Where mindmaps are stored: $SYNAPSE_DATA_DIR, or ~/.synapse/data (shared by the MCP server and the viewer). */
 export function getDataDir(): string {

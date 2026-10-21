@@ -4,7 +4,7 @@ import { watch, existsSync, statSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as store from "./store.js";
 import { fileTouchTarget, upsertFileTouch } from "./model/file-touch.js";
-import { MindmapId, now, type EditTouch } from "./model/schema.js";
+import { now, type EditTouch, type MindmapId } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
 
