@@ -33,7 +33,11 @@ function occupy(port = 0): Promise<Server> {
     server.listen(port, "127.0.0.1", () => resolve(server));
   });
 }
-const portOf = (server: Server) => (server.address() as { port: number }).port;
+function portOf(server: Server): number {
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Server is not listening on a TCP port");
+  return address.port;
+}
 const close = (server: Server) => new Promise((resolve) => server.close(resolve));
 
 describe("viewer server", () => {
