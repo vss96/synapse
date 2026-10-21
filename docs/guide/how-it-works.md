@@ -68,7 +68,7 @@ When a mindmap has a `workspacePath`, the MCP server watches that directory recu
 - Leaves out changes made by git itself. After a checkout, reset, merge or pull, files that now match `HEAD` exactly are recorded as one activity entry, such as `Git checkout: moving from main to fix: 277 file change(s) not attributed to a task`; files that differ from `HEAD` are still recorded. While a rebase is in progress, no changes are recorded.
 
 - Runs inside the MCP server process, so it stops when the client stops the server. After a restart it starts again the next time a tool changes the mindmap.
-- Stops when its mindmap is deleted, or once it has changes to record into a mindmap that was archived in the viewer.
+- Stops when its mindmap is deleted or moves to another `workspacePath`, or once it has changes to record into a mindmap that was archived in the viewer. Changes it hadn't recorded yet are dropped.
 - Outside a git repo, skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__` instead.
 - Always skips `.git`, `data/*.json`, directories, and editor and atomic-write temp files (`*~`, `*.swp`, `*.tmp`, `*.tmp.<pid>.<hex>`, `.!<pid>!*`).
 - Doesn't detect renames.

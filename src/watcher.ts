@@ -122,8 +122,20 @@ export async function inspectGitChanges(workspacePath: string): Promise<EditTouc
 /*  Active workspace directory watchers                                */
 /* ------------------------------------------------------------------ */
 
-/** Watched workspace directories (resolved paths) and the mindmap each one's changes are recorded into. */
-const activeWatchers = new Map<string, { mindmapId: MindmapId; watcher: FSWatcher }>();
+interface WorkspaceWatch {
+  /** The mindmap this directory's changes are recorded into. */
+  mindmapId: MindmapId;
+  /** Close the watcher and drop the changes it hasn't recorded yet. */
+  close(): void;
+}
+
+/** Watched workspace directories, by resolved path. */
+const activeWatchers = new Map<string, WorkspaceWatch>();
+
+function stopWatching(resolved: string): void {
+  activeWatchers.get(resolved)?.close();
+  activeWatchers.delete(resolved);
+}
 
 /** The mindmap that file changes in `workspacePath` are recorded into, if this process watches it. */
 export function watchedMindmap(workspacePath: string): MindmapId | undefined {
@@ -133,9 +145,7 @@ export function watchedMindmap(workspacePath: string): MindmapId | undefined {
 /** Stop recording file changes into a mindmap (it was deleted or archived). */
 export function stopWorkspaceWatcher(mindmapId: MindmapId): void {
   for (const [resolved, watched] of activeWatchers) {
-    if (watched.mindmapId !== mindmapId) continue;
-    watched.watcher.close();
-    activeWatchers.delete(resolved);
+    if (watched.mindmapId === mindmapId) stopWatching(resolved);
   }
 }
 
@@ -146,6 +156,10 @@ export function stopWorkspaceWatcher(mindmapId: MindmapId): void {
 export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: string): void {
   if (!workspacePath || !existsSync(workspacePath)) return;
   const resolved = path.resolve(workspacePath);
+  // A mindmap gets one directory's changes: if its workspacePath moved, stop watching the old one.
+  for (const [dir, watched] of activeWatchers) {
+    if (dir !== resolved && watched.mindmapId === mindmapId) stopWatching(dir);
+  }
   const watched = activeWatchers.get(resolved);
   if (watched) {
     watched.mindmapId = mindmapId;
@@ -161,15 +175,19 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
   let inRepo = false;
   void git(resolved, ["rev-parse", "--is-inside-work-tree"]).then((out) => (inRepo = out.trim() === "true"));
 
+  // Whether this watcher still owns the directory: once stopped (and maybe replaced), its batches are dropped.
+  const current = () => activeWatchers.get(resolved) === entry;
+
   const flushBatch = async () => {
     const batch = new Map(pendingFiles);
     const startedAt = batchStart;
     pendingFiles.clear();
-    const mindmapId = activeWatchers.get(resolved)?.mindmapId;
-    if (batch.size === 0 || !mindmapId) return;
+    if (batch.size === 0 || !current()) return;
+    const { mindmapId } = entry;
 
     // Archived (in the viewer, another process) or deleted mindmaps stop collecting this workspace's changes.
     const record = async (change: (doc: MindmapDocument) => void) => {
+      if (!current()) return; // stopped while git ran
       const recorded = await store.update(mindmapId, (doc) => {
         if (doc.archivedAt) return false;
         change(doc);
@@ -241,8 +259,9 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     flushing = flushing.then(flushBatch).catch((err) => console.error(`[synapse] watcher: ${err}`));
   };
 
+  let watcher: FSWatcher;
   try {
-    const watcher = watch(resolved, { recursive: true }, (eventType, filename) => {
+    watcher = watch(resolved, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
       const relPath = filename.replace(/\\/g, "/");
       if (shouldIgnorePath(relPath, inRepo)) return;
@@ -252,10 +271,19 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(flush, 600);
     });
-    watcher.unref();
-
-    activeWatchers.set(resolved, { mindmapId, watcher });
   } catch {
-    // Recursive watch may fail on unsupported mounts; fail gracefully
+    return; // Recursive watch may fail on unsupported mounts; fail gracefully
   }
+  watcher.unref();
+
+  const entry: WorkspaceWatch = {
+    mindmapId,
+    close() {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = null;
+      pendingFiles.clear();
+      watcher.close();
+    },
+  };
+  activeWatchers.set(resolved, entry);
 }

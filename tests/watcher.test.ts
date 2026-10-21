@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
+import { z } from "zod";
 import { tools } from "../src/tools.js";
 import * as store from "../src/store.js";
 import { shouldIgnorePath, watchedMindmap } from "../src/watcher.js";
@@ -19,7 +20,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
   return result.content[0]!.text;
 }
 async function createMindmap(args: Record<string, unknown>): Promise<MindmapId> {
-  return MindmapId.parse(JSON.parse(await callTool("create_mindmap", args)).mindmapId);
+  return z.object({ mindmapId: MindmapId }).parse(JSON.parse(await callTool("create_mindmap", args))).mindmapId;
 }
 /** Every file touch in the document, as sorted `action:path` strings. */
 const touched = (doc: MindmapDocument) =>
@@ -204,6 +205,29 @@ describe("workspace watcher", () => {
     await callTool("delete_mindmap", { mindmapId: id });
     assert.equal(watchedMindmap(repoDir), undefined);
   });
+
+  it("drops a deleted mindmap's unrecorded edits instead of giving them to the next mindmap", async () => {
+    const { repoDir } = await makeRepo("replaced");
+    const first = await createMindmap({ title: "First", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    // An edit the first watcher has seen but not recorded yet (batches wait 600 ms)
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await new Promise((r) => setTimeout(r, 300));
+    await callTool("delete_mindmap", { mindmapId: first });
+    const second = await createMindmap({ title: "Second", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    assert.deepEqual(touched((await store.load(second))!), []);
+  }, 30000);
+
+  it("stops watching a mindmap's old workspace when it moves to another one", async () => {
+    const { repoDir: oldDir } = await makeRepo("moved-from");
+    const { repoDir: newDir } = await makeRepo("moved-to");
+    const id = await createMindmap({ title: "Moved", workspacePath: oldDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await writeFile(path.join(newDir, "a.ts"), "export const a = 2;\n"); // so sync_git_status has a change to save
+    await callTool("sync_git_status", { mindmapId: id, workspacePath: newDir });
+    assert.equal(watchedMindmap(newDir), id);
+    assert.equal(watchedMindmap(oldDir), undefined);
+  }, 30000);
 
   it("starts watching when a tool changes a mindmap an earlier server process created", async () => {
     const { repoDir } = await makeRepo("restarted");
