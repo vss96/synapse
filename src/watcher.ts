@@ -147,7 +147,8 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
 
     // Ask git everything first: store.update holds the mindmap's lock only for the quick change itself.
     const ignored = await gitIgnored(resolved, [...batch.keys()]);
-    const paths = [...batch.keys()].filter((p) => !ignored.has(p));
+    const entries = [...batch].filter(([p]) => !ignored.has(p));
+    const paths = entries.map(([p]) => p);
     if (paths.length === 0) return;
     const rebasing = (await git(resolved, ["rev-parse", "--git-path", "rebase-merge", "--git-path", "rebase-apply"]))
       .split("\n")
@@ -177,8 +178,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       // Classify by the file's state before the batch, not by event type: editors and git replace files
       // by renaming a temp over them, which fs.watch reports as `rename` just like a new file.
       const touches: [string, "create" | "modify" | "delete"][] = [];
-      for (const relPath of paths) {
-        const renamed = batch.get(relPath)!;
+      for (const [relPath, renamed] of entries) {
         const stat = statSync(path.join(resolved, relPath), { throwIfNoEntry: false });
         if (stat?.isDirectory()) continue; // a new directory; the files written into it have their own events
         const exists = stat !== undefined;
