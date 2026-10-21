@@ -81,6 +81,29 @@ describe("store & renderer", () => {
     await store.remove(doc.id);
   });
 
+  it("updates a mindmap under its lock, writing only when something changed", async () => {
+    const doc = emptyDoc("mm_update", "Shared");
+    await store.save(doc);
+
+    await Promise.all(Array.from({ length: 20 }, (_, i) => store.update(doc.id, (d) => addChild(d, { type: "task", label: `T${i}` }))));
+    const updated = await store.load(doc.id);
+    assert.equal(Object.keys(updated?.nodes ?? {}).length, 21, "no concurrent update was lost");
+
+    assert.equal(await store.update(doc.id, () => "untouched"), "untouched");
+    assert.equal((await store.load(doc.id))?.updatedAt, updated?.updatedAt, "an update that changes nothing isn't written");
+
+    await assert.rejects(
+      store.update(doc.id, (d) => {
+        addChild(d, { type: "task", label: "Half done" });
+        throw new Error("boom");
+      }),
+      /boom/,
+    );
+    assert.equal(Object.keys((await store.load(doc.id))?.nodes ?? {}).length, 21, "a failed update saves nothing");
+    assert.equal(await store.update(MindmapId.parse("mm_missing"), () => "x"), null);
+    await store.remove(doc.id);
+  });
+
   it("keeps archive state when an agent saves a copy it loaded before the archive", async () => {
     const doc = emptyDoc("mm_stale", "Busy");
     await store.save(doc);

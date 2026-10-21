@@ -45,7 +45,8 @@ export function load(id: MindmapId): Promise<MindmapDocument | null> {
 }
 
 /**
- * Persist a mindmap after checking it is still a valid document; the write is atomic.
+ * Persist a whole mindmap (a new one, say) after checking it is still a valid document; the write is atomic.
+ * To change a stored mindmap use `update`, which can't overwrite changes made since it was read.
  * Archive state belongs to the viewer, so the copy on disk wins over the caller's (possibly stale) one.
  */
 export async function save(doc: MindmapDocument): Promise<void> {
@@ -56,6 +57,28 @@ export async function save(doc: MindmapDocument): Promise<void> {
     if (archivedAt) doc.archivedAt = archivedAt;
     else delete doc.archivedAt;
     await write(doc);
+  });
+}
+
+/**
+ * Read a mindmap, apply `mutate` to it and save it, all under its lock, so a change another tool call,
+ * the watcher or the viewer makes in the meantime isn't overwritten by a stale copy.
+ * `mutate` must be quick and synchronous (do slow work such as running git before calling this);
+ * if it throws, nothing is saved. The mindmap is only written, and `updatedAt` only bumped, if `mutate` changed it.
+ * Returns what `mutate` returned, or null if the mindmap doesn't exist.
+ */
+export async function update<T>(id: MindmapId, mutate: (doc: MindmapDocument) => T): Promise<T | null> {
+  const file = filePath(id);
+  return withLock(file, async () => {
+    const doc = await readDocument(file).catch(() => null);
+    if (!doc) return null;
+    const before = JSON.stringify(doc);
+    const result = mutate(doc);
+    if (JSON.stringify(doc) !== before) {
+      doc.updatedAt = now();
+      await write(doc);
+    }
+    return result;
   });
 }
 

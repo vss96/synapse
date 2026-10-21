@@ -145,8 +145,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     pendingFiles.clear();
     if (batch.size === 0) return;
 
-    // Ask git everything first and load the document just before saving it, so a tool call that
-    // saves the mindmap meanwhile isn't overwritten with a stale copy.
+    // Ask git everything first: store.update holds the mindmap's lock only for the quick change itself.
     const ignored = await gitIgnored(resolved, [...batch.keys()]);
     const paths = [...batch.keys()].filter((p) => !ignored.has(p));
     if (paths.length === 0) return;
@@ -154,10 +153,9 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       .split("\n")
       .some((p) => p && existsSync(path.resolve(resolved, p)));
     if (rebasing) {
-      const doc = await store.load(mindmapId);
-      if (!doc) return;
-      store.recordActivity(doc, `Git rebase in progress: ${paths.length} file change(s) not attributed to a task`);
-      await store.save(doc);
+      await store.update(mindmapId, (doc) =>
+        store.recordActivity(doc, `Git rebase in progress: ${paths.length} file change(s) not attributed to a task`),
+      );
       return;
     }
     const tracked = await gitListed(resolved, ["ls-files"], paths);
@@ -171,43 +169,39 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     const vcsMoved = operation !== "" && !operation.startsWith("commit") && movedAt * 1000 >= startedAt - VCS_SETTLE_MS;
     // --relative: paths relative to the workspace, like ls-files, even when it's a subdirectory of the repo
     const changed = vcsMoved ? await gitListed(resolved, ["diff", "--relative", "--name-only", "HEAD"], paths) : new Set<string>();
-    let churn = 0;
+    // store.update only writes the mindmap if this changed it.
+    await store.update(mindmapId, (doc) => {
+      let churn = 0;
+      const recorded = new Set(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.path)));
 
-    const doc = await store.load(mindmapId);
-    if (!doc) return;
-    const recorded = new Set(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.path)));
-
-    // Classify by the file's state before the batch, not by event type: editors and git replace files
-    // by renaming a temp over them, which fs.watch reports as `rename` just like a new file.
-    const touches: [string, "create" | "modify" | "delete"][] = [];
-    for (const relPath of paths) {
-      const renamed = batch.get(relPath)!;
-      const stat = statSync(path.join(resolved, relPath), { throwIfNoEntry: false });
-      if (stat?.isDirectory()) continue; // a new directory; the files written into it have their own events
-      const exists = stat !== undefined;
-      if (vcsMoved && (tracked.has(relPath) ? !changed.has(relPath) : !exists)) {
-        churn++;
-        continue;
+      // Classify by the file's state before the batch, not by event type: editors and git replace files
+      // by renaming a temp over them, which fs.watch reports as `rename` just like a new file.
+      const touches: [string, "create" | "modify" | "delete"][] = [];
+      for (const relPath of paths) {
+        const renamed = batch.get(relPath)!;
+        const stat = statSync(path.join(resolved, relPath), { throwIfNoEntry: false });
+        if (stat?.isDirectory()) continue; // a new directory; the files written into it have their own events
+        const exists = stat !== undefined;
+        if (vcsMoved && (tracked.has(relPath) ? !changed.has(relPath) : !exists)) {
+          churn++;
+          continue;
+        }
+        const known = tracked.has(relPath) || recorded.has(relPath);
+        if (!exists) {
+          if (known) touches.push([relPath, "delete"]); // else it came and went within the batch
+        } else {
+          touches.push([relPath, known || !renamed ? "modify" : "create"]);
+        }
       }
-      const known = tracked.has(relPath) || recorded.has(relPath);
-      if (!exists) {
-        if (known) touches.push([relPath, "delete"]); // else it came and went within the batch
-      } else {
-        touches.push([relPath, known || !renamed ? "modify" : "create"]);
-      }
-    }
-    if (churn > 0) store.recordActivity(doc, `Git ${operation}: ${churn} file change(s) not attributed to a task`);
-    if (touches.length === 0) {
-      if (churn > 0) await store.save(doc);
-      return;
-    }
+      if (churn > 0) store.recordActivity(doc, `Git ${operation}: ${churn} file change(s) not attributed to a task`);
+      if (touches.length === 0) return;
 
-    const targetNode = fileTouchTarget(doc);
-    for (const [relPath, action] of touches) {
-      upsertFileTouch(targetNode, { path: relPath, action, changes: [], summary: `Auto-detected file ${action}`, timestamp: now() });
-      store.recordActivity(doc, `File ${action}: ${relPath}`, { nodeId: targetNode.id, file: relPath });
-    }
-    await store.save(doc);
+      const targetNode = fileTouchTarget(doc);
+      for (const [relPath, action] of touches) {
+        upsertFileTouch(targetNode, { path: relPath, action, changes: [], summary: `Auto-detected file ${action}`, timestamp: now() });
+        store.recordActivity(doc, `File ${action}: ${relPath}`, { nodeId: targetNode.id, file: relPath });
+      }
+    });
   };
 
   // One batch at a time, so two flushes never load and save the document over each other.
