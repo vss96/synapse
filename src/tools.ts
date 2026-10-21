@@ -530,6 +530,8 @@ const syncGitStatus = defineTool({
     if (changes.length === 0) return `No uncommitted git changes detected in ${workspacePath}.`;
 
     const ack = await updateMindmap(input.mindmapId, (doc) => {
+      // Check again: the target may have been removed while git ran, and fileTouchTarget would fall back to another node.
+      if (input.targetNodeId) getNode(doc, input.targetNodeId);
       doc.workspacePath = workspacePath;
       const target = fileTouchTarget(doc, input.targetNodeId);
       for (const touch of changes) upsertFileTouch(target, touch);
