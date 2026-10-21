@@ -328,6 +328,31 @@ describe("MCP tools integration", () => {
     assert.equal(taskOf(doc, step2!.id as NodeId).status, "in_progress");
   });
 
+  it("keeps every change when calls on one mindmap overlap", async () => {
+    const repoDir = await mkdtemp(path.join(os.tmpdir(), "synapse-git-test-"));
+    try {
+      const git = (...args: string[]) => execFileAsync("git", args, { cwd: repoDir });
+      await git("init");
+      await writeFile(path.join(repoDir, "untracked.ts"), "export {};\n", "utf-8");
+      const created = await ackFrom("create_mindmap", { title: "Busy", workspacePath: repoDir, initialPlan: [{ label: "Step", status: "in_progress" }] });
+      const mindmapId = created.mindmapId;
+
+      // sync_git_status waits on git between reading and writing the mindmap, the widest window for a lost update
+      await Promise.all([
+        ok("sync_git_status", { mindmapId }),
+        ...Array.from({ length: 10 }, (_, i) => ok("log_file_touch", { mindmapId, path: `src/f${i}.ts` })),
+        ...Array.from({ length: 5 }, (_, i) => ok("add_node", { mindmapId, parentId: "root", label: `Added ${i}` })),
+      ]);
+
+      const doc = await docFrom("get_mindmap", { mindmapId });
+      const paths = nodeOf(doc, created.nodes[0].id).files.map((f) => f.path).sort();
+      assert.deepEqual(paths, [...Array.from({ length: 10 }, (_, i) => `src/f${i}.ts`), "untracked.ts"].sort());
+      assert.equal(Object.values(doc.nodes).filter((n) => n.label.startsWith("Added ")).length, 5);
+    } finally {
+      await rm(repoDir, { recursive: true, force: true });
+    }
+  });
+
   it("maps HLD mental model concepts and directed flow links via map_architecture and link_nodes", async () => {
     const doc = await docFrom("create_mindmap", { title: "Mental Model Test" });
     const afterHld = await docFrom("map_architecture", {
