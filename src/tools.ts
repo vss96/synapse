@@ -159,6 +159,8 @@ type FileTouchInput = z.infer<typeof FileTouchInput>;
 function toFileTouch(input: FileTouchInput): FileTouch {
   const common = { path: input.path, lines: input.lines, symbols: input.symbols, summary: input.summary, timestamp: now() };
   if (input.action === "read") return { ...common, action: "read" };
+  // FileTouchInput's superRefine rejects a rename without previousPath. Its type can't say so: the tool
+  // schemas extend it as one object, with `action` defaulting to "modify", so it can't be a union.
   if (input.action === "rename") return { ...common, action: "rename", previousPath: input.previousPath!, changes: input.changes };
   return { ...common, action: input.action, changes: input.changes };
 }
@@ -374,6 +376,7 @@ const mapArchitecture = defineTool({
         return id && doc.nodes[id] ? id : undefined;
       };
 
+      const placed: [item: (typeof input.nodes)[number], id: NodeId][] = [];
       for (const item of input.nodes) {
         const existingId = resolve(item.key);
         const status = statusFor(item.type, item.status, item.label);
@@ -387,15 +390,17 @@ const mapArchitecture = defineTool({
           for (const f of files) upsertFileTouch(node, f);
           doc.nodes[node.id] = node;
           byKey.set(item.key, node.id);
+          placed.push([item, node.id]);
         } else {
           const node = createChild({ ...item, status, files, parent: container.id });
           attachChild(doc, node);
           byKey.set(item.key, node.id);
+          placed.push([item, node.id]);
         }
       }
 
-      for (const item of input.nodes) {
-        const node = getChild(doc, byKey.get(item.key)!);
+      for (const [item, id] of placed) {
+        const node = getChild(doc, id);
         const parentId = (item.parentKey && resolve(item.parentKey)) || container.id;
         if (parentId === node.id) continue;
         if (isDescendant(doc, parentId, node.id)) {
@@ -415,7 +420,7 @@ const mapArchitecture = defineTool({
 
       const summary = `Mapped HLD mental model: ${input.nodes.length} node(s), ${linkCount} flow link(s)`;
       store.recordActivity(doc, summary, { nodeId: container.id });
-      const nodes = [...byKey].map(([key, id]) => ({ key, ...ref(doc.nodes[id]!) }));
+      const nodes = [...byKey].map(([key, id]) => ({ key, ...ref(getNode(doc, id)) }));
       return { mindmapId: doc.id, summary, containerId: container.id, nodes };
     }),
 });
