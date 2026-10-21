@@ -4,7 +4,7 @@ import { watch, existsSync, statSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as store from "./store.js";
 import { fileTouchTarget, upsertFileTouch } from "./model/file-touch.js";
-import { now, type EditTouch, type MindmapId } from "./model/schema.js";
+import { now, type EditTouch, type MindmapDocument, type MindmapId } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -122,13 +122,35 @@ export async function inspectGitChanges(workspacePath: string): Promise<EditTouc
 /*  Active workspace directory watchers                                */
 /* ------------------------------------------------------------------ */
 
-const activeWatchers = new Map<string, FSWatcher>();
+/** Watched workspace directories (resolved paths) and the mindmap each one's changes are recorded into. */
+const activeWatchers = new Map<string, { mindmapId: MindmapId; watcher: FSWatcher }>();
 
+/** The mindmap that file changes in `workspacePath` are recorded into, if this process watches it. */
+export function watchedMindmap(workspacePath: string): MindmapId | undefined {
+  return activeWatchers.get(path.resolve(workspacePath))?.mindmapId;
+}
+
+/** Stop recording file changes into a mindmap (it was deleted or archived). */
+export function stopWorkspaceWatcher(mindmapId: MindmapId): void {
+  for (const [resolved, watched] of activeWatchers) {
+    if (watched.mindmapId !== mindmapId) continue;
+    watched.watcher.close();
+    activeWatchers.delete(resolved);
+  }
+}
+
+/**
+ * Record file changes in `workspacePath` into `mindmapId`. A directory has one watcher, so when it is
+ * already watched its changes go to `mindmapId` from now on: the mindmap last used for that workspace.
+ */
 export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: string): void {
   if (!workspacePath || !existsSync(workspacePath)) return;
   const resolved = path.resolve(workspacePath);
-  const key = `${mindmapId}:${resolved}`;
-  if (activeWatchers.has(key)) return;
+  const watched = activeWatchers.get(resolved);
+  if (watched) {
+    watched.mindmapId = mindmapId;
+    return;
+  }
 
   // Path → whether fs.watch reported a `rename` for it (a file appearing or disappearing) in this batch.
   const pendingFiles = new Map<string, boolean>();
@@ -143,7 +165,18 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     const batch = new Map(pendingFiles);
     const startedAt = batchStart;
     pendingFiles.clear();
-    if (batch.size === 0) return;
+    const mindmapId = activeWatchers.get(resolved)?.mindmapId;
+    if (batch.size === 0 || !mindmapId) return;
+
+    // Archived (in the viewer, another process) or deleted mindmaps stop collecting this workspace's changes.
+    const record = async (change: (doc: MindmapDocument) => void) => {
+      const recorded = await store.update(mindmapId, (doc) => {
+        if (doc.archivedAt) return false;
+        change(doc);
+        return true;
+      });
+      if (!recorded) stopWorkspaceWatcher(mindmapId);
+    };
 
     // Ask git everything first: store.update holds the mindmap's lock only for the quick change itself.
     const ignored = await gitIgnored(resolved, [...batch.keys()]);
@@ -154,9 +187,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       .split("\n")
       .some((p) => p && existsSync(path.resolve(resolved, p)));
     if (rebasing) {
-      await store.update(mindmapId, (doc) =>
-        store.recordActivity(doc, `Git rebase in progress: ${paths.length} file change(s) not attributed to a task`),
-      );
+      await record((doc) => store.recordActivity(doc, `Git rebase in progress: ${paths.length} file change(s) not attributed to a task`));
       return;
     }
     const tracked = await gitListed(resolved, ["ls-files"], paths);
@@ -171,7 +202,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     // --relative: paths relative to the workspace, like ls-files, even when it's a subdirectory of the repo
     const changed = vcsMoved ? await gitListed(resolved, ["diff", "--relative", "--name-only", "HEAD"], paths) : new Set<string>();
     // store.update only writes the mindmap if this changed it.
-    await store.update(mindmapId, (doc) => {
+    await record((doc) => {
       let churn = 0;
       const recorded = new Set(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.path)));
 
@@ -223,7 +254,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     });
     watcher.unref();
 
-    activeWatchers.set(key, watcher);
+    activeWatchers.set(resolved, { mindmapId, watcher });
   } catch {
     // Recursive watch may fail on unsupported mounts; fail gracefully
   }
