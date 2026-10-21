@@ -52,6 +52,7 @@ A few conventions:
 
 - **`src/` is Node code.** `tsconfig.json` limits `src/` to Node types, so Bun-only APIs can't slip into code that ships.
 - **`src/model/` is the single source of the data model.** `schema.ts` defines the types and validates data wherever it enters (disk, MCP tools, HTTP). `CHANGE_KINDS` and `FILE_ACTIONS` in `kinds.ts` feed the tool schemas directly, and the browser code imports the same types. If you add a change kind, also update its glyph, label, and color in the viewer and its glyph in `renderer.ts`.
+- **TypeScript is strict.** [TypeScript](typescript.md) covers the compiler settings, the patterns to follow and the rules: no `any`, parse untrusted data, and a comment on every cast.
 - **The data files are the contract.** The MCP server and the viewer only communicate through the JSON files in the data directory. New fields must be optional so that existing mindmaps still load.
 - **Installer tests are sandboxed.** `tests/installer.test.ts` runs the CLI in a child process with a temporary `HOME` and `PATH`, so it never touches your real client configs.
 
