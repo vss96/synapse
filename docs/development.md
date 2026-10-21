@@ -34,6 +34,7 @@ src/
   store.ts         JSON store in SYNAPSE_DATA_DIR
   watcher.ts       Workspace watcher and git inspection
   renderer.ts      mermaid / text / json rendering
+  errors.ts        errorCode(): the code of a Node.js system error
   model/
     kinds.ts       Enums (node types, statuses, change kinds, ...) and guards; no deps, used by the browser
     schema.ts      zod schemas: the source of the data model's types and boundary checks

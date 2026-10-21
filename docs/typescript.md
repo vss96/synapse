@@ -76,7 +76,7 @@ if (isJsonObject(parsed)) return parsed;
 - **In `src/`**, parse with the zod schema: `MindmapDocument.safeParse(JSON.parse(raw))`.
 - **Without a schema**, narrow by hand, or write a type guard when you need the check more than once (`isJsonObject` in `installer.ts`).
 - **In the viewer**, which can't use zod, narrow what the user or the browser controls: `localStorage` (the collapsed groups), the URL hash and `data-*` attributes (`nodeById`, `isChangeKind`, `SIDEBAR_TABS.find(...)`). JSON from the Synapse server goes through `serverJson<T>()`, the one place where the viewer trusts the server's types. Uploaded files are not validated yet; see the comment where they are loaded.
-- **In `catch`**, `err` is `unknown`. Use `err instanceof Error ? err.message : String(err)`. Check Node error codes with `err instanceof Error && "code" in err && err.code === "EADDRINUSE"` instead of casting to `NodeJS.ErrnoException`.
+- **In `catch`**, `err` is `unknown`. Use `err instanceof Error ? err.message : String(err)`. Check Node error codes with `errorCode(err) === "EADDRINUSE"` (from `src/errors.ts`) instead of casting to `NodeJS.ErrnoException`.
 
 ### Avoid `as` and `!`
 
@@ -91,12 +91,13 @@ A cast or a non-null `!` tells the compiler to stop checking. There is usually a
 | `btn.dataset.tab as SidebarTab` | `SIDEBAR_TABS.find((t) => t === btn.dataset.tab)`, then handle `undefined` |
 | `getElementById(id) as HTMLInputElement` | `byId(id, HTMLInputElement)`, which checks with `instanceof` |
 
-A cast is fine when TypeScript can't know something that the code guarantees. Add a short comment saying why. The repo has four kinds:
+A cast or `!` is fine when TypeScript can't know something that the code guarantees. Add a short comment saying why. The repo has five kinds:
 
 - Branding a value that was just checked: `doc.nodes[id as NodeId]` right after `Object.hasOwn(doc.nodes, id)`.
 - Keys that `Object.keys` and `Object.entries` widen to `string`, in `checkTree` in `schema.ts`.
 - Data that ships with the code: `package.json` in `version.ts`.
 - JSON from the Synapse server, in `serverJson` in the viewer.
+- A rule that a zod refinement checks but the type can't express: `previousPath!` in `toFileTouch` in `tools.ts`.
 
 Never double-cast (`x as unknown as T`). `as const` and `satisfies` aren't casts, so use them freely.
 
