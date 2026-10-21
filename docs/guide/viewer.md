@@ -55,6 +55,8 @@ Drag to pan and scroll to zoom. Scrolling zooms around the cursor. The controls 
 
 When you open a session or switch views, the canvas fits the whole map if its cards are still readable that way. Otherwise it focuses the active task. When the agent starts a different task, the canvas moves to it. Other live updates leave the canvas where you put it. The selected node has a blue ring around it.
 
+Picking something in the sidebar brings it into view: jumping along a link in the Inspector, clicking a file, or picking a change kind in the Changes tab. If the cards are already in view at a readable size, the canvas stays put. Otherwise it pans to them, zooming out only as far as needed to show them all, or zooming in from a far zoomed-out view until they're readable.
+
 ## Theme and narrow windows
 
 The viewer follows your system's light or dark setting.

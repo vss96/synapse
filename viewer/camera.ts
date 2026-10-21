@@ -45,3 +45,29 @@ export function centerCamera(x: number, y: number, view: Size, scale = 1): Camer
   const s = clampScale(scale);
   return { scale: s, tx: view.w / 2 - x * s, ty: view.h / 2 - y * s };
 }
+
+/** A rectangle in scene coordinates, from its top-left corner. */
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * The camera that shows `box` (e.g. the selected or highlighted cards) at least `margin` pixels
+ * inside the viewport. It zooms out only as far as the box needs, zooms in only up to a readable
+ * scale, and is `cam` itself when the box is already in view at such a scale.
+ */
+export function revealCamera(cam: Camera, box: Box, view: Size, margin = 40): Camera {
+  const room = { w: view.w - 2 * margin, h: view.h - 2 * margin };
+  if (box.w <= 0 || box.h <= 0 || room.w <= 0 || room.h <= 0) return cam;
+  const fits = clampScale(Math.min(room.w / box.w, room.h / box.h));
+  const scale = Math.min(fits, Math.max(cam.scale, Math.min(READABLE_SCALE, fits)));
+  const left = box.x * cam.scale + cam.tx;
+  const top = box.y * cam.scale + cam.ty;
+  const inView =
+    left >= margin && top >= margin && left + box.w * cam.scale <= view.w - margin && top + box.h * cam.scale <= view.h - margin;
+  if (scale === cam.scale && inView) return cam;
+  return centerCamera(box.x + box.w / 2, box.y + box.h / 2, view, scale);
+}

@@ -9,7 +9,7 @@ import {
   type TaskStatus,
 } from "../src/model/kinds.js";
 import type { CodeChange, FileTouch, MindmapDocument, MindmapListItem, MindmapNode, NodeId } from "../src/model/schema.js";
-import { READABLE_SCALE, centerCamera, fitCamera, fitScale, zoomAt, type Camera, type Size } from "./camera.js";
+import { READABLE_SCALE, centerCamera, fitCamera, fitScale, revealCamera, zoomAt, type Box, type Camera, type Size } from "./camera.js";
 
 const VIEW_MODES = ["all", "plan", "hld"] as const;
 type ViewMode = (typeof VIEW_MODES)[number];
@@ -286,6 +286,14 @@ function escXml(s: unknown) {
     .replace(/"/g, "&quot;");
 }
 
+/** Whether the node touched the file or logged the change kind picked in the sidebar. */
+function isHighlighted(node: MindmapNode) {
+  return (
+    (highlightedFilePath !== null && node.files.some((f) => f.path === highlightedFilePath)) ||
+    (changeKindFilter !== null && nodeChanges(node).some((c) => kindOf(c) === changeKindFilter))
+  );
+}
+
 // ── Render SVG Mindmap & HLD Flow Links ─────────────────────────────────
 function render(doc: MindmapDocument | null) {
   const svg = svgEl;
@@ -320,7 +328,7 @@ function render(doc: MindmapDocument | null) {
   sceneSize = { w: maxX - minX + PAD * 2, h: maxY - minY + PAD * 2 };
   const OFX = PAD - minX;
   const OFY = PAD - minY;
-  nodeCenters.clear();
+  nodeBoxes.clear();
 
   let edges = "";
   let flowLinksSvg = "";
@@ -331,7 +339,7 @@ function render(doc: MindmapDocument | null) {
     if (!node) continue;
     const px = p.x + OFX;
     const py = p.y + OFY;
-    nodeCenters.set(id, { x: px + p.w / 2, y: py, left: px });
+    nodeBoxes.set(id, { x: px, y: py - p.h / 2, w: p.w, h: p.h });
 
     // Draw cubic bezier tree edges to children
     for (const cid of node.children) {
@@ -358,12 +366,7 @@ function render(doc: MindmapDocument | null) {
     if (tone && tone !== "planned") classes.push("toned", toneClass(tone));
     const selected = id === selectedNodeId;
     if (selected) classes.push("selected");
-    if (
-      (highlightedFilePath && node.files.some((f) => f.path === highlightedFilePath)) ||
-      (changeKindFilter && nodeChanges(node).some((c) => kindOf(c) === changeKindFilter))
-    ) {
-      classes.push("file-highlighted");
-    }
+    if (isHighlighted(node)) classes.push("file-highlighted");
 
     const topY = py - p.h / 2;
     let cursorY = topY + 20;
@@ -648,6 +651,7 @@ function renderSidebar(doc: MindmapDocument | null) {
       el.addEventListener("click", () => {
         selectedNodeId = el.dataset.jumpNode ?? ROOT;
         render(currentDoc);
+        revealNodes([selectedNodeId]);
       });
     });
   } else if (activeTab === "files") {
@@ -708,6 +712,7 @@ function renderSidebar(doc: MindmapDocument | null) {
         const kind = el.dataset.kind;
         changeKindFilter = kind && isChangeKind(kind) ? kind : null;
         render(currentDoc);
+        if (changeKindFilter) revealHighlighted();
       });
     });
   } else if (activeTab === "activity") {
@@ -732,6 +737,7 @@ function renderSidebar(doc: MindmapDocument | null) {
       const fp = el.dataset.filePath ?? null;
       highlightedFilePath = highlightedFilePath === fp ? null : fp;
       render(currentDoc);
+      if (highlightedFilePath) revealHighlighted();
     });
   });
 }
@@ -773,9 +779,9 @@ const svgEl = byId("svg", SVGSVGElement);
 
 let camera: Camera = { scale: 1, tx: 0, ty: 0 };
 let panning = false, startX = 0, startY = 0, startTx = 0, startTy = 0;
-/** Size of the laid-out tree and the center of each visible card, in scene coordinates. */
+/** Size of the laid-out tree and the box of each visible card, in scene coordinates. */
 let sceneSize: Size = { w: 0, h: 0 };
-const nodeCenters = new Map<string, { x: number; y: number; left: number }>();
+const nodeBoxes = new Map<string, Box>();
 /** Set when a session or view is opened, so the next render picks a fresh camera. */
 let viewPending = true;
 let lastActiveId: string | null = null;
@@ -793,7 +799,7 @@ function viewSize(): Size {
 /** The task the agent is working on (latest updated in progress) if it is in this view, else the root. */
 function activeNodeId(doc: MindmapDocument): string {
   const active = Object.values(doc.nodes)
-    .filter((n) => isTask(n) && n.status === "in_progress" && nodeCenters.has(n.id))
+    .filter((n) => isTask(n) && n.status === "in_progress" && nodeBoxes.has(n.id))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   return active?.id ?? ROOT;
 }
@@ -801,10 +807,10 @@ function activeNodeId(doc: MindmapDocument): string {
 function focusActive() {
   if (!currentDoc) return;
   const id = activeNodeId(currentDoc);
-  const center = nodeCenters.get(id);
+  const box = nodeBoxes.get(id);
   const view = viewSize();
   // With no active task, keep the root at the left edge so its branches fill the view.
-  if (center) camera = centerCamera(id === ROOT ? center.left - 40 + view.w / 2 : center.x, center.y, view);
+  if (box) camera = centerCamera(id === ROOT ? box.x - 40 + view.w / 2 : box.x + box.w / 2, box.y + box.h / 2, view);
   applyTransform();
 }
 
@@ -817,6 +823,22 @@ function fitView() {
 function initialView() {
   if (fitScale(sceneSize, viewSize()) >= READABLE_SCALE) fitView();
   else focusActive();
+}
+
+/** Move the camera, if needed, to show these cards (the ones drawn in the current view). */
+function revealNodes(ids: readonly string[]) {
+  const boxes = ids.flatMap((id) => nodeBoxes.get(id) ?? []);
+  if (boxes.length === 0) return;
+  const x = Math.min(...boxes.map((b) => b.x));
+  const y = Math.min(...boxes.map((b) => b.y));
+  const w = Math.max(...boxes.map((b) => b.x + b.w)) - x;
+  const h = Math.max(...boxes.map((b) => b.y + b.h)) - y;
+  camera = revealCamera(camera, { x, y, w, h }, viewSize());
+  applyTransform();
+}
+
+function revealHighlighted() {
+  if (currentDoc) revealNodes(Object.values(currentDoc.nodes).filter(isHighlighted).map((n) => n.id));
 }
 
 function zoomFromCenter(factor: number) {
