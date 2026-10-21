@@ -156,7 +156,7 @@ Inspect `git status` and `git diff` in the workspace and attach every modified, 
 | `workspacePath` | string | | Repository path. Defaults to the mindmap's `workspacePath`, then the server's working directory. It's saved to the mindmap. |
 | `targetNodeId` | string | | Node to attach changes to. Defaults to the active `in_progress` node. |
 
-Returns `No uncommitted git changes detected in <path>.` when the tree is clean. Also starts the workspace watcher for this mindmap.
+Returns `No uncommitted git changes detected in <path>.` when the tree is clean. Like any tool that changes a mindmap, it also points the workspace watcher at this mindmap.
 
 ## `link_nodes`
 

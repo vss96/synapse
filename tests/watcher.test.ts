@@ -5,17 +5,29 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
+import { z } from "zod";
 import { tools } from "../src/tools.js";
 import * as store from "../src/store.js";
-import { shouldIgnorePath } from "../src/watcher.js";
+import { shouldIgnorePath, watchedMindmap } from "../src/watcher.js";
 import { MindmapId, type MindmapDocument } from "../src/model/schema.js";
+import { addChild, emptyDoc } from "./fixtures.js";
 
 const execFileAsync = promisify(execFile);
 
-async function createMindmap(args: Record<string, unknown>): Promise<MindmapId> {
-  const result = await tools.find((t) => t.name === "create_mindmap")!.handler(args);
-  return MindmapId.parse(JSON.parse(result.content[0]!.text).mindmapId);
+async function callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const result = await tools.find((t) => t.name === name)!.handler(args);
+  assert.ok(!result.isError, `${name} failed: ${result.content[0]?.text}`);
+  return result.content[0]!.text;
 }
+async function createMindmap(args: Record<string, unknown>): Promise<MindmapId> {
+  return z.object({ mindmapId: MindmapId }).parse(JSON.parse(await callTool("create_mindmap", args))).mindmapId;
+}
+/** Every file touch in the document, as sorted `action:path` strings. */
+const touched = (doc: MindmapDocument) =>
+  Object.values(doc.nodes)
+    .flatMap((n) => n.files)
+    .map((f) => `${f.action}:${f.path}`)
+    .sort();
 
 /** Polls until `check` passes on the stored document (fs events and the debounce take a moment). */
 async function eventually(id: MindmapId, check: (doc: MindmapDocument) => void, timeoutMs = 8000): Promise<MindmapDocument> {
@@ -157,5 +169,77 @@ describe("workspace watcher", () => {
     await writeFile(path.join(repoDir, "pkg", "c.ts"), "export const c = 2;\n");
 
     await eventually(id, (d) => assert.deepEqual(Object.values(d.nodes).flatMap((n) => n.files).map((f) => `${f.action}:${f.path}`), ["modify:c.ts"]));
+  }, 30000);
+  it("records into the mindmap last used for the workspace, not every mindmap that watched it", async () => {
+    const { repoDir } = await makeRepo("shared");
+    const first = await createMindmap({ title: "First", workspacePath: repoDir, initialPlan: [{ label: "Old work", status: "in_progress" }] });
+    const second = await createMindmap({ title: "Second", workspacePath: repoDir, initialPlan: [{ label: "New work", status: "in_progress" }] });
+    await settle();
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await eventually(second, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]));
+
+    // A tool call on the first mindmap makes it the one being worked on again
+    await callTool("add_node", { mindmapId: first, parentId: "root", label: "Back to it" });
+    await writeFile(path.join(repoDir, "b.ts"), "export const b = 2;\n");
+    await eventually(first, (d) => assert.deepEqual(touched(d), ["modify:b.ts"]));
+    await settle();
+    assert.deepEqual(touched((await store.load(first))!), ["modify:b.ts"], "the first mindmap never got the second one's edit");
+    assert.deepEqual(touched((await store.load(second))!), ["modify:a.ts"], "nor the other way round");
+  }, 30000);
+
+  it("stops recording into a mindmap once it is archived", async () => {
+    const { repoDir } = await makeRepo("archived");
+    const id = await createMindmap({ title: "Archived", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    await store.setArchived(id, true);
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    // The archive happens in the viewer's process, so the watcher finds out when it next has changes to record
+    await eventually(id, () => assert.equal(watchedMindmap(repoDir), undefined));
+    assert.deepEqual(touched((await store.load(id))!), []);
+  }, 30000);
+
+  it("stops watching when its mindmap is deleted", async () => {
+    const { repoDir } = await makeRepo("deleted");
+    const id = await createMindmap({ title: "Deleted", workspacePath: repoDir });
+    assert.equal(watchedMindmap(repoDir), id);
+    await callTool("delete_mindmap", { mindmapId: id });
+    assert.equal(watchedMindmap(repoDir), undefined);
+  });
+
+  it("drops a deleted mindmap's unrecorded edits instead of giving them to the next mindmap", async () => {
+    const { repoDir } = await makeRepo("replaced");
+    const first = await createMindmap({ title: "First", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    // An edit the first watcher has seen but not recorded yet (batches wait 600 ms)
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await new Promise((r) => setTimeout(r, 300));
+    await callTool("delete_mindmap", { mindmapId: first });
+    const second = await createMindmap({ title: "Second", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    assert.deepEqual(touched((await store.load(second))!), []);
+  }, 30000);
+
+  it("stops watching a mindmap's old workspace when it moves to another one", async () => {
+    const { repoDir: oldDir } = await makeRepo("moved-from");
+    const { repoDir: newDir } = await makeRepo("moved-to");
+    const id = await createMindmap({ title: "Moved", workspacePath: oldDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await writeFile(path.join(newDir, "a.ts"), "export const a = 2;\n"); // so sync_git_status has a change to save
+    await callTool("sync_git_status", { mindmapId: id, workspacePath: newDir });
+    assert.equal(watchedMindmap(newDir), id);
+    assert.equal(watchedMindmap(oldDir), undefined);
+  }, 30000);
+
+  it("starts watching when a tool changes a mindmap an earlier server process created", async () => {
+    const { repoDir } = await makeRepo("restarted");
+    // Stored by an earlier MCP server process, so nothing in this one watches it yet
+    const doc = emptyDoc("mm_restarted", "Earlier");
+    doc.workspacePath = repoDir;
+    addChild(doc, { type: "task", label: "Work", status: "in_progress" });
+    await store.save(doc);
+
+    await callTool("add_node", { mindmapId: doc.id, parentId: "root", label: "Next" });
+    await settle();
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await eventually(doc.id, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]));
   }, 30000);
 });

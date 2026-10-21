@@ -1,7 +1,7 @@
 import { z } from "zod";
 import * as store from "./store.js";
 import { render } from "./renderer.js";
-import { ensureWorkspaceWatcher, inspectGitChanges } from "./watcher.js";
+import { ensureWorkspaceWatcher, inspectGitChanges, stopWorkspaceWatcher } from "./watcher.js";
 import { fileTouchTarget, mergeChanges, upsertFileTouch } from "./model/file-touch.js";
 import { CHANGE_KINDS, FILE_ACTIONS, LINK_STYLES, NODE_TYPES, TASK_STATUSES, isConcept, isTask, isTaskType, type ChildNodeType, type LinkStyle, type TaskStatus } from "./model/kinds.js";
 import { attachChild, createChild, reparent, retype } from "./model/node.js";
@@ -85,8 +85,16 @@ async function loadMindmap(id: MindmapId): Promise<MindmapDocument> {
 
 /** Change a mindmap under its lock (see `store.update`); `mutate` returns the tool's reply. */
 async function updateMindmap<T extends Ack>(id: MindmapId, mutate: (doc: MindmapDocument) => T): Promise<T> {
-  const result = await store.update(id, mutate);
+  let workspacePath: string | undefined;
+  const result = await store.update(id, (doc) => {
+    const reply = mutate(doc);
+    if (!doc.archivedAt) workspacePath = doc.workspacePath;
+    return reply;
+  });
   if (!result) throw new ToolError(`Mindmap "${id}" not found.`);
+  // The mindmap an agent changes is the one it's working on, so its workspace's file changes go there,
+  // even when an earlier server process created it.
+  ensureWorkspaceWatcher(id, workspacePath);
   return result;
 }
 
@@ -534,7 +542,7 @@ const syncGitStatus = defineTool({
     const changes = await inspectGitChanges(workspacePath);
     if (changes.length === 0) return `No uncommitted git changes detected in ${workspacePath}.`;
 
-    const ack = await updateMindmap(input.mindmapId, (doc) => {
+    return updateMindmap(input.mindmapId, (doc) => {
       // Check again: the target may have been removed while git ran, and fileTouchTarget would fall back to another node.
       if (input.targetNodeId) getNode(doc, input.targetNodeId);
       doc.workspacePath = workspacePath;
@@ -544,8 +552,6 @@ const syncGitStatus = defineTool({
       store.recordActivity(doc, summary, { nodeId: target.id });
       return { mindmapId: doc.id, summary, node: ref(target) };
     });
-    ensureWorkspaceWatcher(ack.mindmapId, workspacePath);
-    return ack;
   },
 });
 
@@ -665,6 +671,7 @@ const deleteMindmap = defineTool({
   inputSchema: z.object({ mindmapId }),
   async run(input) {
     if (!(await store.remove(input.mindmapId))) throw new ToolError(`Mindmap "${input.mindmapId}" not found.`);
+    stopWorkspaceWatcher(input.mindmapId);
     return { mindmapId: input.mindmapId, summary: `Mindmap "${input.mindmapId}" deleted.` };
   },
 });
