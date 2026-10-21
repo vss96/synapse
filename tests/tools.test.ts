@@ -7,7 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { tools, type ToolResult } from "../src/tools.js";
 import { isTask } from "../src/model/kinds.js";
-import { MindmapDocument, ROOT_ID, type FileTouch, type MindmapNode, type NodeId, type TaskNode } from "../src/model/schema.js";
+import { z } from "zod";
+import { MindmapDocument, MindmapId, NodeId, ROOT_ID, type FileTouch, type MindmapNode, type TaskNode } from "../src/model/schema.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,12 +31,23 @@ async function fails(name: string, args: Record<string, unknown>): Promise<strin
   assert.equal(result.isError, true, `${name} should have failed but returned: ${textOf(result).slice(0, 200)}`);
   return textOf(result);
 }
+/** A node as an acknowledgement reports it. */
+const NodeRef = z.object({ id: NodeId, label: z.string(), type: z.string(), parent: NodeId.nullable(), status: z.string().optional() });
+/** The compact acknowledgement of a tool that changes a mindmap (the fields these tests read). */
+const Ack = z.object({
+  mindmapId: MindmapId,
+  summary: z.string(),
+  hint: z.string().optional(),
+  node: NodeRef.optional(),
+  fileNode: NodeRef.optional(),
+  nodes: z.array(NodeRef).optional(),
+});
 /** Calls a tool that changes a mindmap and returns its compact acknowledgement. */
-const ackFrom = async (name: string, args: Record<string, unknown>) => JSON.parse(await ok(name, args)) as { mindmapId: string; summary: string } & Record<string, any>;
+const ackFrom = async (name: string, args: Record<string, unknown>) => Ack.parse(JSON.parse(await ok(name, args)));
 /** Calls a tool, then reads back the whole document with get_mindmap (which must be a valid document). */
 async function docFrom(name: string, args: Record<string, unknown>): Promise<MindmapDocument> {
-  const reply = JSON.parse(await ok(name, args));
-  return MindmapDocument.parse(name === "get_mindmap" ? reply : JSON.parse(await ok("get_mindmap", { mindmapId: reply.mindmapId })));
+  const reply: unknown = JSON.parse(await ok(name, args));
+  return MindmapDocument.parse(name === "get_mindmap" ? reply : JSON.parse(await ok("get_mindmap", { mindmapId: Ack.parse(reply).mindmapId })));
 }
 
 function nodeOf(doc: MindmapDocument, id: NodeId | undefined): MindmapNode {
@@ -300,32 +312,32 @@ describe("MCP tools integration", () => {
       title: "Compact",
       initialPlan: [{ label: "Step 1", status: "in_progress" }, { label: "Step 2" }],
     });
-    assert.equal("nodes" in created && Array.isArray(created.nodes), true);
-    const [step1, step2] = created.nodes as { id: string; label: string; status: string }[];
+    const [step1, step2] = created.nodes ?? [];
     assert.deepEqual([step1?.label, step1?.status, step2?.label, step2?.status], ["Step 1", "in_progress", "Step 2", "planned"]);
+    assert.ok(step2);
 
     const added = await ackFrom("add_node", { mindmapId: created.mindmapId, parentId: "root", label: "Step 3" });
-    assert.equal(added.node.label, "Step 3");
-    assert.equal(added.node.status, "planned");
+    assert.equal(added.node?.label, "Step 3");
+    assert.equal(added.node?.status, "planned");
 
     // Make the document big; acknowledgements stay small
     for (let i = 0; i < 50; i++) await ok("log_file_touch", { mindmapId: created.mindmapId, path: `src/file${i}.ts`, summary: "x".repeat(200) });
     const touched = await ackFrom("log_file_touch", {
       mindmapId: created.mindmapId,
-      nodeId: step2!.id,
+      nodeId: step2.id,
       path: "src/b.ts",
       summary: "y".repeat(5000),
       createChildNode: true,
     });
     assert.ok(JSON.stringify(touched).length < 1000, "the agent's own summary isn't echoed back");
-    assert.equal(touched.node.id, step2!.id);
-    assert.deepEqual([touched.fileNode.type, touched.fileNode.label, touched.fileNode.parent], ["file", "src/b.ts", step2!.id]);
-    assert.equal(touched.node.status, "in_progress", "a planned task that gets a touch has started");
-    assert.match(touched.hint, /Also in_progress: "Step 1"/);
+    assert.equal(touched.node?.id, step2.id);
+    assert.deepEqual([touched.fileNode?.type, touched.fileNode?.label, touched.fileNode?.parent], ["file", "src/b.ts", step2.id]);
+    assert.equal(touched.node?.status, "in_progress", "a planned task that gets a touch has started");
+    assert.match(touched.hint ?? "", /Also in_progress: "Step 1"/);
 
     const doc = await docFrom("get_mindmap", { mindmapId: created.mindmapId });
     assert.ok(JSON.stringify(doc).length > 10_000);
-    assert.equal(taskOf(doc, step2!.id as NodeId).status, "in_progress");
+    assert.equal(taskOf(doc, step2.id).status, "in_progress");
   });
 
   it("keeps every change when calls on one mindmap overlap", async () => {
@@ -345,15 +357,16 @@ describe("MCP tools integration", () => {
       ]);
 
       const doc = await docFrom("get_mindmap", { mindmapId });
-      const paths = nodeOf(doc, created.nodes[0].id).files.map((f) => f.path).sort();
+      const paths = nodeOf(doc, created.nodes?.[0]?.id).files.map((f) => f.path).sort();
       assert.deepEqual(paths, [...Array.from({ length: 10 }, (_, i) => `src/f${i}.ts`), "untracked.ts"].sort());
       assert.equal(Object.values(doc.nodes).filter((n) => n.label.startsWith("Added ")).length, 5);
 
       // A target removed while sync_git_status waits on git is an error, not a reason to attach elsewhere
-      const target = await ackFrom("add_node", { mindmapId, parentId: "root", label: "Target" });
+      const targetId = (await ackFrom("add_node", { mindmapId, parentId: "root", label: "Target" })).node?.id;
+      assert.ok(targetId);
       const [synced] = await Promise.all([
-        callTool("sync_git_status", { mindmapId, targetNodeId: target.node.id }),
-        ok("remove_node", { mindmapId, nodeId: target.node.id }),
+        callTool("sync_git_status", { mindmapId, targetNodeId: targetId }),
+        ok("remove_node", { mindmapId, nodeId: targetId }),
       ]);
       assert.equal(synced.isError, true);
       assert.match(textOf(synced), /not found/);

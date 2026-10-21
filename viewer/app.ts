@@ -1,9 +1,20 @@
-import { isChangeKind, isConceptType, isTask, type ChangeKind, type FileAction, type NodeType, type TaskStatus } from "../src/model/kinds.js";
+import {
+  CHANGE_KINDS as KIND_ORDER,
+  isChangeKind,
+  isConceptType,
+  isTask,
+  type ChangeKind,
+  type FileAction,
+  type NodeType,
+  type TaskStatus,
+} from "../src/model/kinds.js";
 import type { CodeChange, FileTouch, MindmapDocument, MindmapListItem, MindmapNode, NodeId } from "../src/model/schema.js";
 import { READABLE_SCALE, centerCamera, fitCamera, fitScale, zoomAt, type Camera, type Size } from "./camera.js";
 
-type ViewMode = "all" | "plan" | "hld";
-type SidebarTab = "inspector" | "files" | "activity";
+const VIEW_MODES = ["all", "plan", "hld"] as const;
+type ViewMode = (typeof VIEW_MODES)[number];
+const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
+type SidebarTab = (typeof SIDEBAR_TABS)[number];
 
 /** The well-known root id (schema.ts's ROOT_ID can't be imported: it would bundle zod). */
 const ROOT = "root" as NodeId;
@@ -40,16 +51,28 @@ interface SyncGitResponse {
   error?: string;
 }
 
-function byId<T extends Element = HTMLElement>(id: string): T {
+/** The element with this id, checked to be a `type` (an HTMLElement unless given). */
+function byId(id: string): HTMLElement;
+function byId<T extends Element>(id: string, type: new () => T): T;
+function byId(id: string, type: new () => Element = HTMLElement): Element {
   const el = document.getElementById(id);
-  if (!el) throw new Error(`Missing #${id}`);
-  return el as Element as T;
+  if (!(el instanceof type)) throw new Error(el ? `#${id} is not a ${type.name}` : `Missing #${id}`);
+  return el;
 }
 
-function query<T extends Element = HTMLElement>(selector: string): T {
-  const el = document.querySelector<T>(selector);
-  if (!el) throw new Error(`Missing ${selector}`);
+function query(selector: string): HTMLElement {
+  const el = document.querySelector(selector);
+  if (!(el instanceof HTMLElement)) throw new Error(el ? `${selector} is not an HTMLElement` : `Missing ${selector}`);
   return el;
+}
+
+/**
+ * Parses JSON from the Synapse server (API responses and live events). Typed, not validated: the
+ * server only sends mindmaps it checked with zod (src/model/schema.ts), and checking them again here
+ * would bundle zod.
+ */
+function serverJson<T>(json: string): T {
+  return JSON.parse(json) as T;
 }
 
 function errorMessage(err: unknown): string {
@@ -75,7 +98,7 @@ const TYPE_BADGES: Partial<Record<NodeType, string>> = {
 // file action) sets the --c color that badges, tallies and cards use, in light and dark mode.
 const toneClass = (key: TaskStatus | NodeType | ChangeKind | FileAction) => `tone-${escXml(key)}`;
 
-// Symbol-level change kinds (order = display order).
+// Symbol-level change kinds, shown in KIND_ORDER (kinds.ts's CHANGE_KINDS).
 const CHANGE_KINDS: Record<ChangeKind, { glyph: string; label: string }> = {
   add: { glyph: "+", label: "Added" },
   modify: { glyph: "~", label: "Modified" },
@@ -85,7 +108,6 @@ const CHANGE_KINDS: Record<ChangeKind, { glyph: string; label: string }> = {
   remove: { glyph: "−", label: "Removed" },
   test: { glyph: "✓", label: "Tested" },
 };
-const KIND_ORDER = Object.keys(CHANGE_KINDS) as ChangeKind[];
 
 let currentId = decodeURIComponent(location.hash.slice(1));
 let currentDoc: MindmapDocument | null = null;
@@ -100,6 +122,7 @@ let sessionQuery = "";
 
 /** Looks up a node by an untrusted id (URL, DOM attribute). */
 function nodeById(doc: MindmapDocument, id: string): MindmapNode | undefined {
+  // hasOwn has just checked that `id` is one of the document's NodeId keys.
   return Object.hasOwn(doc.nodes, id) ? doc.nodes[id as NodeId] : undefined;
 }
 
@@ -721,7 +744,9 @@ function updateTabUI() {
 
 document.querySelectorAll<HTMLElement>(".sidebar-tab").forEach((btn) => {
   btn.addEventListener("click", () => {
-    activeTab = btn.dataset.tab as SidebarTab;
+    const tab = SIDEBAR_TABS.find((t) => t === btn.dataset.tab);
+    if (!tab) return;
+    activeTab = tab;
     if (activeTab !== "files") changeKindFilter = null;
     updateTabUI();
     render(currentDoc);
@@ -731,7 +756,9 @@ document.querySelectorAll<HTMLElement>(".sidebar-tab").forEach((btn) => {
 // View Mode Switcher (Split / Plan / HLD)
 document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((btn) => {
   btn.addEventListener("click", () => {
-    viewMode = btn.dataset.mode as ViewMode;
+    const mode = VIEW_MODES.find((m) => m === btn.dataset.mode);
+    if (!mode) return;
+    viewMode = mode;
     document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((b) =>
       b.classList.toggle("active", b.dataset.mode === viewMode)
     );
@@ -742,7 +769,7 @@ document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((btn) =>
 
 // ── Pan & Zoom ──────────────────────────────────────────────────
 const viewport = byId("viewport");
-const svgEl = byId<SVGSVGElement>("svg");
+const svgEl = byId("svg", SVGSVGElement);
 
 let camera: Camera = { scale: 1, tx: 0, ty: 0 };
 let panning = false, startX = 0, startY = 0, startTx = 0, startTy = 0;
@@ -849,7 +876,7 @@ async function fetchMindmapById(id: string) {
   if (!id) return;
   const res = await fetch(`/api/mindmaps/${encodeURIComponent(id)}`, { cache: "no-store" });
   if (res.ok) {
-    const doc: MindmapDocument = await res.json();
+    const doc = serverJson<MindmapDocument>(await res.text());
     if (id === currentId) loadMindmap(doc); // ignore responses for a session we already switched away from
   }
 }
@@ -953,7 +980,7 @@ async function setArchived(id: string, archived: boolean) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mindmapId: id, archived }),
     });
-    if (!res.ok) throw new Error(((await res.json()) as { error?: string }).error ?? `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(serverJson<{ error?: string }>(await res.text()).error ?? `HTTP ${res.status}`);
   } catch (err) {
     alert(`Could not ${archived ? "archive" : "restore"} the session: ${errorMessage(err)}`);
   }
@@ -1020,7 +1047,7 @@ async function refreshSessions() {
   try {
     const res = await fetch("/api/mindmaps", { cache: "no-store" });
     if (!res.ok) return;
-    sessions = await res.json();
+    sessions = serverJson<MindmapListItem[]>(await res.text());
     renderSessions();
   } catch {
     // Viewer opened without the API server; sessions list stays empty
@@ -1039,7 +1066,7 @@ async function init() {
   }
 }
 
-const sessionSearch = byId<HTMLInputElement>("session-search");
+const sessionSearch = byId("session-search", HTMLInputElement);
 sessionSearch.addEventListener("input", () => {
   sessionQuery = sessionSearch.value;
   renderSessions();
@@ -1070,9 +1097,9 @@ byId("sessions-toggle").onclick = () => {
 
 setInterval(renderSessions, 30000); // keep "x m ago" and live dots fresh
 
-byId("legend-kinds").innerHTML = Object.entries(CHANGE_KINDS)
-  .map(([k, m]) => `<span class="kind-tally ${toneClass(k as ChangeKind)}" title="${m.label}">${m.glyph} ${k}</span>`)
-  .join("");
+byId("legend-kinds").innerHTML = KIND_ORDER.map(
+  (k) => `<span class="kind-tally ${toneClass(k)}" title="${CHANGE_KINDS[k].label}">${CHANGE_KINDS[k].glyph} ${k}</span>`,
+).join("");
 
 byId("refresh-btn").onclick = async () => {
   await refreshSessions();
@@ -1090,7 +1117,7 @@ byId("sync-git-btn").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mindmapId: currentId }),
     });
-    const data: SyncGitResponse = await res.json();
+    const data = serverJson<SyncGitResponse>(await res.text());
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
     if (data.mindmap) loadMindmap(data.mindmap);
   } catch (err) {
@@ -1099,7 +1126,7 @@ byId("sync-git-btn").onclick = async () => {
 };
 
 // File upload
-const fileUpload = byId<HTMLInputElement>("file-upload");
+const fileUpload = byId("file-upload", HTMLInputElement);
 byId("upload-btn").onclick = () => {
   fileUpload.click();
 };
@@ -1108,7 +1135,9 @@ fileUpload.onchange = async () => {
   if (!file) return;
   const text = await file.text();
   try {
-    loadMindmap(JSON.parse(text));
+    // Not validated (that would bundle zod): rendering tolerates unknown change kinds (kindOf), and
+    // this catch reports files it can't render.
+    loadMindmap(JSON.parse(text) as MindmapDocument);
     renderSessions();
   } catch (err) {
     alert("Invalid JSON: " + errorMessage(err));
@@ -1129,7 +1158,7 @@ function connectSSE() {
 
   es.onmessage = async (event) => {
     try {
-      const payload: ViewerEvent = JSON.parse(event.data);
+      const payload = serverJson<ViewerEvent>(event.data);
       if (payload.type === "mindmap_updated") {
         // Refresh the session list, but only reload the canvas for the session being viewed.
         await refreshSessions();

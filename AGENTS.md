@@ -27,6 +27,7 @@ Add or update tests in `tests/` for any change in behavior. CI (`.github/workflo
 ## Rules
 
 - **`src/` is Node code.** Don't use Bun-only APIs there; `tsconfig.json` only allows Node types.
+- **Write type-safe TypeScript** as described in [`docs/typescript.md`](docs/typescript.md): no `any`, parse untrusted data instead of casting it, and explain every remaining `as` or `!` in a comment.
 - **`src/model/` owns the data model.** `schema.ts` (zod) defines the types and validates all data where it enters: disk, MCP tool input and HTTP. Validate at those boundaries, not ad hoc elsewhere. `kinds.ts` has no dependencies because the browser imports it.
 - **The JSON files in the data directory are the contract** between the MCP server and the viewer. New fields must be optional so existing mindmaps still load.
 - **Adding a change kind** means updating `CHANGE_KINDS` in `src/model/kinds.ts`, its glyph, label and color in `viewer/`, and its glyph in `src/renderer.ts`.

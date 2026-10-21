@@ -7,14 +7,18 @@ export function mergeChanges(prev: readonly CodeChange[], next: readonly CodeCha
   const merged = [...prev];
   for (const change of next) {
     const i = merged.findIndex((c) => c.kind === change.kind && c.symbol === change.symbol);
-    if (i >= 0) merged[i] = { ...change, detail: change.detail ?? merged[i]!.detail };
+    const earlier = merged[i];
+    if (earlier) merged[i] = { ...change, detail: change.detail ?? earlier.detail };
     else merged.push(change);
   }
   return merged;
 }
 
-/** The action a file ends up with after an earlier and a later edit. */
-function combinedAction(prev: EditTouch, next: EditTouch): Pick<EditTouch, "action"> & { previousPath?: string } {
+/** The action a file ends up with after an earlier and a later edit; a rename keeps its previous path. */
+function combinedAction(
+  prev: EditTouch,
+  next: EditTouch,
+): { action: "rename"; previousPath: string } | { action: "create" | "modify" | "delete" } {
   if (next.action === "delete") return { action: "delete" };
   if (next.action === "modify" && prev.action === "create") return { action: "create" };
   if (next.action === "modify" && prev.action === "rename") return { action: "rename", previousPath: prev.previousPath };
@@ -36,18 +40,15 @@ export function combineTouches(prev: FileTouch, next: FileTouch): FileTouch {
   if (next.action === "read") return prev.action === "read" ? { ...common, action: "read" } : prev;
   if (prev.action === "read") return { ...common, ...next, ...common };
 
-  const changes = mergeChanges(prev.changes, next.changes);
-  const { action, previousPath } = combinedAction(prev, next);
-  return action === "rename"
-    ? { ...common, action, previousPath: previousPath!, changes }
-    : { ...common, action, changes };
+  return { ...common, ...combinedAction(prev, next), changes: mergeChanges(prev.changes, next.changes) };
 }
 
 /** Record a file touch on a node, merging with an earlier touch of the same file (or of a renamed file's old path). */
 export function upsertFileTouch(node: MindmapNode, touch: FileTouch): void {
   let i = node.files.findIndex((f) => f.path === touch.path);
   if (i < 0 && touch.action === "rename") i = node.files.findIndex((f) => f.path === touch.previousPath);
-  if (i >= 0) node.files[i] = combineTouches(node.files[i]!, touch);
+  const earlier = node.files[i];
+  if (earlier) node.files[i] = combineTouches(earlier, touch);
   else node.files.push(touch);
   node.updatedAt = touch.timestamp;
 }

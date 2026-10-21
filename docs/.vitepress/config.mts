@@ -46,7 +46,10 @@ export default defineConfig({
       },
       {
         text: 'Contributing',
-        items: [{ text: 'Development', link: '/development' }],
+        items: [
+          { text: 'Development', link: '/development' },
+          { text: 'TypeScript', link: '/typescript' },
+        ],
       },
     ],
 

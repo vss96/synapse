@@ -2,7 +2,8 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
-import { CLIENTS, init, type ClientId } from "./installer.js";
+import { errorCode } from "./errors.js";
+import { CLIENTS, init, isClientId } from "./installer.js";
 import * as store from "./store.js";
 import { VERSION } from "./version.js";
 import { DEFAULT_VIEWER_PORT, startViewer } from "./viewer.js";
@@ -49,9 +50,8 @@ async function runInit(args: string[]): Promise<void> {
       "dry-run": { type: "boolean" },
     },
   });
-  const known = new Set<string>(CLIENTS.map((c) => c.id));
-  const unknown = (values.client ?? []).filter((id) => !known.has(id));
-  if (unknown.length) fail(`unknown client ${unknown.join(", ")} (expected one of: ${[...known].join(", ")})`);
+  const unknown = (values.client ?? []).filter((id) => !isClientId(id));
+  if (unknown.length) fail(`unknown client ${unknown.join(", ")} (expected one of: ${CLIENTS.map((c) => c.id).join(", ")})`);
   if (!values.yes && !values["dry-run"] && !process.stdin.isTTY) {
     fail("not running in a terminal; pass --yes to configure without prompts");
   }
@@ -59,11 +59,11 @@ async function runInit(args: string[]): Promise<void> {
   const rl = values.yes || values["dry-run"] ? null : createInterface({ input: process.stdin, output: process.stdout });
   try {
     const outcomes = await init({
-      clients: values.client as ClientId[] | undefined,
+      clients: values.client?.filter(isClientId),
       yes: values.yes,
       force: values.force,
       dryRun: values["dry-run"],
-      confirm: async (question) => !/^n/i.test((await rl!.question(`${question} [Y/n] `)).trim()),
+      confirm: rl ? async (question) => !/^n/i.test((await rl.question(`${question} [Y/n] `)).trim()) : undefined,
     });
     if (!values["dry-run"]) {
       const dataDir = await store.ensureDataDir();
@@ -92,7 +92,7 @@ async function runViewer(args: string[]): Promise<void> {
   try {
     viewer = await startViewer({ port, strictPort: port !== undefined });
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") fail(`port ${port} is already in use`);
+    if (errorCode(err) === "EADDRINUSE") fail(`port ${port} is already in use`);
     throw err;
   }
   if (port === undefined && viewer.port !== DEFAULT_VIEWER_PORT) {
