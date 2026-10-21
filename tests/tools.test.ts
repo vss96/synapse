@@ -357,15 +357,16 @@ describe("MCP tools integration", () => {
       ]);
 
       const doc = await docFrom("get_mindmap", { mindmapId });
-      const paths = nodeOf(doc, created.nodes[0].id).files.map((f) => f.path).sort();
+      const paths = nodeOf(doc, created.nodes?.[0]?.id).files.map((f) => f.path).sort();
       assert.deepEqual(paths, [...Array.from({ length: 10 }, (_, i) => `src/f${i}.ts`), "untracked.ts"].sort());
       assert.equal(Object.values(doc.nodes).filter((n) => n.label.startsWith("Added ")).length, 5);
 
       // A target removed while sync_git_status waits on git is an error, not a reason to attach elsewhere
-      const target = await ackFrom("add_node", { mindmapId, parentId: "root", label: "Target" });
+      const targetId = (await ackFrom("add_node", { mindmapId, parentId: "root", label: "Target" })).node?.id;
+      assert.ok(targetId);
       const [synced] = await Promise.all([
-        callTool("sync_git_status", { mindmapId, targetNodeId: target.node.id }),
-        ok("remove_node", { mindmapId, nodeId: target.node.id }),
+        callTool("sync_git_status", { mindmapId, targetNodeId: targetId }),
+        ok("remove_node", { mindmapId, nodeId: targetId }),
       ]);
       assert.equal(synced.isError, true);
       assert.match(textOf(synced), /not found/);
