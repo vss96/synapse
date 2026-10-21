@@ -1,7 +1,6 @@
 import {
   CHANGE_KINDS as KIND_ORDER,
   isChangeKind,
-  isConceptType,
   isTask,
   type ChangeKind,
   type FileAction,
@@ -10,14 +9,10 @@ import {
 } from "../src/model/kinds.js";
 import type { CodeChange, FileTouch, MindmapDocument, MindmapListItem, MindmapNode, NodeId } from "../src/model/schema.js";
 import { READABLE_SCALE, centerCamera, fitCamera, fitScale, revealCamera, zoomAt, type Box, type Camera, type Size } from "./camera.js";
+import { ROOT, VIEW_MODES, layoutTree, type ViewMode } from "./layout.js";
 
-const VIEW_MODES = ["all", "plan", "hld"] as const;
-type ViewMode = (typeof VIEW_MODES)[number];
 const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
 type SidebarTab = (typeof SIDEBAR_TABS)[number];
-
-/** The well-known root id (schema.ts's ROOT_ID can't be imported: it would bundle zod). */
-const ROOT = "root" as NodeId;
 
 /** A change as shown in the sidebar; `via` lists the nodes that logged it. */
 type DisplayChange = CodeChange & { via?: string[] };
@@ -29,14 +24,6 @@ interface AggregatedFile {
   /** Changes from every touch, merged on kind + symbol. */
   changes: Array<CodeChange & { via: string[] }>;
   nodes: MindmapNode[];
-}
-
-interface NodeBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  depth: number;
 }
 
 interface ViewerEvent {
@@ -191,29 +178,7 @@ function fileItemHtml(
     </div>`;
 }
 
-function isHldBranchNode(doc: MindmapDocument, node: MindmapNode) {
-  let cur: MindmapNode | undefined = node;
-  while (cur) {
-    if (isConceptType(cur.type)) return true;
-    cur = cur.parent === null ? undefined : doc.nodes[cur.parent];
-  }
-  return false;
-}
-
-function shouldShowNodeInView(doc: MindmapDocument, node: MindmapNode) {
-  if (node.type === "root" || viewMode === "all") return true;
-  const isHld = isHldBranchNode(doc, node);
-  return viewMode === "hld" ? isHld : !isHld;
-}
-
-function visibleChildren(doc: MindmapDocument, node: MindmapNode): MindmapNode[] {
-  return node.children.flatMap((cid) => {
-    const child = doc.nodes[cid];
-    return child && shouldShowNodeInView(doc, child) ? [child] : [];
-  });
-}
-
-// ── Calculate Dynamic Node Dimensions & Non-Overlapping Tree Layout ──
+// ── Card size (layout.ts places the cards; render() draws these rows) ──
 function getNodeSize(node: MindmapNode) {
   const w = 235;
   const fileCount = node.files.length;
@@ -225,52 +190,6 @@ function getNodeSize(node: MindmapNode) {
   if (nodeChanges(node).length > 0) h += 16;
   if (fileCount > 0) h += Math.min(fileCount, 2) * 20 + 6;
   return { w, h };
-}
-
-function layoutTree(doc: MindmapDocument) {
-  const root = doc.nodes[ROOT];
-  if (!root) return null;
-
-  const LEVEL_GAP = 105;
-  const SIBLING_GAP = 34;
-  const measured = new Map<NodeId, { size: { w: number; h: number }; subtreeH: number; children: MindmapNode[] }>();
-
-  function measure(node: MindmapNode): number {
-    const size = getNodeSize(node);
-    const children = visibleChildren(doc, node);
-    let totalChildrenH = 0;
-    children.forEach((child, i) => {
-      totalChildrenH += measure(child);
-      if (i > 0) totalChildrenH += SIBLING_GAP;
-    });
-    const subtreeH = Math.max(size.h, totalChildrenH);
-    measured.set(node.id, { size, subtreeH, children });
-    return subtreeH;
-  }
-
-  const rootH = measure(root);
-
-  const positions = new Map<NodeId, NodeBox>();
-  function assign(node: MindmapNode, x: number, centerY: number, depth: number) {
-    const m = measured.get(node.id);
-    if (!m) return;
-    const { size, children } = m;
-    positions.set(node.id, { x, y: centerY, w: size.w, h: size.h, depth });
-    if (children.length === 0) return;
-
-    const heights = children.map((child) => measured.get(child.id)?.subtreeH ?? 0);
-    const totalChildrenH = heights.reduce((sum, h) => sum + h, 0) + SIBLING_GAP * (children.length - 1);
-
-    let cursorY = centerY - totalChildrenH / 2;
-    children.forEach((child, i) => {
-      const chH = heights[i] ?? 0;
-      assign(child, x + size.w + LEVEL_GAP, cursorY + chH / 2, depth + 1);
-      cursorY += chH + SIBLING_GAP;
-    });
-  }
-
-  assign(root, 60, Math.max(300, rootH / 2 + 40), 0);
-  return positions;
 }
 
 function truncate(str: string | undefined, max: number) {
@@ -294,6 +213,19 @@ function isHighlighted(node: MindmapNode) {
   );
 }
 
+/** Dashed while a child is in progress, green once every child is completed. */
+function edgeClass(children: readonly MindmapNode[]) {
+  if (children.some((n) => isTask(n) && n.status === "in_progress")) return "edge edge-active";
+  if (children.length > 0 && children.every((n) => isTask(n) && n.status === "completed")) return "edge edge-completed";
+  return "edge";
+}
+
+/** A tree edge from a parent's right side (x1, y1) to a child's left side (x2, y2). */
+function edgePath(cls: string, x1: number, y1: number, x2: number, y2: number) {
+  const mx = (x1 + x2) / 2;
+  return `<path class="${cls}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+}
+
 // ── Render SVG Mindmap & HLD Flow Links ─────────────────────────────────
 function render(doc: MindmapDocument | null) {
   const svg = svgEl;
@@ -310,10 +242,21 @@ function render(doc: MindmapDocument | null) {
   empty.style.display = "none";
 
   const nodes = doc.nodes;
-  const positions = layoutTree(doc);
-  if (!positions) {
+  const layout = layoutTree(doc, viewMode, getNodeSize);
+  if (!layout) {
     svg.innerHTML = "";
     return;
+  }
+  const { positions, grids } = layout;
+  // Cards in a grid share one edge to its frame, and the tasks in it are numbered in reading order.
+  const inGrid = new Set<NodeId>(grids.flatMap((g) => g.members));
+  const stepNumbers = new Map<NodeId, number>();
+  for (const g of grids) {
+    let step = 0;
+    for (const id of g.members) {
+      const member = nodes[id];
+      if (member && isTask(member)) stepNumbers.set(id, ++step);
+    }
   }
 
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -323,6 +266,12 @@ function render(doc: MindmapDocument | null) {
     minY = Math.min(minY, p.y - p.h / 2);
     maxY = Math.max(maxY, p.y + p.h / 2);
   }
+  for (const g of grids) {
+    minX = Math.min(minX, g.x);
+    maxX = Math.max(maxX, g.x + g.w);
+    minY = Math.min(minY, g.y);
+    maxY = Math.max(maxY, g.y + g.h);
+  }
 
   const PAD = 80;
   sceneSize = { w: maxX - minX + PAD * 2, h: maxY - minY + PAD * 2 };
@@ -331,6 +280,7 @@ function render(doc: MindmapDocument | null) {
   nodeBoxes.clear();
 
   let edges = "";
+  let gridEls = "";
   let flowLinksSvg = "";
   let nodeEls = "";
 
@@ -341,19 +291,12 @@ function render(doc: MindmapDocument | null) {
     const py = p.y + OFY;
     nodeBoxes.set(id, { x: px, y: py - p.h / 2, w: p.w, h: p.h });
 
-    // Draw cubic bezier tree edges to children
+    // Draw cubic bezier tree edges to children (grid members get one edge to their frame, below)
     for (const cid of node.children) {
       const cp = positions.get(cid);
-      if (!cp) continue;
-      const cpx = cp.x + OFX;
-      const cpy = cp.y + OFY;
       const childNode = nodes[cid];
-      const childStatus = childNode && isTask(childNode) ? childNode.status : undefined;
-      const mx = (px + p.w + cpx) / 2;
-      let edgeCls = "edge";
-      if (childStatus === "in_progress") edgeCls += " edge-active";
-      else if (childStatus === "completed") edgeCls += " edge-completed";
-      edges += `<path class="${edgeCls}" d="M${px + p.w},${py} C${mx},${py} ${mx},${cpy} ${cpx},${cpy}"/>`;
+      if (!cp || !childNode || inGrid.has(cid)) continue;
+      edges += edgePath(edgeClass([childNode]), px + p.w, py, cp.x + OFX, cp.y + OFY);
     }
 
     // Determine node classes
@@ -370,9 +313,11 @@ function render(doc: MindmapDocument | null) {
 
     const topY = py - p.h / 2;
     let cursorY = topY + 20;
+    // Agents often number steps themselves ("1. Configure…"); don't number those twice.
+    const step = /^\s*\d+[.)]\s/.test(node.label) ? undefined : stepNumbers.get(id);
 
     let innerContent = `
-      <text class="node-title" x="${px + 12}" y="${cursorY}">${escXml(truncate(node.label, 30))}</text>
+      <text class="node-title" x="${px + 12}" y="${cursorY}">${escXml(truncate(step ? `${step}. ${node.label}` : node.label, 30))}</text>
     `;
 
     // Status (tasks only) or Semantic Thinking Type row
@@ -421,6 +366,14 @@ function render(doc: MindmapDocument | null) {
       </g>`;
   }
 
+  for (const g of grids) {
+    const p = positions.get(g.parent);
+    if (!p) continue;
+    const members = g.members.flatMap((id) => nodes[id] ?? []);
+    edges += edgePath(edgeClass(members), p.x + OFX + p.w, p.y + OFY, g.x + OFX, g.y + OFY + g.h / 2);
+    gridEls += `<rect class="node-grid" x="${g.x + OFX}" y="${g.y + OFY}" width="${g.w}" height="${g.h}"/>`;
+  }
+
   // Draw directed concept / data-flow links (doc.links)
   for (const link of doc.links) {
     const pFrom = positions.get(link.from);
@@ -446,6 +399,17 @@ function render(doc: MindmapDocument | null) {
       cy = (y1 + y2) / 2;
       mx = x1 + 35 + pillW / 2;
       my = cy;
+    } else if (Math.abs(pFrom.y - pTo.y) < 20) {
+      // Cards side by side (e.g. in a grid row): arc over their tops, so the line and its label
+      // stay in the gap above the row instead of crossing a card
+      x1 = pFrom.x + OFX + pFrom.w / 2;
+      y1 = pFrom.y + OFY - pFrom.h / 2;
+      x2 = pTo.x + OFX + pTo.w / 2;
+      y2 = pTo.y + OFY - pTo.h / 2;
+      cx = (x1 + x2) / 2;
+      cy = Math.min(y1, y2) - 28;
+      mx = cx;
+      my = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
     } else if (sameColumn) {
       // Adjacent cards in the same column: connect bottom-center to top-center
       const goingDown = pTo.y >= pFrom.y;
@@ -492,6 +456,7 @@ function render(doc: MindmapDocument | null) {
     </defs>
     <g class="scene">
       ${edges}
+      ${gridEls}
       ${nodeEls}
       ${flowLinksSvg}
     </g>`;

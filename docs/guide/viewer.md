@@ -47,6 +47,8 @@ Use the view switcher in the header to pick what the canvas shows:
 
 Node cards are colored by status (in progress, completed) or by concept type (component, data flow, decision, hypothesis, risk). See the legend at the bottom of the canvas. Cards with logged changes show a tally such as `+2 ✱1 ⟲1`.
 
+The tree grows to the right. In the split view, plan tasks come before the architecture branch, so the mental model never splits the plan in two. A long run of sibling cards without children (7 or more, such as a flat plan) wraps into rows inside a dashed frame, read left to right and then top to bottom. Tasks in the frame are numbered in that order.
+
 Drag to pan and scroll to zoom. Scrolling zooms around the cursor. The controls at the bottom right are:
 
 - **− / +**: zoom around the middle of the canvas.

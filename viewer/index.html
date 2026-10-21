@@ -536,6 +536,17 @@
     stroke: var(--c-completed);
   }
 
+  /* A long run of leaf cards wrapped into rows (viewer/layout.ts); its edge ends at this frame. */
+  .node-grid {
+    fill: color-mix(in srgb, var(--edge) 10%, transparent);
+    stroke: var(--edge);
+    stroke-width: 1.25;
+    stroke-dasharray: 5 4;
+    rx: 14;
+    ry: 14;
+    pointer-events: none;
+  }
+
   /* Directed Concept / Flow Links */
   .flow-link {
     stroke: var(--c-flow);
