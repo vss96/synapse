@@ -92,21 +92,24 @@ async function handleGitSync(req: IncomingMessage, res: ServerResponse): Promise
   if (!request.success) return sendJson(res, 400, { error: "A valid mindmapId is required" });
   const { mindmapId, workspacePath } = request.data;
 
-  const doc = await store.load(mindmapId);
-  if (!doc) return sendJson(res, 404, { error: "Mindmap not found" });
+  const loaded = await store.load(mindmapId);
+  if (!loaded) return sendJson(res, 404, { error: "Mindmap not found" });
 
-  const repoPath = workspacePath || doc.workspacePath;
+  const repoPath = workspacePath || loaded.workspacePath;
   if (!repoPath) return sendJson(res, 400, { error: "This mindmap has no workspacePath to sync from" });
 
+  // Ask git first: store.update holds the mindmap's lock only for the quick change itself.
   const changes = await inspectGitChanges(repoPath);
-  if (changes.length > 0) {
+  if (changes.length === 0) return sendJson(res, 200, { synced: 0, mindmap: loaded });
+  const doc = await store.update(mindmapId, (doc) => {
     const target = fileTouchTarget(doc);
     for (const touch of changes) upsertFileTouch(target, touch);
     store.recordActivity(doc, `Synced ${changes.length} changed file(s) from git into "${target.label}"`, {
       nodeId: target.id,
     });
-    await store.save(doc);
-  }
+    return doc;
+  });
+  if (!doc) return sendJson(res, 404, { error: "Mindmap not found" });
   sendJson(res, 200, { synced: changes.length, mindmap: doc });
 }
 
