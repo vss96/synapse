@@ -143,6 +143,7 @@ function checkTree(doc: { nodes: Record<NodeId, MindmapNode>; links: MindmapLink
   const issue = (message: string, path: PropertyKey[]) => ctx.addIssue({ code: "custom", message, path });
   const { nodes } = doc;
 
+  // Object.entries and Object.keys widen keys to string; the keys of `nodes` are NodeIds.
   for (const [key, node] of Object.entries(nodes) as [NodeId, MindmapNode][]) {
     if (node.id !== key) issue(`Node stored under "${key}" has id "${node.id}"`, ["nodes", key, "id"]);
     if (node.type === "root" && key !== ROOT_ID) issue(`Only "${ROOT_ID}" may be the root`, ["nodes", key, "type"]);

@@ -76,6 +76,11 @@ function guiPath(): string | undefined {
   return [...new Set([...dirs, "/usr/local/bin", "/usr/bin", "/bin"])].join(":");
 }
 
+/** A JSON object, as opposed to an array, null or a primitive. */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 class ConfigParseError extends Error {}
 class AlreadyConfigured extends Error {}
 
@@ -85,7 +90,7 @@ async function readJsonConfig(file: string): Promise<Record<string, unknown>> {
   if (!raw.trim()) return {};
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    if (isJsonObject(parsed)) return parsed;
   } catch {
     // fall through
   }
@@ -108,7 +113,7 @@ async function writeJsonConfig(file: string, data: Record<string, unknown>): Pro
 
 function objectAt(parent: Record<string, unknown>, key: string): Record<string, unknown> {
   const value = parent[key];
-  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (isJsonObject(value)) return value;
   const created: Record<string, unknown> = {};
   parent[key] = created;
   return created;
@@ -159,7 +164,7 @@ const OPENCODE_ENTRY = { type: "local", command: [...SERVER_COMMAND] };
 const CLAUDE_CODE_ADD = ["mcp", "add", "--scope", "user", SERVER_NAME, "--", ...SERVER_COMMAND];
 const CODEX_ADD = ["mcp", "add", SERVER_NAME, "--", ...SERVER_COMMAND];
 
-export const CLIENTS: Client[] = [
+export const CLIENTS: readonly Client[] = [
   {
     id: "claude-code",
     name: "Claude Code",
@@ -224,6 +229,7 @@ export const CLIENTS: Client[] = [
   },
 ];
 
+export const isClientId = (id: string): id is ClientId => CLIENTS.some((c) => c.id === id);
 
 /* ------------------------------------------------------------------ */
 /*  init                                                               */
@@ -242,9 +248,8 @@ export interface InitOptions {
 export type InitOutcome = "configured" | "already-configured" | "skipped" | "failed" | "dry-run";
 
 export async function init(options: InitOptions = {}): Promise<Record<string, InitOutcome>> {
-  const selected = options.clients
-    ? CLIENTS.filter((c) => options.clients!.includes(c.id))
-    : CLIENTS.filter((c) => c.detected());
+  const { clients } = options;
+  const selected = clients ? CLIENTS.filter((c) => clients.includes(c.id)) : CLIENTS.filter((c) => c.detected());
 
   if (selected.length === 0) {
     console.log("No supported MCP clients found (Claude Code, Claude Desktop, Cursor, OpenCode, Codex).");
