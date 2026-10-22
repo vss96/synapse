@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_SCALE, MIN_SCALE, centerCamera, fitCamera, fitScale, zoomAt, type Camera } from "../viewer/camera.js";
+import { MAX_SCALE, MIN_SCALE, READABLE_SCALE, centerCamera, fitCamera, fitScale, revealCamera, zoomAt, type Box, type Camera } from "../viewer/camera.js";
 
 const toScreen = (cam: Camera, x: number, y: number) => ({ x: x * cam.scale + cam.tx, y: y * cam.scale + cam.ty });
 
@@ -34,5 +34,42 @@ describe("viewer camera", () => {
     const cam = centerCamera(1000, 50, { w: 400, h: 300 });
     expect(cam.scale).toBe(1);
     expect(toScreen(cam, 1000, 50)).toEqual({ x: 200, y: 150 });
+  });
+
+  describe("revealing cards", () => {
+    const view = { w: 800, h: 600 };
+    const card: Box = { x: 1000, y: 2000, w: 235, h: 100 };
+    const onScreen = (cam: Camera, b: Box, margin = 40) => {
+      const tl = toScreen(cam, b.x, b.y);
+      const br = toScreen(cam, b.x + b.w, b.y + b.h);
+      return tl.x >= margin - 1e-9 && tl.y >= margin - 1e-9 && br.x <= view.w - margin + 1e-9 && br.y <= view.h - margin + 1e-9;
+    };
+
+    it("leaves the camera alone when the card is already in view", () => {
+      const cam = centerCamera(card.x + 100, card.y + 50, view);
+      expect(revealCamera(cam, card, view)).toBe(cam);
+    });
+
+    it("pans to an off-screen card without changing the zoom", () => {
+      const cam = { scale: 1.5, tx: 0, ty: 0 };
+      const next = revealCamera(cam, card, view);
+      expect(next.scale).toBe(1.5);
+      expect(onScreen(next, card)).toBe(true);
+    });
+
+    it("zooms in from an unreadable scale, but only to a readable one", () => {
+      const cam = fitCamera({ w: 4000, h: 6000 }, view);
+      expect(cam.scale).toBeLessThan(READABLE_SCALE);
+      const next = revealCamera(cam, card, view);
+      expect(next.scale).toBe(READABLE_SCALE);
+      expect(onScreen(next, card)).toBe(true);
+    });
+
+    it("zooms out as far as a group of cards needs", () => {
+      const group: Box = { x: 0, y: 0, w: 900, h: 2000 };
+      const next = revealCamera({ scale: 1, tx: 0, ty: 0 }, group, view);
+      expect(next.scale).toBeCloseTo((view.h - 80) / group.h);
+      expect(onScreen(next, group)).toBe(true);
+    });
   });
 });

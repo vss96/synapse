@@ -47,6 +47,8 @@ Use the view switcher in the header to pick what the canvas shows:
 
 Node cards are colored by status (in progress, completed) or by concept type (component, data flow, decision, hypothesis, risk). See the legend at the bottom of the canvas. Cards with logged changes show a tally such as `+2 ✱1 ⟲1`.
 
+The tree grows to the right. In the split view, plan tasks come before the architecture branch, so the mental model never splits the plan in two. A long run of sibling cards without children (7 or more, such as a flat plan) wraps into rows inside a dashed frame, read left to right and then top to bottom. Tasks in the frame are numbered in that order.
+
 Drag to pan and scroll to zoom. Scrolling zooms around the cursor. The controls at the bottom right are:
 
 - **− / +**: zoom around the middle of the canvas.
@@ -54,6 +56,8 @@ Drag to pan and scroll to zoom. Scrolling zooms around the cursor. The controls 
 - **◎ Focus**: center the task the agent is working on (the most recently updated task in progress) at full size. If no task in the current view is in progress, it shows the root at the left edge.
 
 When you open a session or switch views, the canvas fits the whole map if its cards are still readable that way. Otherwise it focuses the active task. When the agent starts a different task, the canvas moves to it. Other live updates leave the canvas where you put it. The selected node has a blue ring around it.
+
+Picking something in the sidebar brings it into view: jumping along a link in the Inspector, clicking a file, or picking a change kind in the Changes tab. If the cards are already in view at a readable size, the canvas stays put. Otherwise it pans to them, zooming out only as far as needed to show them all, or zooming in from a far zoomed-out view until they're readable.
 
 ## Theme and narrow windows
 

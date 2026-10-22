@@ -44,6 +44,8 @@ src/
 viewer/
   index.html       Viewer markup and CSS
   app.ts           Browser code (strict TypeScript, bundled by esbuild to dist/web/app.js)
+  layout.ts        Tree layout: card positions and wrapped grids (pure, unit-tested)
+  camera.ts        Pan/zoom math (pure, unit-tested)
   tsconfig.json    DOM type-check for app.ts
 tests/             bun:test suites: model, store-renderer, tools, viewer, installer
 docs/              This site (VitePress); docs/public holds the logo and favicon
