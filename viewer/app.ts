@@ -10,6 +10,7 @@ import {
 import type { CodeChange, FileTouch, MindmapDocument, MindmapListItem, MindmapNode, NodeId } from "../src/model/schema.js";
 import { READABLE_SCALE, centerCamera, fitCamera, fitScale, revealCamera, zoomAt, type Box, type Camera, type Size } from "./camera.js";
 import { ROOT, VIEW_MODES, layoutTree, type ViewMode } from "./layout.js";
+import { dayLabel } from "./time.js";
 
 const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
 type SidebarTab = (typeof SIDEBAR_TABS)[number];
@@ -612,13 +613,6 @@ function renderSidebar(doc: MindmapDocument | null) {
       ${filesHtml}
     `;
 
-    container.querySelectorAll<HTMLElement>(".link-item").forEach((el) => {
-      el.addEventListener("click", () => {
-        selectedNodeId = el.dataset.jumpNode ?? ROOT;
-        render(currentDoc);
-        revealNodes([selectedNodeId]);
-      });
-    });
   } else if (activeTab === "files") {
     const { fileMap } = collectStats(doc);
     if (fileMap.size === 0) {
@@ -686,17 +680,28 @@ function renderSidebar(doc: MindmapDocument | null) {
       container.innerHTML = `<div style="color:var(--muted);font-size:12.5px;">No activity recorded yet.</div>`;
       return;
     }
+    // Newest first, under a heading for each day. Entries about a node that still exists jump to it.
+    let day = "";
     container.innerHTML = log
-      .map(
-        (entry) => `
-      <div class="activity-item">
-        <div class="activity-time">${new Date(entry.timestamp).toLocaleTimeString()}</div>
-        <div>${escXml(entry.message)}</div>
-      </div>`
-      )
+      .map((entry) => {
+        const label = dayLabel(entry.timestamp);
+        const heading = label === day ? "" : `<div class="section-title">${escXml(label)}</div>`;
+        day = label;
+        const time = new Date(entry.timestamp);
+        const body = `
+          <div class="activity-time" title="${escXml(time.toLocaleString())}">${escXml(time.toLocaleTimeString())}</div>
+          <div>${escXml(entry.message)}</div>`;
+        const node = entry.nodeId ? nodeById(doc, entry.nodeId) : undefined;
+        return node
+          ? `${heading}<button class="activity-item ${node.id === selectedNodeId ? "active" : ""}" data-jump-node="${escXml(node.id)}" title="Show “${escXml(node.label)}” on the map">${body}</button>`
+          : `${heading}<div class="activity-item">${body}</div>`;
+      })
       .join("");
   }
 
+  container.querySelectorAll<HTMLElement>("[data-jump-node]").forEach((el) => {
+    el.addEventListener("click", () => showNode(el.dataset.jumpNode ?? ROOT));
+  });
   container.querySelectorAll<HTMLElement>(".file-item").forEach((el) => {
     el.addEventListener("click", () => {
       const fp = el.dataset.filePath ?? null;
@@ -725,18 +730,29 @@ document.querySelectorAll<HTMLElement>(".sidebar-tab").forEach((btn) => {
 });
 
 // View Mode Switcher (Split / Plan / HLD)
+function setViewMode(mode: ViewMode) {
+  viewMode = mode;
+  document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mode === viewMode)
+  );
+  viewPending = true;
+  render(currentDoc);
+}
+
 document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((btn) => {
   btn.addEventListener("click", () => {
     const mode = VIEW_MODES.find((m) => m === btn.dataset.mode);
-    if (!mode) return;
-    viewMode = mode;
-    document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((b) =>
-      b.classList.toggle("active", b.dataset.mode === viewMode)
-    );
-    viewPending = true;
-    render(currentDoc);
+    if (mode) setViewMode(mode);
   });
 });
+
+/** Select a node picked in the sidebar and bring it into view, switching to the split view if this view hides it. */
+function showNode(id: string) {
+  selectedNodeId = id;
+  if (nodeBoxes.has(id) || viewMode === "all") render(currentDoc);
+  else setViewMode("all");
+  revealNodes([id]);
+}
 
 // ── Pan & Zoom ──────────────────────────────────────────────────
 const viewport = byId("viewport");

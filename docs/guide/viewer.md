@@ -57,7 +57,7 @@ Drag to pan and scroll to zoom. Scrolling zooms around the cursor. The controls 
 
 When you open a session or switch views, the canvas fits the whole map if its cards are still readable that way. Otherwise it focuses the active task. When the agent starts a different task, the canvas moves to it. Other live updates leave the canvas where you put it. The selected node has a blue ring around it.
 
-Picking something in the sidebar brings it into view: jumping along a link in the Inspector, clicking a file, or picking a change kind in the Changes tab. If the cards are already in view at a readable size, the canvas stays put. Otherwise it pans to them, zooming out only as far as needed to show them all, or zooming in from a far zoomed-out view until they're readable.
+Picking something in the sidebar brings it into view: jumping along a link in the Inspector, clicking an Activity entry, clicking a file, or picking a change kind in the Changes tab. If the node you jump to is hidden in the current view, the view switches to the split view. If the cards are already in view at a readable size, the canvas stays put. Otherwise it pans to them, zooming out only as far as needed to show them all, or zooming in from a far zoomed-out view until they're readable.
 
 ## Theme and narrow windows
 
@@ -89,7 +89,9 @@ Filter chips at the top (**All**, **+ Added**, **~ Modified**, **✱ Fixed**, **
 
 ## Activity tab
 
-The Activity tab is a timeline of everything that happened in the session, newest first: mindmap creation, plan status changes, HLD mappings, links, file touches with change tallies, and git syncs. Each session keeps its latest 100 entries.
+The Activity tab is a timeline of everything that happened in the session, newest first, under a heading for each day (**Today**, **Yesterday**, or the date): mindmap creation, plan status changes, HLD mappings, links, file touches with change tallies, and git syncs. Hover over a time to see the full date. Each session keeps its latest 100 entries.
+
+Click an entry to select its node and bring it into view. The tab stays open, so you can step through entries one by one, and the entries about the selected node are marked with a blue bar. Entries about a node that has since been removed can't be clicked.
 
 ![Activity feed](../screenshots/activity-feed.png)
 
