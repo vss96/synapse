@@ -8,7 +8,18 @@ import {
   type TaskStatus,
 } from "../src/model/kinds.js";
 import type { CodeChange, FileTouch, MindmapDocument, MindmapListItem, MindmapNode, NodeId } from "../src/model/schema.js";
-import { READABLE_SCALE, centerCamera, fitCamera, fitScale, revealCamera, zoomAt, type Box, type Camera, type Size } from "./camera.js";
+import {
+  READABLE_SCALE,
+  centerCamera,
+  fitCamera,
+  fitScale,
+  revealCamera,
+  wheelZoomFactor,
+  zoomAt,
+  type Box,
+  type Camera,
+  type Size,
+} from "./camera.js";
 import { ROOT, VIEW_MODES, layoutTree, type ViewMode } from "./layout.js";
 
 const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
@@ -846,7 +857,7 @@ window.addEventListener("mouseup", () => { panning = false; });
 viewport.addEventListener("wheel", (e) => {
   e.preventDefault();
   const r = svgEl.getBoundingClientRect();
-  camera = zoomAt(camera, e.deltaY > 0 ? 0.92 : 1.08, e.clientX - r.left, e.clientY - r.top);
+  camera = zoomAt(camera, wheelZoomFactor(e), e.clientX - r.left, e.clientY - r.top);
   applyTransform();
 }, { passive: false });
 
