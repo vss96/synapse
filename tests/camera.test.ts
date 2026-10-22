@@ -1,5 +1,17 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_SCALE, MIN_SCALE, READABLE_SCALE, centerCamera, fitCamera, fitScale, revealCamera, zoomAt, type Box, type Camera } from "../viewer/camera.js";
+import {
+  MAX_SCALE,
+  MIN_SCALE,
+  READABLE_SCALE,
+  centerCamera,
+  fitCamera,
+  fitScale,
+  revealCamera,
+  wheelZoomFactor,
+  zoomAt,
+  type Box,
+  type Camera,
+} from "../viewer/camera.js";
 
 const toScreen = (cam: Camera, x: number, y: number) => ({ x: x * cam.scale + cam.tx, y: y * cam.scale + cam.ty });
 
@@ -19,6 +31,35 @@ describe("viewer camera", () => {
   it("clamps zoom and keeps the anchor at the limit", () => {
     expect(zoomAt({ scale: 3, tx: 0, ty: 0 }, 10, 0, 0).scale).toBe(MAX_SCALE);
     expect(zoomAt({ scale: 0.1, tx: 0, ty: 0 }, 0.01, 0, 0).scale).toBe(MIN_SCALE);
+  });
+
+  describe("wheel zoom", () => {
+    const px = (deltaY: number, ctrlKey = false) => wheelZoomFactor({ deltaY, deltaMode: 0, ctrlKey });
+
+    it("zooms out on scroll down and in on scroll up, and not at all on sideways scrolling", () => {
+      expect(px(100)).toBeLessThan(1);
+      expect(px(-100)).toBeGreaterThan(1);
+      expect(px(0)).toBe(1);
+    });
+
+    it("follows how far the wheel moved, so many small trackpad events add up to one big one", () => {
+      expect(px(4) ** 25).toBeCloseTo(px(100));
+      expect(px(4)).toBeGreaterThan(0.99); // one trackpad event barely zooms
+    });
+
+    it("zooms a mouse wheel notch by a noticeable but modest step, in pixels or lines", () => {
+      for (const notch of [px(100), wheelZoomFactor({ deltaY: 3, deltaMode: 1, ctrlKey: false })]) {
+        expect(notch).toBeGreaterThan(0.75);
+        expect(notch).toBeLessThan(0.95);
+      }
+    });
+
+    it("counts a pinch (ctrlKey) more, but caps any single event", () => {
+      expect(px(5, true)).toBeLessThan(px(5));
+      expect(px(10_000)).toBeCloseTo(Math.SQRT1_2);
+      expect(px(-100, true)).toBeCloseTo(Math.SQRT2);
+      expect(wheelZoomFactor({ deltaY: 1, deltaMode: 2, ctrlKey: false })).toBeCloseTo(Math.SQRT1_2);
+    });
   });
 
   it("fits the whole scene, centred, without enlarging small scenes", () => {
