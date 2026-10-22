@@ -59,6 +59,15 @@ When you open a session or switch views, the canvas fits the whole map if its ca
 
 Picking something in the sidebar brings it into view: jumping along a link in the Inspector, clicking an Activity entry, clicking a file, or picking a change kind in the Changes tab. If the node you jump to is hidden in the current view, the view switches to the split view. If the cards are already in view at a readable size, the canvas stays put. Otherwise it pans to them, zooming out only as far as needed to show them all, or zooming in from a far zoomed-out view until they're readable.
 
+## Find on the map
+
+Press <kbd>/</kbd>, or click the box at the top left of the canvas, and type part of a card's label, a file path, a symbol name, or a node ID. Every matching card is highlighted. The first match is selected and brought into view, unless the selected card already matches. The box shows which match is selected, for example **2 of 5**.
+
+- <kbd>Enter</kbd> / <kbd>Shift</kbd> <kbd>Enter</kbd>: select the next or previous match. Matches are in outline order: a card, then its children, top to bottom. Matches hidden in the current view come last, and going to one switches to the split view.
+- <kbd>Esc</kbd>: clear the box and the highlight.
+
+A file path or symbol matches every card that logged it, including the old names of renamed files and symbols. The highlight stays while you keep typing and when live updates arrive.
+
 ## Theme and narrow windows
 
 The viewer follows your system's light or dark setting.
