@@ -49,7 +49,7 @@ Node cards are colored by status (in progress, completed) or by concept type (co
 
 The tree grows to the right. In the split view, plan tasks come before the architecture branch, so the mental model never splits the plan in two. A long run of sibling cards without children (7 or more, such as a flat plan) wraps into rows inside a dashed frame, read left to right and then top to bottom. Tasks in the frame are numbered in that order.
 
-Drag to pan, and scroll or pinch to zoom. Zooming centers on the cursor and follows how far you scroll, so a trackpad zooms as smoothly as a mouse wheel. Scrolling sideways doesn't zoom. The controls at the bottom right are:
+Drag to pan, and scroll to zoom. Zooming centers on the cursor and follows how far you scroll, so a trackpad zooms as smoothly as a mouse wheel. Scrolling sideways doesn't zoom. Pinching a trackpad zooms the canvas the same way in Chrome, Edge, and Firefox. In Safari, a pinch zooms the whole page instead. The controls at the bottom right are:
 
 - **− / +**: zoom around the middle of the canvas.
 - **Fit**: show the whole map.
