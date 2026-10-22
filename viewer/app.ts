@@ -21,6 +21,7 @@ import {
   type Size,
 } from "./camera.js";
 import { ROOT, VIEW_MODES, layoutTree, type ViewMode } from "./layout.js";
+import { matchesQuery } from "./search.js";
 import { dayLabel } from "./time.js";
 
 const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
@@ -118,6 +119,8 @@ let activeTab: SidebarTab = "inspector";
 let viewMode: ViewMode = "all";
 let sessions: MindmapListItem[] = [];
 let sessionQuery = "";
+/** The text in the canvas's find box; matching cards are highlighted. */
+let mapQuery = "";
 
 /** Looks up a node by an untrusted id (URL, DOM attribute). */
 function nodeById(doc: MindmapDocument, id: string): MindmapNode | undefined {
@@ -217,11 +220,12 @@ function escXml(s: unknown) {
     .replace(/"/g, "&quot;");
 }
 
-/** Whether the node touched the file or logged the change kind picked in the sidebar. */
+/** Whether the node touched the file or logged the change kind picked in the sidebar, or matches the find box. */
 function isHighlighted(node: MindmapNode) {
   return (
     (highlightedFilePath !== null && node.files.some((f) => f.path === highlightedFilePath)) ||
-    (changeKindFilter !== null && nodeChanges(node).some((c) => kindOf(c) === changeKindFilter))
+    (changeKindFilter !== null && nodeChanges(node).some((c) => kindOf(c) === changeKindFilter)) ||
+    matchesQuery(node, mapQuery)
   );
 }
 
@@ -249,6 +253,7 @@ function render(doc: MindmapDocument | null) {
   if (!doc || !doc.nodes[ROOT]) {
     svg.innerHTML = "";
     empty.style.display = "flex";
+    updateMapSearchCount(null);
     return;
   }
   empty.style.display = "none";
@@ -480,6 +485,7 @@ function render(doc: MindmapDocument | null) {
   viewPending = false;
   lastActiveId = active;
   applyTransform();
+  updateMapSearchCount(doc);
 
   document.querySelectorAll<SVGGElement>(".node-group").forEach((el) => {
     el.addEventListener("click", (e) => {
@@ -857,7 +863,7 @@ const overlayObserver = new ResizeObserver(fitAboveOverlays);
 [viewport, ...bottomOverlays].forEach((el) => overlayObserver.observe(el));
 
 viewport.addEventListener("mousedown", (e) => {
-  if (e.target instanceof Element && (e.target.closest(".node-group") || e.target.closest(".controls"))) return;
+  if (e.target instanceof Element && (e.target.closest(".node-group") || e.target.closest(".controls") || e.target.closest(".map-search"))) return;
   panning = true;
   startX = e.clientX; startY = e.clientY;
   startTx = camera.tx; startTy = camera.ty;
@@ -876,6 +882,74 @@ viewport.addEventListener("wheel", (e) => {
   camera = zoomAt(camera, wheelZoomFactor(e), e.clientX - r.left, e.clientY - r.top);
   applyTransform();
 }, { passive: false });
+
+// ── Find on map ─────────────────────────────────────────────────
+const mapSearch = byId("map-search", HTMLInputElement);
+const mapSearchCount = byId("map-search-count");
+
+/** Cards matching the find box: the ones drawn in this view in outline order, then the ones it hides. */
+function mapMatches(doc: MindmapDocument | null): string[] {
+  if (!doc || !mapQuery.trim()) return [];
+  const ids = [...nodeBoxes.keys(), ...Object.keys(doc.nodes).filter((id) => !nodeBoxes.has(id))];
+  return ids.filter((id) => {
+    const node = nodeById(doc, id);
+    return node !== undefined && matchesQuery(node, mapQuery);
+  });
+}
+
+function updateMapSearchCount(doc: MindmapDocument | null) {
+  const matches = mapMatches(doc);
+  const i = matches.indexOf(selectedNodeId);
+  mapSearchCount.textContent = !mapQuery.trim()
+    ? ""
+    : matches.length === 0
+      ? "No matches"
+      : i >= 0
+        ? `${i + 1} of ${matches.length}`
+        : `${matches.length} found`;
+}
+
+/** Select the match after (or before) the selected card, wrapping around. */
+function stepMatch(delta: 1 | -1) {
+  const matches = mapMatches(currentDoc);
+  if (matches.length === 0) return;
+  const i = matches.indexOf(selectedNodeId);
+  const next = i < 0 ? (delta === 1 ? 0 : matches.length - 1) : (i + delta + matches.length) % matches.length;
+  const id = matches[next];
+  if (id) showNode(id);
+}
+
+mapSearch.addEventListener("input", () => {
+  mapQuery = mapSearch.value;
+  // Find as you type: keep the selected card while it still matches, else go to the first match.
+  const matches = mapMatches(currentDoc);
+  const first = matches[0];
+  if (first && !matches.includes(selectedNodeId)) showNode(first);
+  else render(currentDoc);
+});
+
+mapSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    stepMatch(e.shiftKey ? -1 : 1);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    mapSearch.value = "";
+    mapQuery = "";
+    mapSearch.blur();
+    render(currentDoc);
+  }
+});
+
+// "/" focuses the find box, unless you're typing somewhere else.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable)) return;
+  e.preventDefault();
+  mapSearch.focus();
+  mapSearch.select();
+});
 
 // ── Load & Refresh Mindmaps ─────────────────────────────────────
 function loadMindmap(doc: MindmapDocument) {

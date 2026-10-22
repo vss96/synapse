@@ -34,7 +34,7 @@ Visualize how the agent understands the system architecture, data flows, design 
 ![Code Mental Model (HLD) View](docs/screenshots/hld-mental-model.png)
 
 ### 2. Split View (Plan Tree + Code Mental Model)
-See the full execution plan and the architectural mental model side-by-side in a single live canvas. The **Sessions** panel on the left lists every mindmap with its active task, progress, and a live dot; filter it or switch with **⌥↑/⌥↓**:
+See the full execution plan and the architectural mental model side-by-side in a single live canvas. The **Sessions** panel on the left lists every mindmap with its active task, progress, and a live dot; filter it or switch with **⌥↑/⌥↓**. Press **/** to find a card, file or symbol on the map:
 
 ![Split View – Plan + HLD](docs/screenshots/split-view.png)
 
