@@ -28,6 +28,28 @@ export function zoomAt(cam: Camera, factor: number, cx: number, cy: number): Cam
   return { scale, tx: cx - (cx - cam.tx) * k, ty: cy - (cy - cam.ty) * k };
 }
 
+/** The part of a WheelEvent that decides the zoom; `deltaMode` is 0 for pixels, 1 for lines, 2 for pages. */
+export interface WheelInput {
+  deltaY: number;
+  deltaMode: number;
+  ctrlKey: boolean;
+}
+
+/** One wheel event never zooms by more than this factor (or its inverse). */
+const MAX_WHEEL_ZOOM = Math.SQRT2;
+
+/**
+ * The zoom factor for one wheel event, proportional to how far it scrolled (the rate d3-zoom uses),
+ * so a trackpad's stream of small events zooms as smoothly as a mouse wheel's notches. Trackpad
+ * pinches arrive with `ctrlKey` and much smaller deltas, so they count ten times as much. Sideways
+ * scrolling doesn't zoom.
+ */
+export function wheelZoomFactor({ deltaY, deltaMode, ctrlKey }: WheelInput): number {
+  const perUnit = deltaMode === 1 ? 0.05 : deltaMode === 2 ? 1 : 0.002;
+  const factor = 2 ** (-deltaY * perUnit * (ctrlKey ? 10 : 1));
+  return Math.min(MAX_WHEEL_ZOOM, Math.max(1 / MAX_WHEEL_ZOOM, factor));
+}
+
 /** The scale that fits the whole scene into the viewport, never enlarging past 1. */
 export function fitScale(scene: Size, view: Size): number {
   if (scene.w <= 0 || scene.h <= 0 || view.w <= 0 || view.h <= 0) return 1;
