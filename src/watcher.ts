@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { watch, existsSync, statSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as store from "./store.js";
-import { fileTouchTarget, upsertFileTouches } from "./model/file-touch.js";
+import { fileTouchTarget, isFinished, upsertFileTouches } from "./model/file-touch.js";
 import { now, type EditTouch, type MindmapDocument, type MindmapId } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
@@ -152,6 +152,7 @@ export function stopWorkspaceWatcher(mindmapId: MindmapId): void {
 /**
  * Record file changes in `workspacePath` into `mindmapId`. A directory has one watcher, so when it is
  * already watched its changes go to `mindmapId` from now on: the mindmap last used for that workspace.
+ * It stops at the next change after every task in the mindmap is completed, until a tool reopens it.
  */
 export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: string): void {
   if (!workspacePath || !existsSync(workspacePath)) return;
@@ -185,11 +186,11 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     if (batch.size === 0 || !current()) return;
     const { mindmapId } = entry;
 
-    // Archived (in the viewer, another process) or deleted mindmaps stop collecting this workspace's changes.
+    // Archived (in the viewer, another process), deleted or finished mindmaps stop collecting this workspace's changes.
     const record = async (change: (doc: MindmapDocument) => void) => {
       if (!current()) return; // stopped while git ran
       const recorded = await store.update(mindmapId, (doc) => {
-        if (doc.archivedAt) return false;
+        if (doc.archivedAt || isFinished(doc)) return false;
         change(doc);
         return true;
       });

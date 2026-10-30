@@ -2,7 +2,7 @@ import { z } from "zod";
 import * as store from "./store.js";
 import { render } from "./renderer.js";
 import { ensureWorkspaceWatcher, inspectGitChanges, stopWorkspaceWatcher } from "./watcher.js";
-import { fileTouchTarget, mergeChanges, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
+import { fileTouchTarget, isFinished, mergeChanges, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
 import { CHANGE_KINDS, FILE_ACTIONS, LINK_STYLES, NODE_TYPES, TASK_STATUSES, isConcept, isTask, isTaskType, type ChildNodeType, type LinkStyle, type TaskStatus } from "./model/kinds.js";
 import { attachChild, createChild, reparent, retype } from "./model/node.js";
 import {
@@ -88,12 +88,12 @@ async function updateMindmap<T extends Ack>(id: MindmapId, mutate: (doc: Mindmap
   let workspacePath: string | undefined;
   const result = await store.update(id, (doc) => {
     const reply = mutate(doc);
-    if (!doc.archivedAt) workspacePath = doc.workspacePath;
+    if (!doc.archivedAt && !isFinished(doc)) workspacePath = doc.workspacePath;
     return reply;
   });
   if (!result) throw new ToolError(`Mindmap "${id}" not found.`);
   // The mindmap an agent changes is the one it's working on, so its workspace's file changes go there,
-  // even when an earlier server process created it.
+  // even when an earlier server process created it. A note on a finished mindmap doesn't reopen it.
   ensureWorkspaceWatcher(id, workspacePath);
   return result;
 }

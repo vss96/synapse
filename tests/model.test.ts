@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { combineTouches, fileTouchTarget, upsertFileTouch, upsertFileTouches } from "../src/model/file-touch.js";
+import { combineTouches, fileTouchTarget, isFinished, upsertFileTouch, upsertFileTouches } from "../src/model/file-touch.js";
 import { isTask } from "../src/model/kinds.js";
 import { reparent, retype } from "../src/model/node.js";
 import {
@@ -173,6 +173,26 @@ describe("model: file touches", () => {
     expect(fileTouchTarget(doc)).toBe(active);
     expect(MindmapDocument.safeParse(doc).success).toBe(true);
   });
+});
+
+describe("model: finished mindmaps", () => {
+  it("is finished once it has tasks and all of them are completed", () => {
+    const doc = emptyDoc();
+    addChild(doc, { type: "component", label: "Gateway" });
+    addChild(doc, { type: "note", label: "Idea" });
+    expect(isFinished(doc)).toBe(false); // no tasks: nothing has been finished
+    addChild(doc, { type: "task", label: "Done", status: "completed" });
+    expect(isFinished(doc)).toBe(true);
+  });
+
+  for (const status of ["planned", "in_progress", "blocked"] as const) {
+    it(`isn't finished while a task is ${status}`, () => {
+      const doc = emptyDoc();
+      addChild(doc, { type: "task", label: "Done", status: "completed" });
+      addChild(doc, { type: "task", label: "Open", status });
+      expect(isFinished(doc)).toBe(false);
+    });
+  }
 });
 
 describe("model: nodes", () => {

@@ -234,6 +234,47 @@ describe("workspace watcher", () => {
     assert.deepEqual(touched((await store.load(id))!), []);
   }, 30000);
 
+  it("stops recording into a mindmap once all its tasks are completed", async () => {
+    const { repoDir } = await makeRepo("finished");
+    const id = await createMindmap({ title: "Finished", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    const task = Object.values((await store.load(id))!.nodes).find((n) => n.label === "Work")!;
+    await callTool("update_plan_status", { mindmapId: id, nodeId: task.id, status: "completed" });
+    await settle();
+
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await eventually(id, () => assert.equal(watchedMindmap(repoDir), undefined));
+    const doc = (await store.load(id))!;
+    assert.deepEqual(touched(doc), []);
+    assert.ok(!Object.values(doc.nodes).some((n) => n.label === "Touched Files"));
+
+    // New work reopens it, and the tool call that adds the work starts the watcher again
+    await callTool("add_node", { mindmapId: id, parentId: "root", label: "Follow-up", status: "in_progress" });
+    await settle();
+    await writeFile(path.join(repoDir, "b.ts"), "export const b = 2;\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:b.ts"]));
+  }, 30000);
+
+  it("keeps recording into a mindmap with no tasks yet", async () => {
+    const { repoDir } = await makeRepo("no-tasks");
+    const id = await createMindmap({ title: "No tasks", workspacePath: repoDir });
+    await settle();
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]));
+  }, 30000);
+
+  it("leaves the workspace with the mindmap in use when a tool changes a finished one", async () => {
+    const { repoDir } = await makeRepo("finished-note");
+    const done = await createMindmap({ title: "Done", workspacePath: repoDir, initialPlan: [{ label: "Old work", status: "completed" }] });
+    const active = await createMindmap({ title: "Active", workspacePath: repoDir, initialPlan: [{ label: "New work", status: "in_progress" }] });
+    await settle();
+
+    await callTool("add_node", { mindmapId: done, parentId: "root", label: "A note for later", type: "note" });
+    assert.equal(watchedMindmap(repoDir), active);
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await eventually(active, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]));
+    assert.deepEqual(touched((await store.load(done))!), []);
+  }, 30000);
+
   it("stops watching when its mindmap is deleted", async () => {
     const { repoDir } = await makeRepo("deleted");
     const id = await createMindmap({ title: "Deleted", workspacePath: repoDir });

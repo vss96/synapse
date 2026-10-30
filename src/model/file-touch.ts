@@ -66,6 +66,12 @@ export function upsertFileTouch(node: MindmapNode, touch: FileTouch): void {
   upsertFileTouches(node, [touch]);
 }
 
+/** Whether a mindmap's work is done: it has tasks and all are completed. With no tasks, it hasn't started. */
+export function isFinished(doc: MindmapDocument): boolean {
+  const tasks = Object.values(doc.nodes).filter(isTask);
+  return tasks.length > 0 && tasks.every((n) => n.status === "completed");
+}
+
 const TOUCHED_FILES_LABEL = "Touched Files";
 
 /**
