@@ -96,6 +96,14 @@ export async function repoRoot(dir: string): Promise<string | undefined> {
   return parent && ((await repoRoot(parent)) ?? parent);
 }
 
+/** What `read` found, or null if the mindmap can't be read: to the watcher, that's the same as one that's gone. */
+function ifReadable<T>(read: Promise<T | null>): Promise<T | null> {
+  return read.catch((err: unknown) => {
+    if (err instanceof store.UnreadableMindmapError) return null;
+    throw err;
+  });
+}
+
 /** How long after a checkout, rebase, reset, merge or pull its file events may still arrive. */
 const VCS_SETTLE_MS = 30_000;
 
@@ -217,16 +225,13 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     // Archived (in the viewer, another process), deleted, finished or unreadable mindmaps stop collecting this workspace's changes.
     const record = async (change: (doc: MindmapDocument) => void) => {
       if (!current()) return; // stopped while git ran
-      const recorded = await store
-        .update(mindmapId, (doc) => {
+      const recorded = await ifReadable(
+        store.update(mindmapId, (doc) => {
           if (!collectsWorkspaceChanges(doc)) return false;
           change(doc);
           return true;
-        })
-        .catch((err: unknown) => {
-          if (err instanceof store.UnreadableMindmapError) return false;
-          throw err;
-        });
+        }),
+      );
       if (!recorded) stopWorkspaceWatcher(mindmapId);
     };
 
@@ -237,7 +242,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     const tracked = await gitListed(resolved, ["ls-files"], unignored.map(([p]) => p));
     // `git rm` has already taken a file out of the index, so a deleted path the mindmap lists counts as tracked.
     // No other deleted path does: removing node_modules mustn't reach the rebase and churn counts below.
-    const mindmap = await store.load(mindmapId).catch(() => null); // `record` stops the watcher if it can't be read
+    const mindmap = await ifReadable(store.load(mindmapId));
     const listed = mindmap ? recordedPaths(mindmap) : new Set<string>();
     const entries = unignored.filter(([p]) => !shouldIgnorePath(p, tracked.has(p) || (listed.has(p) && !existsSync(path.join(resolved, p)))));
     const paths = entries.map(([p]) => p);
