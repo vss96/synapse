@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { readdir, readFile, writeFile, mkdir, unlink, rename, open, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { errorCode } from "./errors.js";
 import { isTask } from "./model/kinds.js";
-import { MindmapDocument, now, type MindmapId, type MindmapListItem, type NodeId } from "./model/schema.js";
+import { MindmapDocument, now, type MindmapId, type MindmapList, type MindmapListItem, type NodeId, type UnreadableMindmap } from "./model/schema.js";
 
 /** Where mindmaps are stored: $SYNAPSE_DATA_DIR, or ~/.synapse/data (shared by the MCP server and the viewer). */
 export function getDataDir(): string {
@@ -25,24 +26,51 @@ export function recordActivity(doc: MindmapDocument, message: string, extra?: { 
   if (doc.activityLog.length > 100) doc.activityLog.length = 100;
 }
 
+/** A mindmap file exists but can't be loaded: it can't be opened, its JSON is damaged, or it isn't a valid mindmap. */
+export class UnreadableMindmapError extends Error {
+  constructor(
+    readonly id: string,
+    readonly reason: string,
+  ) {
+    super(`Mindmap "${id}" can't be read: ${reason}`);
+  }
+}
+
+/** Unreadable files are read again by every listing, so each failure is only logged once. */
+const reported = new Set<string>();
+
+function unreadableError(file: string, reason: string): UnreadableMindmapError {
+  const err = new UnreadableMindmapError(path.basename(file, ".json"), reason);
+  if (!reported.has(err.message)) {
+    reported.add(err.message);
+    console.error(`[synapse] ${err.message}`);
+  }
+  return err;
+}
+
+/** Returns null if the file doesn't exist; throws UnreadableMindmapError if it can't be used. */
 async function readDocument(file: string): Promise<MindmapDocument | null> {
   let raw: string;
   try {
     raw = await readFile(file, "utf-8");
-  } catch {
-    return null;
+  } catch (err) {
+    if (errorCode(err) === "ENOENT") return null;
+    throw unreadableError(file, String(err));
   }
-  const parsed = MindmapDocument.safeParse(JSON.parse(raw));
-  if (!parsed.success) {
-    console.error(`[synapse] Skipping ${file}: not a valid mindmap (${parsed.error.issues[0]?.message ?? "invalid"})`);
-    return null;
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (err) {
+    throw unreadableError(file, String(err));
   }
+  const parsed = MindmapDocument.safeParse(json);
+  if (!parsed.success) throw unreadableError(file, `not a valid mindmap (${parsed.error.issues[0]?.message ?? "invalid"})`);
   return parsed.data;
 }
 
-/** Load a single mindmap. Returns null if it doesn't exist or isn't a valid mindmap. */
+/** Load a single mindmap. Returns null if it doesn't exist; throws UnreadableMindmapError if it can't be read. */
 export function load(id: MindmapId): Promise<MindmapDocument | null> {
-  return readDocument(filePath(id)).catch(() => null);
+  return readDocument(filePath(id));
 }
 
 /**
@@ -66,12 +94,12 @@ export async function save(doc: MindmapDocument): Promise<void> {
  * the watcher or the viewer makes in the meantime isn't overwritten by a stale copy.
  * `mutate` must be quick and synchronous (do slow work such as running git before calling this);
  * if it throws, nothing is saved. The mindmap is only written, and `updatedAt` only bumped, if `mutate` changed it.
- * Returns what `mutate` returned, or null if the mindmap doesn't exist.
+ * Returns what `mutate` returned, or null if the mindmap doesn't exist. Throws UnreadableMindmapError if it can't be read.
  */
 export async function update<T>(id: MindmapId, mutate: (doc: MindmapDocument) => T): Promise<T | null> {
   const file = filePath(id);
   return withLock(file, async () => {
-    const doc = await readDocument(file).catch(() => null);
+    const doc = await readDocument(file);
     if (!doc) return null;
     const before = JSON.stringify(doc);
     const result = mutate(doc);
@@ -91,7 +119,7 @@ export async function setArchived(id: MindmapId, archived: boolean): Promise<Min
   const file = filePath(id);
   // Read and write under the lock, so a save from an agent can't land in between and be overwritten.
   return withLock(file, async () => {
-    const doc = await readDocument(file).catch(() => null);
+    const doc = await readDocument(file);
     if (!doc) return null;
     if (archived) doc.archivedAt ??= now();
     else delete doc.archivedAt;
@@ -100,24 +128,48 @@ export async function setArchived(id: MindmapId, archived: boolean): Promise<Min
   });
 }
 
-/** A lock older than this was left behind by a process that died while holding it. */
+/** A lock with no pid in it, older than this, was left by a crash or by a version that didn't record one. */
 const STALE_LOCK_MS = 5000;
+/** No live holder takes this long: its owner died and another process now has its pid. */
+const MAX_LOCK_MS = 5 * 60_000;
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return errorCode(err) !== "ESRCH"; // EPERM: it's running, as another user
+  }
+}
 
 /**
- * Run `fn` while holding `<file>.lock`. The MCP server and the viewer are separate processes,
- * so the lock is a file created with O_EXCL rather than anything in memory.
+ * Whether `lock` can be taken over. A big mindmap can hold its lock for several seconds and block the
+ * event loop while it does, so age alone can't tell a busy holder from a dead one: the holder's pid does.
+ */
+async function isStaleLock(lock: string): Promise<boolean> {
+  const held = await stat(lock).catch(() => null);
+  if (!held) return false;
+  const age = Date.now() - held.mtimeMs;
+  const pid = Number(await readFile(lock, "utf-8").catch(() => ""));
+  return pid ? age > MAX_LOCK_MS || !isRunning(pid) : age > STALE_LOCK_MS;
+}
+
+/**
+ * Run `fn` while holding `<file>.lock`, which holds the owner's pid. The MCP server and the viewer are
+ * separate processes, so the lock is a file created with O_EXCL rather than anything in memory.
  */
 async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
   await ensureDataDir();
   const lock = `${file}.lock`;
   for (;;) {
     try {
-      await (await open(lock, "wx")).close();
+      const handle = await open(lock, "wx");
+      await handle.writeFile(String(process.pid));
+      await handle.close();
       break;
     } catch (err) {
       if (errorCode(err) !== "EEXIST") throw err;
-      const held = await stat(lock).catch(() => null);
-      if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) await unlink(lock).catch(() => {});
+      if (await isStaleLock(lock)) await unlink(lock).catch(() => {});
       else await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
@@ -131,9 +183,15 @@ async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
 async function write(doc: MindmapDocument): Promise<void> {
   const valid = MindmapDocument.parse(doc);
   const file = filePath(valid.id);
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, JSON.stringify(valid, null, 2), "utf-8");
-  await rename(tmp, file);
+  // Unique per write: two writers sharing a temp file can leave one's tail after the other's JSON.
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmp, JSON.stringify(valid, null, 2), "utf-8");
+    await rename(tmp, file);
+  } catch (err) {
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
 }
 
 function summarize(doc: MindmapDocument): MindmapListItem {
@@ -157,17 +215,29 @@ function summarize(doc: MindmapDocument): MindmapListItem {
   };
 }
 
-/** List every valid stored mindmap, most recently updated first. */
-export async function list(): Promise<MindmapListItem[]> {
+/** List every stored mindmap, most recently updated first, and the files that couldn't be read. */
+export async function list(): Promise<MindmapList> {
   const dir = await ensureDataDir();
   const entries = await readdir(dir, { withFileTypes: true });
-  const docs = await Promise.all(
-    entries.filter((e) => e.isFile() && e.name.endsWith(".json")).map((e) => readDocument(path.join(dir, e.name)).catch(() => null)),
+  const mindmaps: MindmapListItem[] = [];
+  const unreadable: UnreadableMindmap[] = [];
+  await Promise.all(
+    entries
+      .filter((e) => e.isFile() && e.name.endsWith(".json"))
+      .map(async (e) => {
+        try {
+          const doc = await readDocument(path.join(dir, e.name));
+          if (doc) mindmaps.push(summarize(doc));
+        } catch (err) {
+          if (!(err instanceof UnreadableMindmapError)) throw err;
+          unreadable.push({ id: err.id, error: err.reason });
+        }
+      }),
   );
-  return docs
-    .filter((d): d is MindmapDocument => d !== null)
-    .map(summarize)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return {
+    mindmaps: mindmaps.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    unreadable: unreadable.sort((a, b) => a.id.localeCompare(b.id)),
+  };
 }
 
 /** Delete a mindmap. */

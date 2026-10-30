@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { watch, existsSync, statSync, type FSWatcher } from "node:fs";
+import { watch, existsSync, realpathSync, statSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as store from "./store.js";
 import { collectsWorkspaceChanges, fileTouchTarget, recordedPaths, upsertFileTouches } from "./model/file-touch.js";
@@ -66,6 +66,19 @@ async function gitListed(cwd: string, args: string[], paths: string[]): Promise<
     for (const p of out.split("\0")) if (p) listed.add(p);
   }
   return listed;
+}
+
+/**
+ * Git worktrees inside `dir`, relative to it (e.g. `.claude/worktrees/fix`). The repo's ignore rules may
+ * not cover them, but their files belong to the sessions working there, not to the checkout around them.
+ */
+async function nestedWorktrees(dir: string): Promise<string[]> {
+  const out = await git(dir, ["worktree", "list", "--porcelain"]);
+  return out
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => path.relative(realpathSync(dir), line.slice("worktree ".length)).replace(/\\/g, "/"))
+    .filter((rel) => rel && !/^\.\.(\/|$)/.test(rel));
 }
 
 /** How long after a checkout, rebase, reset, merge or pull its file events may still arrive. */
@@ -186,24 +199,30 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     if (batch.size === 0 || !current()) return;
     const { mindmapId } = entry;
 
-    // Archived (in the viewer, another process), deleted or finished mindmaps stop collecting this workspace's changes.
+    // Archived (in the viewer, another process), deleted, finished or unreadable mindmaps stop collecting this workspace's changes.
     const record = async (change: (doc: MindmapDocument) => void) => {
       if (!current()) return; // stopped while git ran
-      const recorded = await store.update(mindmapId, (doc) => {
-        if (!collectsWorkspaceChanges(doc)) return false;
-        change(doc);
-        return true;
-      });
+      const recorded = await store
+        .update(mindmapId, (doc) => {
+          if (!collectsWorkspaceChanges(doc)) return false;
+          change(doc);
+          return true;
+        })
+        .catch((err: unknown) => {
+          if (err instanceof store.UnreadableMindmapError) return false;
+          throw err;
+        });
       if (!recorded) stopWorkspaceWatcher(mindmapId);
     };
 
     // Ask git everything first: store.update holds the mindmap's lock only for the quick change itself.
     const ignored = await gitIgnored(resolved, [...batch.keys()]);
-    const unignored = [...batch].filter(([p]) => !ignored.has(p));
+    const worktrees = await nestedWorktrees(resolved);
+    const unignored = [...batch].filter(([p]) => !ignored.has(p) && !worktrees.some((w) => p === w || p.startsWith(`${w}/`)));
     const tracked = await gitListed(resolved, ["ls-files"], unignored.map(([p]) => p));
     // `git rm` has already taken a file out of the index, so a deleted path the mindmap lists counts as tracked.
     // No other deleted path does: removing node_modules mustn't reach the rebase and churn counts below.
-    const mindmap = await store.load(mindmapId);
+    const mindmap = await store.load(mindmapId).catch(() => null); // `record` stops the watcher if it can't be read
     const listed = mindmap ? recordedPaths(mindmap) : new Set<string>();
     const entries = unignored.filter(([p]) => !shouldIgnorePath(p, tracked.has(p) || (listed.has(p) && !existsSync(path.join(resolved, p)))));
     const paths = entries.map(([p]) => p);

@@ -1,6 +1,7 @@
-import { describe, it, beforeAll, afterAll } from "bun:test";
+import { describe, it, beforeAll, afterAll, spyOn } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readdir, rm, unlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
@@ -44,7 +45,7 @@ describe("store & renderer", () => {
     assert.ok(loaded);
     assert.equal(loaded.title, "First Map");
 
-    const items = await store.list();
+    const items = (await store.list()).mindmaps;
     assert.equal(items.length, 1);
     assert.equal(items[0]!.id, "mm_test0001");
     assert.equal(items[0]!.nodeCount, 3);
@@ -72,7 +73,7 @@ describe("store & renderer", () => {
     const archived = await store.setArchived(doc.id, true);
     assert.ok(archived?.archivedAt);
     assert.equal(archived.updatedAt, updatedAt);
-    assert.equal((await store.list()).find((m) => m.id === doc.id)?.archivedAt, archived.archivedAt);
+    assert.equal((await store.list()).mindmaps.find((m) => m.id === doc.id)?.archivedAt, archived.archivedAt);
 
     const restored = await store.setArchived(doc.id, false);
     assert.equal(restored?.archivedAt, undefined);
@@ -137,10 +138,87 @@ describe("store & renderer", () => {
     await store.remove(doc.id);
   });
 
-  it("skips files on disk that aren't valid mindmaps", async () => {
+  it("waits for a lock whose owner is still running, however old the lock", async () => {
+    const doc = emptyDoc("mm_busy", "Busy");
+    await store.save(doc);
+    const lock = path.join(tmpDir, "mm_busy.json.lock");
+    await writeFile(lock, String(process.pid));
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+
+    let finished = false;
+    const update = store.update(doc.id, (d) => {
+      d.title = "Changed";
+      finished = true;
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(finished, false, "the owner may just be blocking its event loop");
+    await unlink(lock);
+    await update;
+    assert.equal((await store.load(doc.id))?.title, "Changed");
+    await store.remove(doc.id);
+  });
+
+  it("takes over a fresh lock whose owner has exited", async () => {
+    const doc = emptyDoc("mm_gone", "Gone");
+    const { pid } = spawnSync("git", ["--version"]);
+    await writeFile(path.join(tmpDir, "mm_gone.json.lock"), String(pid));
+    await store.save(doc);
+    assert.ok(await store.load(doc.id));
+    await store.remove(doc.id);
+  });
+
+  it("gives every write its own temp file", async () => {
+    const doc = emptyDoc("mm_tmp", "Temp");
+    const shared = path.join(tmpDir, `mm_tmp.json.${process.pid}.tmp`);
+    await mkdir(shared); // A write to one temp name per process would fail here
+    await store.save(doc);
+    assert.ok(await store.load(doc.id));
+    await rm(shared, { recursive: true });
+    await store.remove(doc.id);
+  });
+
+  it("reports files on disk it can't read instead of treating them as missing", async () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    const junk = MindmapId.parse("mm_junk");
+    const tail = MindmapId.parse("mm_tail");
     await writeFile(path.join(tmpDir, "mm_junk.json"), JSON.stringify({ id: "mm_junk", nodes: {} }));
-    assert.equal(await store.load(MindmapId.parse("mm_junk")), null);
-    assert.ok((await store.list()).every((m) => m.id !== "mm_junk"));
+    await writeFile(path.join(tmpDir, "mm_tail.json"), `${JSON.stringify(emptyDoc("mm_tail", "Tail"))}\n"/fileHashes.bin"\n}`);
+
+    for (const id of [junk, tail]) {
+      await assert.rejects(store.load(id), store.UnreadableMindmapError);
+      await assert.rejects(store.update(id, () => "x"), store.UnreadableMindmapError);
+      await assert.rejects(store.setArchived(id, true), store.UnreadableMindmapError);
+    }
+    await store.list();
+    const { mindmaps, unreadable } = await store.list();
+    assert.ok(mindmaps.every((m) => m.id !== junk && m.id !== tail));
+    assert.deepEqual(unreadable.map((m) => m.id), [junk, tail]);
+    assert.match(unreadable[0]?.error ?? "", /not a valid mindmap/);
+    assert.match(unreadable[1]?.error ?? "", /SyntaxError/);
+    assert.equal(errors.mock.calls.filter(([line]) => String(line).includes("mm_tail")).length, 1, "logged once, not on every listing");
+
+    assert.equal(await store.remove(tail), true, "it can still be deleted");
+    await store.remove(junk);
+    errors.mockRestore();
+  });
+
+  // Root can read a file whatever its permissions
+  it.skipIf(process.getuid?.() === 0)("reports a file it isn't allowed to read instead of treating it as missing", async () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    const doc = emptyDoc("mm_denied", "Denied");
+    await store.save(doc);
+    const file = path.join(tmpDir, "mm_denied.json");
+    await chmod(file, 0o000);
+    try {
+      await assert.rejects(store.load(doc.id), store.UnreadableMindmapError);
+      await assert.rejects(store.update(doc.id, () => "x"), store.UnreadableMindmapError);
+      assert.deepEqual((await store.list()).unreadable.map((m) => m.id), [doc.id]);
+    } finally {
+      await chmod(file, 0o600);
+      errors.mockRestore();
+    }
+    await store.remove(doc.id);
   });
 
   it("caps activityLog at 100 entries with newest first", () => {

@@ -7,7 +7,7 @@ import {
   type NodeType,
   type TaskStatus,
 } from "../src/model/kinds.js";
-import type { CodeChange, FileTouch, MindmapDocument, MindmapListItem, MindmapNode, NodeId } from "../src/model/schema.js";
+import type { CodeChange, FileTouch, MindmapDocument, MindmapList, MindmapListItem, MindmapNode, NodeId, UnreadableMindmap } from "../src/model/schema.js";
 import {
   READABLE_SCALE,
   centerCamera,
@@ -119,6 +119,7 @@ let changeKindFilter: ChangeKind | null = null;
 let activeTab: SidebarTab = "inspector";
 let viewMode: ViewMode = "all";
 let sessions: MindmapListItem[] = [];
+let unreadableSessions: UnreadableMindmap[] = [];
 let sessionQuery = "";
 /** The text in the canvas's find box; matching cards are highlighted. */
 let mapQuery = "";
@@ -1094,6 +1095,12 @@ function renderSessions() {
   const archivedCount = sessions.filter((s) => s.archivedAt).length;
   byId("sessions-count").textContent = `Sessions (${sessions.length - archivedCount})`;
 
+  const unreadable = byId("sessions-unreadable");
+  unreadable.hidden = unreadableSessions.length === 0;
+  unreadable.innerHTML = `
+    <div class="sessions-unreadable-head">⚠ Can't read ${unreadableSessions.length} session${unreadableSessions.length === 1 ? "" : "s"}</div>
+    ${unreadableSessions.map((s) => `<div class="sessions-unreadable-item"><code>${escXml(s.id)}</code> ${escXml(s.error)}</div>`).join("")}`;
+
   if (visible.length === 0) {
     list.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px;">${sessions.length ? "No matching sessions." : "No sessions yet."}</div>`;
     return;
@@ -1174,7 +1181,9 @@ async function refreshSessions() {
   try {
     const res = await fetch("/api/mindmaps", { cache: "no-store" });
     if (!res.ok) return;
-    sessions = serverJson<MindmapListItem[]>(await res.text());
+    const list = serverJson<MindmapList>(await res.text());
+    sessions = list.mindmaps;
+    unreadableSessions = list.unreadable;
     renderSessions();
   } catch {
     // Viewer opened without the API server; sessions list stays empty

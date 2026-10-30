@@ -1,6 +1,6 @@
 import { describe, it, beforeAll, afterAll } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
@@ -204,6 +204,21 @@ describe("workspace watcher", () => {
     assert.deepEqual(changes.map((c) => `${c.action}:${c.path}`).sort(), ["create:new.ts", "modify:dist/bundle.js"]);
   }, 20000);
 
+  it("leaves worktrees inside the workspace to their own sessions, even when nothing ignores them", async () => {
+    const { repoDir, git } = await makeRepo("nested");
+    const id = await createMindmap({ title: "Nested", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+
+    await git("worktree", "add", "-q", ".claude/worktrees/fix", "-b", "fix");
+    await git("worktree", "add", "-q", ".worktrees/other-layout", "-b", "other-layout");
+    await writeFile(path.join(repoDir, ".claude", "worktrees", "fix", "a.ts"), "export const a = 2;\n");
+    await settle();
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 3;\n");
+
+    await eventually(id, (d) => assert.ok(touched(d).includes("modify:a.ts")));
+    assert.deepEqual(touched((await store.load(id))!), ["modify:a.ts"]);
+  }, 20000);
+
   it("falls back to the built-in ignore list outside git", async () => {
     const dir = path.join(tmpDir, "plain");
     await mkdir(path.join(dir, ".gradle"), { recursive: true });
@@ -328,6 +343,20 @@ describe("workspace watcher", () => {
     await callTool("delete_mindmap", { mindmapId: id });
     assert.equal(watchedMindmap(repoDir), undefined);
   });
+
+  it("stops recording into a mindmap that can't be read, leaving the file as it is", async () => {
+    const { repoDir } = await makeRepo("damaged");
+    const id = await createMindmap({ title: "Damaged", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    const file = path.join(store.getDataDir(), `${id}.json`);
+    const damaged = `${await readFile(file, "utf-8")}\n}`;
+    await writeFile(file, damaged);
+    await settle();
+
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await settle();
+    assert.equal(watchedMindmap(repoDir), undefined);
+    assert.equal(await readFile(file, "utf-8"), damaged);
+  }, 20000);
 
   it("drops a deleted mindmap's unrecorded edits instead of giving them to the next mindmap", async () => {
     const { repoDir } = await makeRepo("replaced");

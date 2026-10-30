@@ -28,6 +28,7 @@ Each mindmap is a session. Sessions are grouped by repository (the `workspacePat
 - **Live dot**: shown on sessions updated in the last 2 minutes.
 - **Filter**: type in the box to narrow the list.
 - **<kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd>** (<kbd>Alt</kbd> on Windows and Linux): switch to the previous or next session in the list as shown, skipping collapsed groups.
+- **Unreadable sessions**: a mindmap file that can't be read, because of its permissions, damaged JSON, or not being a valid mindmap, is listed at the bottom of the sidebar with the reason. It can't be opened, but the agent can still remove it with [`delete_mindmap`](../reference/tools#delete-mindmap).
 - **Links**: the URL hash holds the session ID, for example `http://localhost:4040/#mm_Ab12Cd34`. Bookmark or share it to open that session directly, or paste it into an open viewer tab to switch to it. A link to a session that doesn't exist leaves the open session on screen.
 - **Back and Forward**: each switch adds an entry to the browser's history, so these buttons step through the sessions you opened.
 - **☰** collapses the sidebar. The viewer remembers this setting. In narrow windows it opens the list as a drawer instead.

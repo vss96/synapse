@@ -215,3 +215,15 @@ export interface MindmapListItem {
   activeTask?: string;
   fileCount: number;
 }
+
+/** A mindmap file that exists but can't be loaded. `id` comes from the file name; the contents can't be trusted. */
+export interface UnreadableMindmap {
+  id: string;
+  error: string;
+}
+
+/** Everything in the data directory. */
+export interface MindmapList {
+  mindmaps: MindmapListItem[];
+  unreadable: UnreadableMindmap[];
+}
