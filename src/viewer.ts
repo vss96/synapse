@@ -13,8 +13,8 @@ import { z } from "zod";
 import { errorCode } from "./errors.js";
 import * as store from "./store.js";
 import { fileTouchTarget, upsertFileTouches } from "./model/file-touch.js";
-import { MindmapId } from "./model/schema.js";
-import { inspectGitChanges } from "./watcher.js";
+import { MindmapId, type MindmapList } from "./model/schema.js";
+import { inspectGitChanges, repoRoot } from "./watcher.js";
 
 export const DEFAULT_VIEWER_PORT = 4040;
 /** Ports tried after the default before letting the OS pick one. */
@@ -69,6 +69,23 @@ function isTrustedRequest(req: IncomingMessage, port: number): boolean {
 
 const SyncGitRequest = z.object({ mindmapId: MindmapId, workspacePath: z.string().optional() });
 const ArchiveRequest = z.object({ mindmapId: MindmapId, archived: z.boolean() });
+
+/** Remembered per workspace: the list is read after every change, and a workspace stays in its repository. */
+const repoRoots = new Map<string, Promise<string | undefined>>();
+
+/** The session list. Mindmaps saved before `repoPath` existed don't have one, so look it up for them. */
+async function listWithRepos(): Promise<MindmapList> {
+  const list = await store.list();
+  const mindmaps = await Promise.all(
+    list.mindmaps.map(async (m) => {
+      if (m.repoPath || !m.workspacePath) return m;
+      const root = repoRoots.get(m.workspacePath) ?? repoRoot(m.workspacePath);
+      repoRoots.set(m.workspacePath, root);
+      return { ...m, repoPath: await root };
+    }),
+  );
+  return { ...list, mindmaps };
+}
 
 /** Read a JSON request body, or answer the request with an error and return undefined. */
 async function readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<unknown> {
@@ -237,7 +254,7 @@ export async function startViewer(options: ViewerOptions = {}): Promise<RunningV
         return;
       }
       if (pathname === "/api/mindmaps" && req.method === "GET") {
-        return sendJson(res, 200, await store.list());
+        return sendJson(res, 200, await listWithRepos());
       }
       if (pathname.startsWith("/api/mindmaps/") && req.method === "GET") {
         const id = MindmapId.safeParse(decodeURIComponent(pathname.slice("/api/mindmaps/".length)));

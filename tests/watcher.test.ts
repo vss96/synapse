@@ -1,6 +1,6 @@
 import { describe, it, beforeAll, afterAll } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
@@ -8,7 +8,7 @@ import path from "node:path";
 import { z } from "zod";
 import { tools } from "../src/tools.js";
 import * as store from "../src/store.js";
-import { inspectGitChanges, shouldIgnorePath, watchedMindmap } from "../src/watcher.js";
+import { inspectGitChanges, repoRoot, shouldIgnorePath, stopWorkspaceWatcher, watchedMindmap } from "../src/watcher.js";
 import { MindmapId, type MindmapDocument } from "../src/model/schema.js";
 import { addChild, emptyDoc } from "./fixtures.js";
 
@@ -19,8 +19,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
   assert.ok(!result.isError, `${name} failed: ${result.content[0]?.text}`);
   return result.content[0]!.text;
 }
+const created: MindmapId[] = [];
 async function createMindmap(args: Record<string, unknown>): Promise<MindmapId> {
-  return z.object({ mindmapId: MindmapId }).parse(JSON.parse(await callTool("create_mindmap", args))).mindmapId;
+  const { mindmapId } = z.object({ mindmapId: MindmapId }).parse(JSON.parse(await callTool("create_mindmap", args)));
+  created.push(mindmapId);
+  return mindmapId;
 }
 /** Every file touch in the document, as sorted `action:path` strings. */
 const touched = (doc: MindmapDocument) =>
@@ -98,10 +101,45 @@ describe("workspace watcher", () => {
   });
 
   afterAll(async () => {
+    // First, or a watcher that sees tmpDir go would flush into the data directory restored below
+    created.forEach(stopWorkspaceWatcher);
     if (originalDataDir === undefined) delete process.env.SYNAPSE_DATA_DIR;
     else process.env.SYNAPSE_DATA_DIR = originalDataDir;
     await rm(tmpDir, { recursive: true, force: true });
   });
+
+  it("finds a repository's main checkout from a worktree, or from a worktree's path once it's gone", async () => {
+    const { repoDir, git } = await makeRepo("repo-root");
+    const main = await realpath(repoDir);
+    const worktree = path.join(tmpDir, "repo-root-worktree");
+    await git("worktree", "add", "-q", worktree);
+
+    assert.equal(await repoRoot(repoDir), main);
+    assert.equal(await repoRoot(path.join(repoDir, "pkg")), main);
+    assert.equal(await repoRoot(worktree), main);
+    assert.equal(await repoRoot(path.join(repoDir, ".claude", "worktrees", "gone")), main);
+
+    assert.equal(await repoRoot(tmpDir), undefined);
+    assert.equal(await repoRoot(path.join(tmpDir, "moved", ".worktrees", "gone", "pkg")), path.join(tmpDir, "moved"));
+    assert.equal(await repoRoot(path.join(tmpDir, "moved", "gone")), undefined);
+  });
+
+  it("stores the repository on the mindmap while the worktree still exists", async () => {
+    const { repoDir, git } = await makeRepo("repo-path");
+    const main = await realpath(repoDir);
+    const worktree = path.join(tmpDir, "repo-path-worktree");
+    await git("worktree", "add", "-q", worktree);
+
+    const id = await createMindmap({ title: "In a worktree", workspacePath: worktree });
+    assert.equal((await store.load(id))?.repoPath, main);
+    assert.equal((await store.list()).mindmaps.find((m) => m.id === id)?.repoPath, main);
+
+    const later = await createMindmap({ title: "Workspace comes later", initialPlan: [{ label: "Work", status: "in_progress" }] });
+    assert.equal((await store.load(later))?.repoPath, undefined);
+    await writeFile(path.join(worktree, "a.ts"), "export const a = 2;\n");
+    await callTool("sync_git_status", { mindmapId: later, workspacePath: worktree });
+    assert.equal((await store.load(later))?.repoPath, main);
+  }, 20000);
 
   it("records atomic writes as modify and skips temp and gitignored files", async () => {
     const { repoDir } = await makeRepo("edits");

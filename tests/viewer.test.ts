@@ -89,6 +89,15 @@ describe("viewer server", () => {
     expect((await call(viewer.port, { path: "/api/mindmaps/..%2F..%2Fsecret" })).status).toBe(404);
   });
 
+  it("looks up the repository of a mindmap saved without one", async () => {
+    const doc = emptyDoc("mm_old", "Old");
+    doc.workspacePath = path.join(tmpDir, "repo", ".claude", "worktrees", "deleted");
+    await store.save(doc);
+    const { mindmaps } = JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body);
+    expect(mindmaps.find((m: { id: string }) => m.id === "mm_old").repoPath).toBe(path.join(tmpDir, "repo"));
+    await store.remove(doc.id);
+  });
+
   it("lists a damaged mindmap as unreadable and says why it can't be opened", async () => {
     const file = path.join(tmpDir, "mm_damaged.json");
     await writeFile(file, `${JSON.stringify(emptyDoc("mm_damaged", "Damaged"))}\n}`);

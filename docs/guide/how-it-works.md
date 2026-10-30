@@ -30,7 +30,7 @@
 | `GET /` | The viewer page (`viewer/index.html`) |
 | `GET /app.js` | The bundled viewer script |
 | `GET /logo.png`, `GET /favicon.png` | Images |
-| `GET /api/mindmaps` | `{ mindmaps, unreadable }`. `mindmaps` is the session list, newest first: `id`, `title`, `workspacePath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `activeTask`, `fileCount`, and `archivedAt` when the session is archived. `unreadable` lists files that can't be read, as `{ id, error }` |
+| `GET /api/mindmaps` | `{ mindmaps, unreadable }`. `mindmaps` is the session list, newest first: `id`, `title`, `workspacePath`, `repoPath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `activeTask`, `fileCount`, and `archivedAt` when the session is archived. `unreadable` lists files that can't be read, as `{ id, error }` |
 | `GET /api/mindmaps/:id` | One full mindmap document, or `500` if it can't be read |
 | `POST /api/sync-git` | Body `{ "mindmapId": "…", "workspacePath"?: "…" }`. Runs [git sync](#git-sync) and returns `{ synced, mindmap }` |
 | `POST /api/archive` | Body `{ "mindmapId": "…", "archived": true \| false }`. Archives or restores a session without changing its `updatedAt`, and returns `{ id, archivedAt }` (`null` once restored) |
@@ -120,6 +120,8 @@ A mindmap is one JSON document:
   "activityLog": [{ "timestamp": "2026-10-17T09:12:41.000Z", "message": "[CREATE] src/middleware/rateLimit.ts (1 add) …" }]
 }
 ```
+
+A mindmap with a `workspacePath` in a git repository also has `repoPath`, the repository's main checkout, which is the same for all of its worktrees. It's saved by `create_mindmap` and `sync_git_status`, so it outlasts a deleted worktree. For a mindmap saved without one, the viewer asks git, and if the folder is gone it recognizes `<repo>/.claude/worktrees/<name>` and `<repo>/.worktrees/<name>` from the path. Any other deleted worktree keeps a group of its own.
 
 An archived session also has `archivedAt`, the time it was archived in the viewer.
 

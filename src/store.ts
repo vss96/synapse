@@ -206,6 +206,7 @@ function summarize(doc: MindmapDocument): MindmapListItem {
     updatedAt: doc.updatedAt,
     createdAt: doc.createdAt,
     workspacePath: doc.workspacePath,
+    repoPath: doc.repoPath,
     archivedAt: doc.archivedAt,
     nodeCount: nodes.length,
     completedTasks: tasks.filter((n) => n.status === "completed").length,

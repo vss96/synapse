@@ -1,7 +1,7 @@
 import { z } from "zod";
 import * as store from "./store.js";
 import { render } from "./renderer.js";
-import { ensureWorkspaceWatcher, inspectGitChanges, stopWorkspaceWatcher } from "./watcher.js";
+import { ensureWorkspaceWatcher, inspectGitChanges, repoRoot, stopWorkspaceWatcher } from "./watcher.js";
 import { collectsWorkspaceChanges, fileTouchTarget, mergeChanges, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
 import { CHANGE_KINDS, FILE_ACTIONS, LINK_STYLES, NODE_TYPES, TASK_STATUSES, isConcept, isTask, isTaskType, type ChildNodeType, type LinkStyle, type TaskStatus } from "./model/kinds.js";
 import { attachChild, createChild, reparent, retype } from "./model/node.js";
@@ -205,6 +205,7 @@ const createMindmap = defineTool({
       id: newMindmapId(),
       title: input.title,
       workspacePath: input.workspacePath,
+      repoPath: input.workspacePath ? await repoRoot(input.workspacePath) : undefined,
       createdAt: timestamp,
       updatedAt: timestamp,
       nodes: {
@@ -541,11 +542,13 @@ const syncGitStatus = defineTool({
     // Ask git before taking the mindmap's lock, which `updateMindmap` only holds for quick changes.
     const changes = await inspectGitChanges(workspacePath);
     if (changes.length === 0) return `No uncommitted git changes detected in ${workspacePath}.`;
+    const repoPath = await repoRoot(workspacePath);
 
     return updateMindmap(input.mindmapId, (doc) => {
       // Check again: the target may have been removed while git ran, and fileTouchTarget would fall back to another node.
       if (input.targetNodeId) getNode(doc, input.targetNodeId);
       doc.workspacePath = workspacePath;
+      doc.repoPath = repoPath;
       const target = fileTouchTarget(doc, input.targetNodeId);
       upsertFileTouches(target, changes);
       const summary = `Synced ${changes.length} changed file(s) from git status into "${target.label}"`;

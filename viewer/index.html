@@ -379,7 +379,9 @@
     margin-top: 3px;
   }
 
-  .session-sub { position: relative; }
+  .session-sub { position: relative; display: flex; gap: 4px; white-space: nowrap; }
+
+  .session-worktree { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
   .session-task {
     color: color-mix(in srgb, var(--c-in_progress) var(--tone-text), var(--text));

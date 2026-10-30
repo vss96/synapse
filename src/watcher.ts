@@ -81,6 +81,21 @@ async function nestedWorktrees(dir: string): Promise<string[]> {
     .filter((rel) => rel && !/^\.\.(\/|$)/.test(rel));
 }
 
+/** Worktree folders whose path says which repository they belong to, for when they're gone and git can't. */
+const WORKTREE_FOLDER = /^(.+)[\\/]\.(?:claude[\\/])?worktrees[\\/][^\\/]+/;
+
+/** The main checkout of the repository that `dir` is in, the same for all of its worktrees; undefined outside a repository. */
+export async function repoRoot(dir: string): Promise<string | undefined> {
+  // Relative in the main checkout, absolute in a worktree; --path-format=absolute needs Git 2.31
+  const commonDir = (await git(dir, ["rev-parse", "--git-common-dir"])).trim();
+  if (commonDir) {
+    const resolved = realpathSync(path.resolve(dir, commonDir));
+    return path.basename(resolved) === ".git" ? path.dirname(resolved) : resolved;
+  }
+  const parent = WORKTREE_FOLDER.exec(dir)?.[1];
+  return parent && ((await repoRoot(parent)) ?? parent);
+}
+
 /** How long after a checkout, rebase, reset, merge or pull its file events may still arrive. */
 const VCS_SETTLE_MS = 30_000;
 
