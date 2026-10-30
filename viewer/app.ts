@@ -247,6 +247,7 @@ function render(doc: MindmapDocument | null) {
   const svg = svgEl;
   const empty = byId("empty-state");
 
+  updateSessionName(doc);
   updateHeaderProgress(doc);
   renderSidebar(doc);
 
@@ -333,8 +334,10 @@ function render(doc: MindmapDocument | null) {
     // Agents often number steps themselves ("1. Configure…"); don't number those twice.
     const step = /^\s*\d+[.)]\s/.test(node.label) ? undefined : stepNumbers.get(id);
 
+    const title = step ? `${step}. ${node.label}` : node.label;
+
     let innerContent = `
-      <text class="node-title" x="${px + 12}" y="${cursorY}">${escXml(truncate(step ? `${step}. ${node.label}` : node.label, 30))}</text>
+      <text class="node-title" x="${px + 12}" y="${cursorY}">${escXml(truncate(title, 30))}</text>
     `;
 
     // Status (tasks only) or Semantic Thinking Type row
@@ -377,6 +380,7 @@ function render(doc: MindmapDocument | null) {
 
     nodeEls += `
       <g class="${classes.join(" ")}" data-node-id="${escXml(id)}">
+        <title>${escXml(node.notes ? `${title}\n\n${node.notes}` : title)}</title>
         ${selected ? `<rect class="node-select-ring" x="${px - 5}" y="${topY - 5}" width="${p.w + 10}" height="${p.h + 10}"/>` : ""}
         <rect class="node-rect" x="${px}" y="${topY}" width="${p.w}" height="${p.h}"/>
         ${innerContent}
@@ -542,6 +546,16 @@ function collectStats(doc: MindmapDocument | null): {
     }
   }
   return { tasks, completed, fileMap };
+}
+
+const APP_TITLE = document.title;
+
+/** Names the open session in the header and on the browser tab. */
+function updateSessionName(doc: MindmapDocument | null) {
+  const name = byId("session-name");
+  name.textContent = doc?.title ?? "";
+  name.title = doc?.title ?? "";
+  document.title = doc ? `${doc.title} – Synapse` : APP_TITLE;
 }
 
 function updateHeaderProgress(doc: MindmapDocument | null) {

@@ -127,6 +127,21 @@
     letter-spacing: -0.02em;
   }
 
+  /* The open session gets what's left of the header; hovering shows all of it. */
+  .session-name {
+    flex: 1 1 140px;
+    min-width: 0;
+    padding-left: 12px;
+    border-left: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .session-name:empty { display: none; }
+
   .live-pill {
     --c: var(--c-live);
     display: inline-flex;
@@ -972,7 +987,15 @@
   .tone-read { --c: var(--c-read); }
 
   /* ── Narrower screens ── */
+  /* The header shortens its labels so the session name stays readable. */
+  @media (max-width: 1400px) {
+    .label-long { display: none; }
+    .label-short { display: inline; }
+  }
+
   @media (max-width: 1200px) {
+    #toolbar .btn-label { display: none; }
+    #toolbar button { padding: 5px 9px; }
     #sessions { width: 220px; }
     #sidebar { width: 310px; }
   }
@@ -981,10 +1004,7 @@
   @media (max-width: 900px) {
     header { flex-wrap: wrap; row-gap: 8px; padding: 8px 12px; }
     .view-switcher { margin-left: 0; }
-    .label-long, #toolbar .btn-label { display: none; }
-    .label-short { display: inline; }
     .progress-summary { margin-left: 0; padding-left: 0; border-left: none; }
-    #toolbar button { padding: 5px 9px; }
 
     .workspace { flex-direction: column; }
     #sessions, body.sessions-collapsed #sessions { display: none; }
@@ -1013,6 +1033,7 @@
 <header>
   <button id="sessions-toggle" class="secondary" title="Show/hide sessions">☰</button>
   <h1>Synapse</h1>
+  <span id="session-name" class="session-name"></span>
   <span id="live-indicator" class="live-pill">
     <span class="live-dot"></span>
     <span id="live-text">Live</span>

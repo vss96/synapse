@@ -12,7 +12,7 @@ The viewer is a local web page that draws every mindmap in your data directory. 
 
 | Area | What it shows |
 |---|---|
-| Header | The sessions toggle (☰), the **Live** indicator, the view switcher, the task progress bar, and the **Sync Git**, **Refresh**, and **Open** buttons |
+| Header | The sessions toggle (☰), the name of the open session (also on the browser tab), the **Live** indicator, the view switcher, the task progress bar, and the **Sync Git**, **Refresh**, and **Open** buttons |
 | Left: Sessions | Every mindmap, grouped by repository, most recently updated first |
 | Center: canvas | The plan tree and/or the code mental model |
 | Right: sidebar | The **Inspector**, **Changes**, and **Activity** tabs |
@@ -45,7 +45,7 @@ Use the view switcher in the header to pick what the canvas shows:
 
 ![Code Mental Model view](../screenshots/hld-mental-model.png)
 
-Node cards are colored by status (in progress, completed) or by concept type (component, data flow, decision, hypothesis, risk). See the legend at the bottom of the canvas. Cards with logged changes show a tally such as `+2 ✱1 ⟲1`.
+Node cards are colored by status (in progress, completed) or by concept type (component, data flow, decision, hypothesis, risk). See the legend at the bottom of the canvas. Cards with logged changes show a tally such as `+2 ✱1 ⟲1`. Long labels and notes are cut short on the card. Hover over a card to read them in full.
 
 The tree grows to the right. In the split view, plan tasks come before the architecture branch, so the mental model never splits the plan in two. A long run of sibling cards without children (7 or more, such as a flat plan) wraps into rows inside a dashed frame, read left to right and then top to bottom. Tasks in the frame are numbered in that order.
 
@@ -72,11 +72,13 @@ A file path or symbol matches every card that logged it, including the old names
 
 The viewer follows your system's light or dark setting.
 
+To keep room for the session name, the view switcher shows short names (**Split**, **Plan**, **HLD**) below 1400 pixels wide, and the toolbar shows icons only below 1200.
+
 Below 900 pixels wide, for example in a side pane next to your editor, the layout changes:
 
 - The Inspector, Changes, and Activity tabs move below the canvas.
 - **☰** opens the session list as a drawer over the canvas. Picking a session closes the drawer.
-- The view switcher shows short names (**Split**, **Plan**, **HLD**), the toolbar shows icons only, and the legend is hidden.
+- The legend is hidden.
 
 ## Inspector
 
