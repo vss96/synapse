@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
+import { CONCEPT_TYPES, TASK_STATUSES } from "../src/model/kinds.js";
 import { MindmapId } from "../src/model/schema.js";
 import { missingAssets, startViewer, type RunningViewer } from "../src/viewer.js";
 import { addChild, emptyDoc } from "./fixtures.js";
@@ -98,6 +99,13 @@ describe("viewer server", () => {
     expect(doc.status).toBe(500);
     expect(JSON.parse(doc.body).error).toContain("can't be read");
     await rm(file);
+  });
+
+  it("serves a page whose legend covers every task status and concept type", async () => {
+    const page = await call(viewer.port, { path: "/" });
+    for (const tone of [...TASK_STATUSES, ...CONCEPT_TYPES]) {
+      expect(page.body).toContain(`<span class="legend-swatch tone-${tone}">`);
+    }
   });
 
   it("rejects requests from other hosts and cross-site writes", async () => {

@@ -22,6 +22,7 @@ import {
 } from "./camera.js";
 import { ROOT, VIEW_MODES, layoutTree, type ViewMode } from "./layout.js";
 import { matchesQuery } from "./search.js";
+import { sessionHash, sessionIdFromHash } from "./session-link.js";
 import { dayLabel } from "./time.js";
 
 const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
@@ -109,7 +110,7 @@ const CHANGE_KINDS: Record<ChangeKind, { glyph: string; label: string }> = {
   test: { glyph: "✓", label: "Tested" },
 };
 
-let currentId = decodeURIComponent(location.hash.slice(1));
+let currentId = sessionIdFromHash(location.hash);
 let currentDoc: MindmapDocument | null = null;
 /** Plain string: it also comes from DOM data attributes; resolve it with nodeById. */
 let selectedNodeId: string = ROOT;
@@ -248,6 +249,7 @@ function render(doc: MindmapDocument | null) {
   const svg = svgEl;
   const empty = byId("empty-state");
 
+  updateSessionName(doc);
   updateHeaderProgress(doc);
   renderSidebar(doc);
 
@@ -334,8 +336,10 @@ function render(doc: MindmapDocument | null) {
     // Agents often number steps themselves ("1. Configure…"); don't number those twice.
     const step = /^\s*\d+[.)]\s/.test(node.label) ? undefined : stepNumbers.get(id);
 
+    const title = step ? `${step}. ${node.label}` : node.label;
+
     let innerContent = `
-      <text class="node-title" x="${px + 12}" y="${cursorY}">${escXml(truncate(step ? `${step}. ${node.label}` : node.label, 30))}</text>
+      <text class="node-title" x="${px + 12}" y="${cursorY}">${escXml(truncate(title, 30))}</text>
     `;
 
     // Status (tasks only) or Semantic Thinking Type row
@@ -378,6 +382,7 @@ function render(doc: MindmapDocument | null) {
 
     nodeEls += `
       <g class="${classes.join(" ")}" data-node-id="${escXml(id)}">
+        <title>${escXml(node.notes ? `${title}\n\n${node.notes}` : title)}</title>
         ${selected ? `<rect class="node-select-ring" x="${px - 5}" y="${topY - 5}" width="${p.w + 10}" height="${p.h + 10}"/>` : ""}
         <rect class="node-rect" x="${px}" y="${topY}" width="${p.w}" height="${p.h}"/>
         ${innerContent}
@@ -543,6 +548,16 @@ function collectStats(doc: MindmapDocument | null): {
     }
   }
   return { tasks, completed, fileMap };
+}
+
+const APP_TITLE = document.title;
+
+/** Names the open session in the header and on the browser tab. */
+function updateSessionName(doc: MindmapDocument | null) {
+  const name = byId("session-name");
+  name.textContent = doc?.title ?? "";
+  name.title = doc?.title ?? "";
+  document.title = doc ? `${doc.title} – Synapse` : APP_TITLE;
 }
 
 function updateHeaderProgress(doc: MindmapDocument | null) {
@@ -853,15 +868,13 @@ byId("zoom-focus").onclick = focusActive;
 
 // End #svg above the bottom overlays (legend, zoom controls) so fitting and centering use the
 // unobstructed area; panned content still shows beneath them because #svg doesn't clip.
-const bottomOverlays = [query(".legend"), query(".controls")];
+const bottomOverlays = query(".canvas-bottom");
 const fitAboveOverlays = () => {
-  const shown = bottomOverlays.filter((el) => el.offsetParent !== null);
-  const top = shown.length ? Math.min(...shown.map((el) => el.offsetTop)) : viewport.clientHeight;
-  svgEl.style.height = `${Math.max(0, top - 8)}px`;
+  svgEl.style.height = `${Math.max(0, bottomOverlays.offsetTop - 8)}px`;
 };
 fitAboveOverlays(); // now, not only when observed: the first view is measured against this size
 const overlayObserver = new ResizeObserver(fitAboveOverlays);
-[viewport, ...bottomOverlays].forEach((el) => overlayObserver.observe(el));
+[viewport, bottomOverlays].forEach((el) => overlayObserver.observe(el));
 
 viewport.addEventListener("mousedown", (e) => {
   if (e.target instanceof Element && (e.target.closest(".node-group") || e.target.closest(".controls") || e.target.closest(".map-search"))) return;
@@ -1050,10 +1063,10 @@ function sessionItemHtml(s: MindmapListItem) {
   const action = s.archivedAt ? "restore" : "archive";
   return `
     <div class="session-item ${s.id === currentId ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
-      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<span class="session-title-text">${escXml(s.title)}</span>
+      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<span class="session-title-text">${escXml(s.title)}</span></div>
+      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}
         <button class="session-action" data-action="${action}" title="${s.archivedAt ? "Restore this session" : "Archive this session"}">${s.archivedAt ? "Restore" : "Archive"}</button>
       </div>
-      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}</div>
       ${s.activeTask ? `<div class="session-task">◐ ${escXml(s.activeTask)}</div>` : ""}
       <div class="session-progress">
         <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
@@ -1125,10 +1138,9 @@ function renderSessions() {
   });
 }
 
-async function selectSession(id: string | undefined) {
-  if (!id || id === currentId) return;
+/** Switch to a session, leaving the URL as it is. */
+async function showSession(id: string) {
   currentId = id;
-  history.replaceState(null, "", `#${encodeURIComponent(id)}`);
   selectedNodeId = ROOT;
   highlightedFilePath = null;
   changeKindFilter = null;
@@ -1137,6 +1149,33 @@ async function selectSession(id: string | undefined) {
   document.querySelector(".session-item.active")?.scrollIntoView({ block: "nearest" });
   await fetchMindmapById(id);
 }
+
+/**
+ * Open a session. Switching adds a history entry, so Back returns to the session you left. With
+ * `replace`, for a session nobody picked, it doesn't, so Back leaves the viewer instead of landing
+ * on a URL with no session in it.
+ */
+async function selectSession(id: string | undefined, { replace = false } = {}) {
+  if (!id || id === currentId) return;
+  if (replace) history.replaceState(null, "", sessionHash(id));
+  else history.pushState(null, "", sessionHash(id));
+  await showSession(id);
+}
+
+/**
+ * Switch to the session the URL names (Back, Forward or a pasted link). If there is no such
+ * session, put back the URL of the open one.
+ */
+function followUrl() {
+  const id = sessionIdFromHash(location.hash);
+  if (id === currentId) return;
+  if (sessions.some((s) => s.id === id)) showSession(id);
+  else history.replaceState(null, "", sessionHash(currentId));
+}
+
+// Back and Forward fire both; a pasted link fires hashchange.
+window.addEventListener("popstate", followUrl);
+window.addEventListener("hashchange", followUrl);
 
 async function refreshSessions() {
   try {
@@ -1159,7 +1198,7 @@ async function init() {
     currentId = "";
     // Prefer a session that isn't archived: the Archived group starts collapsed.
     const first = sessions.find((s) => !s.archivedAt) ?? sessions[0];
-    if (first) await selectSession(first.id);
+    if (first) await selectSession(first.id, { replace: true });
   }
 }
 
@@ -1259,7 +1298,7 @@ function connectSSE() {
       if (payload.type === "mindmap_updated") {
         // Refresh the session list, but only reload the canvas for the session being viewed.
         await refreshSessions();
-        if (!currentId && payload.id) await selectSession(payload.id);
+        if (!currentId && payload.id) await selectSession(payload.id, { replace: true });
         else if (payload.id === currentId) await fetchMindmapById(currentId);
       }
     } catch {

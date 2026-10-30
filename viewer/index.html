@@ -127,6 +127,21 @@
     letter-spacing: -0.02em;
   }
 
+  /* The open session gets what's left of the header; hovering shows all of it. */
+  .session-name {
+    flex: 1 1 140px;
+    min-width: 0;
+    padding-left: 12px;
+    border-left: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .session-name:empty { display: none; }
+
   .live-pill {
     --c: var(--c-live);
     display: inline-flex;
@@ -342,18 +357,16 @@
 
   .session-title {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 6px;
     font-size: 12.5px;
     font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .session-live-dot {
     width: 7px;
     height: 7px;
+    margin-top: 4px;
     border-radius: 50%;
     background: var(--c-live);
     flex-shrink: 0;
@@ -364,12 +377,16 @@
     font-size: 11px;
     color: var(--muted);
     margin-top: 3px;
+  }
+
+  .session-sub { position: relative; }
+
+  .session-task {
+    color: color-mix(in srgb, var(--c-in_progress) var(--tone-text), var(--text));
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
-  .session-task { color: color-mix(in srgb, var(--c-in_progress) var(--tone-text), var(--text)); }
 
   .session-progress {
     display: flex;
@@ -407,12 +424,23 @@
 
   .session-group.archived .session-item { opacity: 0.75; }
 
-  .session-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .session-title-text {
+    flex: 1;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
 
-  /* Hidden until hover or keyboard focus, but still focusable; always shown without hover (touch). */
+  /* Hidden until hover or keyboard focus, but still focusable; always shown without hover (touch).
+     It takes no room in the row: it sits over the free end of the line with the (short) time. */
   .session-action {
+    position: absolute;
+    top: -2px;
+    right: 0;
     opacity: 0;
-    flex-shrink: 0;
     padding: 1px 6px;
     background: var(--panel);
     color: var(--muted);
@@ -832,6 +860,7 @@
     padding-left: 10px;
     margin-bottom: 12px;
     font-size: 12px;
+    overflow-wrap: anywhere;
   }
 
   /* Entries about a node are buttons that show it on the map. */
@@ -856,12 +885,26 @@
   }
 
   /* ── Controls & Legend ── */
-  .controls {
+  /* Along the bottom of the canvas. The legend moves above the controls rather than shrink too far,
+     and only these two take the mouse, so cards can be clicked in the gap between them. */
+  .canvas-bottom {
     position: absolute;
-    bottom: 16px;
+    left: 16px;
     right: 16px;
+    bottom: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px 12px;
+    pointer-events: none;
+  }
+
+  .canvas-bottom > * { pointer-events: auto; }
+
+  .controls {
     display: flex;
     gap: 6px;
+    margin-left: auto;
     background: var(--panel);
     padding: 6px 10px;
     border-radius: 10px;
@@ -906,9 +949,7 @@
   .map-search-count:empty { display: none; }
 
   .legend {
-    position: absolute;
-    bottom: 16px;
-    left: 16px;
+    flex: 1 1 320px;
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
@@ -936,6 +977,8 @@
   }
 
   .legend-swatch.tone-hypothesis { border-style: dashed; }
+
+  #legend-kinds { flex-wrap: wrap; }
 
   .empty-state {
     position: absolute;
@@ -972,7 +1015,15 @@
   .tone-read { --c: var(--c-read); }
 
   /* ── Narrower screens ── */
+  /* The header shortens its labels so the session name stays readable. */
+  @media (max-width: 1400px) {
+    .label-long { display: none; }
+    .label-short { display: inline; }
+  }
+
   @media (max-width: 1200px) {
+    #toolbar .btn-label { display: none; }
+    #toolbar button { padding: 5px 9px; }
     #sessions { width: 220px; }
     #sidebar { width: 310px; }
   }
@@ -981,10 +1032,7 @@
   @media (max-width: 900px) {
     header { flex-wrap: wrap; row-gap: 8px; padding: 8px 12px; }
     .view-switcher { margin-left: 0; }
-    .label-long, #toolbar .btn-label { display: none; }
-    .label-short { display: inline; }
     .progress-summary { margin-left: 0; padding-left: 0; border-left: none; }
-    #toolbar button { padding: 5px 9px; }
 
     .workspace { flex-direction: column; }
     #sessions, body.sessions-collapsed #sessions { display: none; }
@@ -1005,7 +1053,7 @@
       border-top: 1px solid var(--border);
     }
     .legend { display: none; }
-    .controls { bottom: 10px; right: 10px; }
+    .canvas-bottom { left: 10px; right: 10px; bottom: 10px; }
   }
 </style>
 </head>
@@ -1013,6 +1061,7 @@
 <header>
   <button id="sessions-toggle" class="secondary" title="Show/hide sessions">☰</button>
   <h1>Synapse</h1>
+  <span id="session-name" class="session-name"></span>
   <span id="live-indicator" class="live-pill">
     <span class="live-dot"></span>
     <span id="live-text">Live</span>
@@ -1063,21 +1112,25 @@
       <h2>Waiting for Agent Mindmap…</h2>
       <p>When your agent calls <code>create_mindmap</code>, <code>map_architecture</code>, or <code>log_file_touch</code>, the plan and code mental model will update here live.</p>
     </div>
-    <div class="legend">
-      <div class="legend-item"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
-      <div class="legend-item"><span class="legend-swatch tone-completed"></span> Completed</div>
-      <div class="legend-item"><span class="legend-swatch tone-component"></span> 📦 Component</div>
-      <div class="legend-item"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
-      <div class="legend-item"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
-      <div class="legend-item"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
-      <div class="legend-item"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
-      <div class="legend-item" id="legend-kinds"></div>
-    </div>
-    <div class="controls">
-      <button id="zoom-out" class="secondary" title="Zoom out">−</button>
-      <button id="zoom-fit" class="secondary" title="Show the whole map">Fit</button>
-      <button id="zoom-focus" class="secondary" title="Center the task the agent is working on at full size">◎ Focus</button>
-      <button id="zoom-in" class="secondary" title="Zoom in">+</button>
+    <div class="canvas-bottom">
+      <div class="legend">
+        <div class="legend-item"><span class="legend-swatch tone-planned"></span> Planned</div>
+        <div class="legend-item"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
+        <div class="legend-item"><span class="legend-swatch tone-completed"></span> Completed</div>
+        <div class="legend-item"><span class="legend-swatch tone-blocked"></span> Blocked</div>
+        <div class="legend-item"><span class="legend-swatch tone-component"></span> 📦 Component</div>
+        <div class="legend-item"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
+        <div class="legend-item"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
+        <div class="legend-item"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
+        <div class="legend-item"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
+        <div class="legend-item" id="legend-kinds"></div>
+      </div>
+      <div class="controls">
+        <button id="zoom-out" class="secondary" title="Zoom out">−</button>
+        <button id="zoom-fit" class="secondary" title="Show the whole map">Fit</button>
+        <button id="zoom-focus" class="secondary" title="Center the task the agent is working on at full size">◎ Focus</button>
+        <button id="zoom-in" class="secondary" title="Zoom in">+</button>
+      </div>
     </div>
   </div>
 
