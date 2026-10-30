@@ -89,13 +89,18 @@ describe("viewer server", () => {
     expect((await call(viewer.port, { path: "/api/mindmaps/..%2F..%2Fsecret" })).status).toBe(404);
   });
 
-  it("looks up the repository of a mindmap saved without one", async () => {
-    const doc = emptyDoc("mm_old", "Old");
-    doc.workspacePath = path.join(tmpDir, "repo", ".claude", "worktrees", "deleted");
-    await store.save(doc);
+  it("looks up the repository of a mindmap saved without one, and keeps the one a mindmap has", async () => {
+    const workspacePath = path.join(tmpDir, "repo", ".claude", "worktrees", "deleted");
+    const old = { ...emptyDoc("mm_old", "Old"), workspacePath };
+    const stored = { ...emptyDoc("mm_stored", "Stored"), workspacePath, repoPath: "/where/it/was/saved" };
+    await Promise.all([store.save(old), store.save(stored)]);
+
     const { mindmaps } = JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body);
-    expect(mindmaps.find((m: { id: string }) => m.id === "mm_old").repoPath).toBe(path.join(tmpDir, "repo"));
-    await store.remove(doc.id);
+    const repoOf = (id: string) => mindmaps.find((m: { id: string }) => m.id === id).repoPath;
+    expect(repoOf("mm_old")).toBe(path.join(tmpDir, "repo"));
+    expect(repoOf("mm_stored")).toBe("/where/it/was/saved");
+    expect(repoOf("mm_test")).toBeUndefined(); // no workspace to look up
+    await Promise.all([store.remove(old.id), store.remove(stored.id)]);
   });
 
   it("lists a damaged mindmap as unreadable and says why it can't be opened", async () => {

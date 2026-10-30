@@ -122,6 +122,16 @@ describe("workspace watcher", () => {
     assert.equal(await repoRoot(tmpDir), undefined);
     assert.equal(await repoRoot(path.join(tmpDir, "moved", ".worktrees", "gone", "pkg")), path.join(tmpDir, "moved"));
     assert.equal(await repoRoot(path.join(tmpDir, "moved", "gone")), undefined);
+    assert.equal(await repoRoot("C:\\code\\repo\\.claude\\worktrees\\gone"), "C:\\code\\repo");
+  });
+
+  it("takes a bare repository as the main checkout of its worktrees", async () => {
+    const { repoDir } = await makeRepo("bare-source");
+    const bare = path.join(tmpDir, "bare.git");
+    await execFileAsync("git", ["clone", "-q", "--bare", repoDir, bare]);
+    const worktree = path.join(tmpDir, "bare-worktree");
+    await execFileAsync("git", ["worktree", "add", "-q", worktree, "other"], { cwd: bare });
+    assert.equal(await repoRoot(worktree), await realpath(bare));
   });
 
   it("stores the repository on the mindmap while the worktree still exists", async () => {
