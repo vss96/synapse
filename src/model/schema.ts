@@ -188,6 +188,8 @@ export const MindmapDocument = z
     title: Text,
     /** Workspace / repository root used for git and file tracking. */
     workspacePath: z.string().optional(),
+    /** The repository's main checkout, the same for all of its worktrees. Kept because a worktree may be deleted. */
+    repoPath: z.string().optional(),
     createdAt: Timestamp,
     updatedAt: Timestamp,
     /** Set when the session is archived in the viewer; archived sessions are listed separately. */
@@ -207,6 +209,7 @@ export interface MindmapListItem {
   updatedAt: string;
   createdAt: string;
   workspacePath?: string;
+  repoPath?: string;
   archivedAt?: string;
   nodeCount: number;
   completedTasks: number;

@@ -19,7 +19,7 @@ The viewer is a local web page that draws every mindmap in your data directory. 
 
 ## Sessions
 
-Each mindmap is a session. Sessions are grouped by repository (the `workspacePath` the agent passed to `create_mindmap`). The group with the most recently updated session comes first, and sessions without a workspace go under **No repository**. Each row shows the title, active task, progress (completed/total tasks), number of files touched, and when it was last updated. Hover over a group name to see the full path.
+Each mindmap is a session. Sessions are grouped by repository, so a repository and all of its git worktrees share one group, named after the main checkout. The group with the most recently updated session comes first, and sessions without a workspace go under **No repository**. Each row shows the title, active task, progress (completed/total tasks), number of files touched, and when it was last updated, plus the name of the worktree if the session ran in one. Hover over a group name to see the full path.
 
 - **Groups**: click a group name to collapse or expand it. The viewer remembers which groups you collapsed. While you filter, every match is shown.
 - **Archive**: hover over a session and click **Archive** to move it to the **Archived** group at the bottom (collapsed by default), and **Restore** to bring it back. Archiving hides a finished session without deleting it, and the agent can keep writing to it. To delete a mindmap for good, the agent calls [`delete_mindmap`](../reference/tools#delete-mindmap).

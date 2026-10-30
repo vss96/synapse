@@ -13,8 +13,8 @@ import { z } from "zod";
 import { errorCode } from "./errors.js";
 import * as store from "./store.js";
 import { fileTouchTarget, upsertFileTouches } from "./model/file-touch.js";
-import { MindmapId } from "./model/schema.js";
-import { inspectGitChanges } from "./watcher.js";
+import { MindmapId, type MindmapList } from "./model/schema.js";
+import { inspectGitChanges, repoRoot } from "./watcher.js";
 
 export const DEFAULT_VIEWER_PORT = 4040;
 /** Ports tried after the default before letting the OS pick one. */
@@ -70,6 +70,23 @@ function isTrustedRequest(req: IncomingMessage, port: number): boolean {
 const SyncGitRequest = z.object({ mindmapId: MindmapId, workspacePath: z.string().optional() });
 const ArchiveRequest = z.object({ mindmapId: MindmapId, archived: z.boolean() });
 
+/** Remembered per workspace: the list is read after every change, and a workspace stays in its repository. */
+const repoRoots = new Map<string, string | undefined>();
+
+/** The session list. Mindmaps saved before `repoPath` existed don't have one, so look it up for them. */
+async function listWithRepos(): Promise<MindmapList> {
+  const list = await store.list();
+  const mindmaps = await Promise.all(
+    list.mindmaps.map(async (m) => {
+      const { repoPath, workspacePath } = m;
+      if (repoPath || !workspacePath) return m;
+      if (!repoRoots.has(workspacePath)) repoRoots.set(workspacePath, await repoRoot(workspacePath));
+      return { ...m, repoPath: repoRoots.get(workspacePath) };
+    }),
+  );
+  return { ...list, mindmaps };
+}
+
 /** Read a JSON request body, or answer the request with an error and return undefined. */
 async function readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<unknown> {
   if (!(req.headers["content-type"] ?? "").startsWith("application/json")) {
@@ -96,11 +113,11 @@ async function handleGitSync(req: IncomingMessage, res: ServerResponse): Promise
   const loaded = await store.load(mindmapId);
   if (!loaded) return sendJson(res, 404, { error: "Mindmap not found" });
 
-  const repoPath = workspacePath || loaded.workspacePath;
-  if (!repoPath) return sendJson(res, 400, { error: "This mindmap has no workspacePath to sync from" });
+  const workspace = workspacePath || loaded.workspacePath;
+  if (!workspace) return sendJson(res, 400, { error: "This mindmap has no workspacePath to sync from" });
 
   // Ask git first: store.update holds the mindmap's lock only for the quick change itself.
-  const changes = await inspectGitChanges(repoPath);
+  const changes = await inspectGitChanges(workspace);
   if (changes.length === 0) return sendJson(res, 200, { synced: 0, mindmap: loaded });
   const doc = await store.update(mindmapId, (doc) => {
     const target = fileTouchTarget(doc);
@@ -237,7 +254,7 @@ export async function startViewer(options: ViewerOptions = {}): Promise<RunningV
         return;
       }
       if (pathname === "/api/mindmaps" && req.method === "GET") {
-        return sendJson(res, 200, await store.list());
+        return sendJson(res, 200, await listWithRepos());
       }
       if (pathname.startsWith("/api/mindmaps/") && req.method === "GET") {
         const id = MindmapId.safeParse(decodeURIComponent(pathname.slice("/api/mindmaps/".length)));

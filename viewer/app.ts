@@ -22,6 +22,7 @@ import {
 } from "./camera.js";
 import { ROOT, VIEW_MODES, layoutTree, type ViewMode } from "./layout.js";
 import { matchesQuery } from "./search.js";
+import { ARCHIVED_GROUP, groupSessions, worktreeName } from "./session-groups.js";
 import { sessionHash, sessionIdFromHash } from "./session-link.js";
 import { dayLabel } from "./time.js";
 
@@ -1001,9 +1002,6 @@ function filteredSessions() {
   return sessions.filter((s) => `${s.title} ${s.workspacePath || ""} ${s.activeTask || ""}`.toLowerCase().includes(q));
 }
 
-// Sessions are grouped by repository (workspacePath); archived ones go in a last group of their own.
-// Not a path, so it can't collide with a repository group.
-const ARCHIVED_GROUP = "archived:";
 const COLLAPSED_GROUPS_KEY = "synapse.collapsedGroups";
 
 /** Group keys the user collapsed; the archived group starts collapsed. */
@@ -1028,43 +1026,15 @@ function toggleGroup(key: string) {
   renderSessions();
 }
 
-interface SessionGroup {
-  key: string;
-  name: string;
-  /** Shown on hover: the full repository path. */
-  hint: string;
-  items: MindmapListItem[];
-}
-
-/** Groups in order of their most recently updated session (the list arrives newest first). */
-function groupSessions(items: MindmapListItem[]): SessionGroup[] {
-  const groups = new Map<string, SessionGroup>();
-  const archived: SessionGroup = { key: ARCHIVED_GROUP, name: "Archived", hint: "Archived sessions", items: [] };
-  for (const s of items) {
-    if (s.archivedAt) {
-      archived.items.push(s);
-      continue;
-    }
-    const key = s.workspacePath ?? "";
-    let group = groups.get(key);
-    if (!group) {
-      const name = key ? key.split(/[\\/]/).filter(Boolean).pop() ?? key : "No repository";
-      group = { key, name, hint: key || "Sessions without a workspacePath", items: [] };
-      groups.set(key, group);
-    }
-    group.items.push(s);
-  }
-  return archived.items.length ? [...groups.values(), archived] : [...groups.values()];
-}
-
 function sessionItemHtml(s: MindmapListItem) {
   const pct = s.totalTasks > 0 ? Math.round((s.completedTasks / s.totalTasks) * 100) : 0;
   const live = Date.now() - new Date(s.updatedAt).getTime() < LIVE_WINDOW_MS;
   const action = s.archivedAt ? "restore" : "archive";
+  const worktree = worktreeName(s);
   return `
     <div class="session-item ${s.id === currentId ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
       <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<span class="session-title-text">${escXml(s.title)}</span></div>
-      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}
+      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}${worktree ? `<span class="session-worktree">· ${escXml(worktree)}</span>` : ""}
         <button class="session-action" data-action="${action}" title="${s.archivedAt ? "Restore this session" : "Archive this session"}">${s.archivedAt ? "Restore" : "Archive"}</button>
       </div>
       ${s.activeTask ? `<div class="session-task">◐ ${escXml(s.activeTask)}</div>` : ""}
