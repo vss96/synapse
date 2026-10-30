@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { watch, existsSync, statSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as store from "./store.js";
-import { fileTouchTarget, upsertFileTouch } from "./model/file-touch.js";
+import { fileTouchTarget, upsertFileTouches } from "./model/file-touch.js";
 import { now, type EditTouch, type MindmapDocument, type MindmapId } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
@@ -246,10 +246,11 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       if (touches.length === 0) return;
 
       const targetNode = fileTouchTarget(doc);
-      for (const [relPath, action] of touches) {
-        upsertFileTouch(targetNode, { path: relPath, action, changes: [], summary: `Auto-detected file ${action}`, timestamp: now() });
-        store.recordActivity(doc, `File ${action}: ${relPath}`, { nodeId: targetNode.id, file: relPath });
-      }
+      upsertFileTouches(
+        targetNode,
+        touches.map(([relPath, action]) => ({ path: relPath, action, changes: [], summary: `Auto-detected file ${action}`, timestamp: now() })),
+      );
+      for (const [relPath, action] of touches) store.recordActivity(doc, `File ${action}: ${relPath}`, { nodeId: targetNode.id, file: relPath });
     });
   };
 

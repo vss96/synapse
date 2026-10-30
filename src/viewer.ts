@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { errorCode } from "./errors.js";
 import * as store from "./store.js";
-import { fileTouchTarget, upsertFileTouch } from "./model/file-touch.js";
+import { fileTouchTarget, upsertFileTouches } from "./model/file-touch.js";
 import { MindmapId } from "./model/schema.js";
 import { inspectGitChanges } from "./watcher.js";
 
@@ -104,7 +104,7 @@ async function handleGitSync(req: IncomingMessage, res: ServerResponse): Promise
   if (changes.length === 0) return sendJson(res, 200, { synced: 0, mindmap: loaded });
   const doc = await store.update(mindmapId, (doc) => {
     const target = fileTouchTarget(doc);
-    for (const touch of changes) upsertFileTouch(target, touch);
+    upsertFileTouches(target, changes);
     store.recordActivity(doc, `Synced ${changes.length} changed file(s) from git into "${target.label}"`, {
       nodeId: target.id,
     });

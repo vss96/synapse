@@ -43,14 +43,27 @@ export function combineTouches(prev: FileTouch, next: FileTouch): FileTouch {
   return { ...common, ...combinedAction(prev, next), changes: mergeChanges(prev.changes, next.changes) };
 }
 
-/** Record a file touch on a node, merging with an earlier touch of the same file (or of a renamed file's old path). */
+/**
+ * Record file touches on a node in order, merging each with an earlier touch of the same file (or of a
+ * renamed file's old path). The node's paths are indexed once, so a big batch doesn't rescan them per touch.
+ */
+export function upsertFileTouches(node: MindmapNode, touches: readonly FileTouch[]): void {
+  const indexOf = new Map<string, number>();
+  node.files.forEach((f, i) => {
+    if (!indexOf.has(f.path)) indexOf.set(f.path, i);
+  });
+  for (const touch of touches) {
+    const i = indexOf.get(touch.path) ?? (touch.action === "rename" ? indexOf.get(touch.previousPath) : undefined) ?? node.files.length;
+    const earlier = node.files[i];
+    node.files[i] = earlier ? combineTouches(earlier, touch) : touch;
+    if (earlier) indexOf.delete(earlier.path); // a rename moved it
+    indexOf.set(touch.path, i);
+    node.updatedAt = touch.timestamp;
+  }
+}
+
 export function upsertFileTouch(node: MindmapNode, touch: FileTouch): void {
-  let i = node.files.findIndex((f) => f.path === touch.path);
-  if (i < 0 && touch.action === "rename") i = node.files.findIndex((f) => f.path === touch.previousPath);
-  const earlier = node.files[i];
-  if (earlier) node.files[i] = combineTouches(earlier, touch);
-  else node.files.push(touch);
-  node.updatedAt = touch.timestamp;
+  upsertFileTouches(node, [touch]);
 }
 
 const TOUCHED_FILES_LABEL = "Touched Files";

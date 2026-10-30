@@ -2,7 +2,7 @@ import { z } from "zod";
 import * as store from "./store.js";
 import { render } from "./renderer.js";
 import { ensureWorkspaceWatcher, inspectGitChanges, stopWorkspaceWatcher } from "./watcher.js";
-import { fileTouchTarget, mergeChanges, upsertFileTouch } from "./model/file-touch.js";
+import { fileTouchTarget, mergeChanges, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
 import { CHANGE_KINDS, FILE_ACTIONS, LINK_STYLES, NODE_TYPES, TASK_STATUSES, isConcept, isTask, isTaskType, type ChildNodeType, type LinkStyle, type TaskStatus } from "./model/kinds.js";
 import { attachChild, createChild, reparent, retype } from "./model/node.js";
 import {
@@ -279,7 +279,7 @@ const updateNode = defineTool({
       if (input.notes !== undefined) node.notes = input.notes;
       const status = statusFor(node.type, input.status, node.label);
       if (status && isTask(node)) node.status = status;
-      for (const f of input.files ?? []) upsertFileTouch(node, toFileTouch(f));
+      upsertFileTouches(node, input.files?.map(toFileTouch) ?? []);
       node.updatedAt = now();
       doc.nodes[node.id] = node;
 
@@ -395,7 +395,7 @@ const mapArchitecture = defineTool({
           node.label = item.label;
           if (item.notes) node.notes = item.notes;
           if (status && isTask(node)) node.status = status;
-          for (const f of files) upsertFileTouch(node, f);
+          upsertFileTouches(node, files);
           doc.nodes[node.id] = node;
           byKey.set(item.key, node.id);
           placed.push([item, node.id]);
@@ -547,7 +547,7 @@ const syncGitStatus = defineTool({
       if (input.targetNodeId) getNode(doc, input.targetNodeId);
       doc.workspacePath = workspacePath;
       const target = fileTouchTarget(doc, input.targetNodeId);
-      for (const touch of changes) upsertFileTouch(target, touch);
+      upsertFileTouches(target, changes);
       const summary = `Synced ${changes.length} changed file(s) from git status into "${target.label}"`;
       store.recordActivity(doc, summary, { nodeId: target.id });
       return { mindmapId: doc.id, summary, node: ref(target) };
