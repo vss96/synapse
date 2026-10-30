@@ -113,11 +113,11 @@ async function handleGitSync(req: IncomingMessage, res: ServerResponse): Promise
   const loaded = await store.load(mindmapId);
   if (!loaded) return sendJson(res, 404, { error: "Mindmap not found" });
 
-  const repoPath = workspacePath || loaded.workspacePath;
-  if (!repoPath) return sendJson(res, 400, { error: "This mindmap has no workspacePath to sync from" });
+  const workspace = workspacePath || loaded.workspacePath;
+  if (!workspace) return sendJson(res, 400, { error: "This mindmap has no workspacePath to sync from" });
 
   // Ask git first: store.update holds the mindmap's lock only for the quick change itself.
-  const changes = await inspectGitChanges(repoPath);
+  const changes = await inspectGitChanges(workspace);
   if (changes.length === 0) return sendJson(res, 200, { synced: 0, mindmap: loaded });
   const doc = await store.update(mindmapId, (doc) => {
     const target = fileTouchTarget(doc);
