@@ -8,7 +8,7 @@ import path from "node:path";
 import { z } from "zod";
 import { tools } from "../src/tools.js";
 import * as store from "../src/store.js";
-import { shouldIgnorePath, watchedMindmap } from "../src/watcher.js";
+import { inspectGitChanges, shouldIgnorePath, watchedMindmap } from "../src/watcher.js";
 import { MindmapId, type MindmapDocument } from "../src/model/schema.js";
 import { addChild, emptyDoc } from "./fixtures.js";
 
@@ -54,7 +54,7 @@ describe("shouldIgnorePath", () => {
     for (const p of ["src/index.ts", "src/target/x.ts", "src/tmp.ts", "docs/out.md"]) assert.ok(!shouldIgnorePath(p, false), p);
   });
 
-  it("skips tool caches only outside git, where no ignore rules apply", () => {
+  it("skips tool, dependency and build folders unless git tracks the file", () => {
     for (const p of [".gradle/9.8.1/fileHashes/fileHashes.lock", "buildSrc/.gradle/x", "app/__pycache__/m.pyc", ".idea/workspace.xml", "node_modules/x/index.js"]) {
       assert.ok(shouldIgnorePath(p, false), p);
       assert.ok(!shouldIgnorePath(p, true), p);
@@ -118,20 +118,56 @@ describe("workspace watcher", () => {
     await mkdir(path.join(repoDir, ".gradle"));
     await writeFile(path.join(repoDir, ".gradle", "fileHashes.lock"), "x");
     await writeFile(path.join(repoDir, "debug.log"), "x");
-    // Not in this repo's .gitignore, so it counts even though it's in the built-in list
-    await mkdir(path.join(repoDir, ".idea"));
-    await writeFile(path.join(repoDir, ".idea", "workspace.xml"), "x");
     await writeFile(path.join(repoDir, "new.ts"), "export const n = 1;\n");
 
     const doc = await eventually(id, (d) => {
       const files = Object.values(d.nodes).flatMap((n) => n.files);
-      assert.deepEqual(files.map((f) => `${f.action}:${f.path}`).sort(), ["create:.idea/workspace.xml", "create:new.ts", "modify:a.ts"]);
+      assert.deepEqual(files.map((f) => `${f.action}:${f.path}`).sort(), ["create:new.ts", "modify:a.ts"]);
     });
     const step = Object.values(doc.nodes).find((n) => n.label === "Edit")!;
-    assert.equal(step.files.length, 3, "attached to the in_progress task");
+    assert.equal(step.files.length, 2, "attached to the in_progress task");
     await settle();
     const later = (await store.load(id))!;
-    assert.deepEqual(Object.values(later.nodes).flatMap((n) => n.files).map((f) => f.path).sort(), [".idea/workspace.xml", "a.ts", "new.ts"]);
+    assert.deepEqual(Object.values(later.nodes).flatMap((n) => n.files).map((f) => f.path).sort(), ["a.ts", "new.ts"]);
+  }, 20000);
+
+  it("skips untracked files in the built-in folders even when the repo doesn't ignore them", async () => {
+    const { repoDir, git } = await makeRepo("untracked-deps");
+    await mkdir(path.join(repoDir, "dist"));
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "1;\n");
+    await git("add", ".");
+    await git("commit", "-qm", "commit the bundle");
+    const id = await createMindmap({ title: "Deps", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+
+    // What `npm install` leaves in a repo with no node_modules rule. .idea is IDE state, so no exception for it.
+    await mkdir(path.join(repoDir, "node_modules", "left-pad"), { recursive: true });
+    await writeFile(path.join(repoDir, "node_modules", "left-pad", "index.js"), "1;\n");
+    await mkdir(path.join(repoDir, ".idea"));
+    await writeFile(path.join(repoDir, ".idea", "workspace.xml"), "x");
+    await writeFile(path.join(repoDir, "dist", "untracked.js"), "1;\n");
+    // Git tracks this one, so it counts wherever it lives
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "2;\n");
+    await writeFile(path.join(repoDir, "new.ts"), "export const n = 1;\n");
+
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["create:new.ts", "modify:dist/bundle.js"]));
+    await settle();
+    assert.deepEqual(touched((await store.load(id))!), ["create:new.ts", "modify:dist/bundle.js"]);
+  }, 20000);
+
+  it("skips the same untracked folders in git sync, keeping tracked files inside them", async () => {
+    const { repoDir, git } = await makeRepo("sync-deps");
+    await mkdir(path.join(repoDir, "dist"));
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "1;\n");
+    await git("add", ".");
+    await git("commit", "-qm", "commit the bundle");
+    await mkdir(path.join(repoDir, "node_modules", "left-pad"), { recursive: true });
+    await writeFile(path.join(repoDir, "node_modules", "left-pad", "index.js"), "1;\n");
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "2;\n");
+    await writeFile(path.join(repoDir, "new.ts"), "export const n = 1;\n");
+
+    const changes = await inspectGitChanges(repoDir);
+    assert.deepEqual(changes.map((c) => `${c.action}:${c.path}`).sort(), ["create:new.ts", "modify:dist/bundle.js"]);
   }, 20000);
 
   it("falls back to the built-in ignore list outside git", async () => {

@@ -69,7 +69,7 @@ When a mindmap has a `workspacePath`, the MCP server watches that directory recu
 
 - Runs inside the MCP server process, so it stops when the client stops the server. After a restart it starts again the next time a tool changes the mindmap.
 - Stops when its mindmap is deleted or moves to another `workspacePath`, or once it has changes to record into a mindmap that was archived in the viewer. Changes it hadn't recorded yet are dropped.
-- Outside a git repo, skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__` instead.
+- Skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__`, inside a repo or not, unless git tracks the file. So an `npm install` is left out even in a repo with no `node_modules` rule, while a committed `dist/bundle.js` is still recorded.
 - Always skips `.git`, `data/*.json`, directories, and editor and atomic-write temp files (`*~`, `*.swp`, `*.tmp`, `*.tmp.<pid>.<hex>`, `.!<pid>!*`).
 - Doesn't detect renames.
 - Fails silently where recursive file watching isn't supported.

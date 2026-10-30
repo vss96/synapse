@@ -8,7 +8,7 @@ import { now, type EditTouch, type MindmapDocument, type MindmapId } from "./mod
 
 const execFileAsync = promisify(execFile);
 
-/** Tool, cache and build directories. Only used outside git: in a repo, its own ignore rules decide. */
+/** Tool, dependency, cache and build directories, which not every repo ignores. Only files git tracks count in these. */
 const FALLBACK_IGNORED_SEGMENTS = new Set([
   "node_modules",
   "dist",
@@ -28,13 +28,13 @@ const FALLBACK_IGNORED_SEGMENTS = new Set([
 const TEMP_FILE = /(~|\.swp|\.tmp|\.tmp\.\d+\.[0-9a-f]+)$|(^|\/)\.!\d+!/;
 
 /**
- * Paths never worth recording: git's own files, temp files and synapse's data. Outside a git repo,
- * also common tool, cache and build directories (in a repo, `gitIgnored` applies its ignore rules).
+ * Paths never worth recording: git's own files, temp files and synapse's data, plus common tool, cache
+ * and build directories unless `tracked` says git tracks the path (a repo's own rules are `gitIgnored`'s job).
  */
-export function shouldIgnorePath(relPath: string, inRepo: boolean): boolean {
+export function shouldIgnorePath(relPath: string, tracked: boolean): boolean {
   const parts = relPath.split(/[\\/]/);
   if (parts.includes(".git")) return true;
-  if (!inRepo && parts.some((part) => FALLBACK_IGNORED_SEGMENTS.has(part))) return true;
+  if (!tracked && parts.some((part) => FALLBACK_IGNORED_SEGMENTS.has(part))) return true;
   // Ignore synapse's own data JSON files if watching the synapse repo itself
   if (parts[0] === "data" && relPath.endsWith(".json")) return true;
   return TEMP_FILE.test(relPath);
@@ -102,7 +102,7 @@ export async function inspectGitChanges(workspacePath: string): Promise<EditTouc
     const [from, to] = line.slice(3).trim().split(" -> ");
     const filePath = (to ?? from ?? "").trim();
     const previousPath = to !== undefined ? from?.trim() : undefined;
-    if (!filePath || shouldIgnorePath(filePath, true)) continue;
+    if (!filePath || shouldIgnorePath(filePath, code !== "??")) continue;
 
     const diffStat = statsMap.get(filePath);
     const describe = (action: string) => (diffStat ? `Git ${action} (${diffStat})` : `Git ${action}`);
@@ -198,7 +198,9 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
 
     // Ask git everything first: store.update holds the mindmap's lock only for the quick change itself.
     const ignored = await gitIgnored(resolved, [...batch.keys()]);
-    const entries = [...batch].filter(([p]) => !ignored.has(p));
+    const unignored = [...batch].filter(([p]) => !ignored.has(p));
+    const tracked = await gitListed(resolved, ["ls-files"], unignored.map(([p]) => p));
+    const entries = unignored.filter(([p]) => !shouldIgnorePath(p, tracked.has(p)));
     const paths = entries.map(([p]) => p);
     if (paths.length === 0) return;
     const rebasing = (await git(resolved, ["rev-parse", "--git-path", "rebase-merge", "--git-path", "rebase-apply"]))
@@ -208,7 +210,6 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       await record((doc) => store.recordActivity(doc, `Git rebase in progress: ${paths.length} file change(s) not attributed to a task`));
       return;
     }
-    const tracked = await gitListed(resolved, ["ls-files"], paths);
 
     // A checkout, reset, merge or pull rewrites the worktree to match the new HEAD; that churn isn't
     // the agent's edits. HEAD's reflog says what last moved it and when (a commit is the agent's own).
@@ -265,7 +266,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     watcher = watch(resolved, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
       const relPath = filename.replace(/\\/g, "/");
-      if (shouldIgnorePath(relPath, inRepo)) return;
+      if (shouldIgnorePath(relPath, inRepo)) return; // in a repo git may track it: flushBatch asks
 
       if (pendingFiles.size === 0) batchStart = Date.now();
       pendingFiles.set(relPath, pendingFiles.get(relPath) === true || eventType === "rename");
