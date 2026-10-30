@@ -70,7 +70,7 @@ When a mindmap has a `workspacePath`, the MCP server watches that directory recu
 - Runs inside the MCP server process, so it stops when the client stops the server. After a restart it starts again the next time a tool changes the mindmap.
 - Stops when its mindmap is deleted or moves to another `workspacePath`, or once it has changes to record into a mindmap that was archived in the viewer or whose tasks are all completed. Changes it hadn't recorded yet are dropped, including an edit still waiting in the 600 ms batch when the last task is completed.
 - Starts again for a finished mindmap when a tool gives it an open task. Until then, `log_file_touch` and git sync still record into it. A mindmap with no tasks at all isn't finished, so it keeps collecting.
-- Skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__`, inside a repo or not, unless git tracks the file. So an `npm install` is left out even in a repo with no `node_modules` rule, while a committed `dist/bundle.js` is still recorded.
+- Skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__`, inside a repo or not, unless git tracks the file. So an `npm install` is left out even in a repo with no `node_modules` rule, while a committed `dist/bundle.js` is still recorded. In a repo, deleting a file the mindmap already lists is recorded too, even once `git rm` has untracked it.
 - Always skips `.git`, `data/*.json`, directories, and editor and atomic-write temp files (`*~`, `*.swp`, `*.tmp`, `*.tmp.<pid>.<hex>`, `.!<pid>!*`).
 - Doesn't detect renames.
 - Fails silently where recursive file watching isn't supported.

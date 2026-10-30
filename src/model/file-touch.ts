@@ -14,6 +14,11 @@ export function mergeChanges(prev: readonly CodeChange[], next: readonly CodeCha
   return merged;
 }
 
+/** Every path that a node in the mindmap has a file touch for. */
+export function recordedPaths(doc: MindmapDocument): Set<string> {
+  return new Set(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.path)));
+}
+
 /** The action a file ends up with after an earlier and a later edit; a rename keeps its previous path. */
 function combinedAction(
   prev: EditTouch,

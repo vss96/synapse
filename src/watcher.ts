@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { watch, existsSync, statSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as store from "./store.js";
-import { collectsWorkspaceChanges, fileTouchTarget, upsertFileTouches } from "./model/file-touch.js";
+import { collectsWorkspaceChanges, fileTouchTarget, recordedPaths, upsertFileTouches } from "./model/file-touch.js";
 import { now, type EditTouch, type MindmapDocument, type MindmapId } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
@@ -201,7 +201,11 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     const ignored = await gitIgnored(resolved, [...batch.keys()]);
     const unignored = [...batch].filter(([p]) => !ignored.has(p));
     const tracked = await gitListed(resolved, ["ls-files"], unignored.map(([p]) => p));
-    const entries = unignored.filter(([p]) => !shouldIgnorePath(p, tracked.has(p)));
+    // `git rm` has already taken a file out of the index, so a deleted path the mindmap lists counts as tracked.
+    // No other deleted path does: removing node_modules mustn't reach the rebase and churn counts below.
+    const mindmap = await store.load(mindmapId);
+    const listed = mindmap ? recordedPaths(mindmap) : new Set<string>();
+    const entries = unignored.filter(([p]) => !shouldIgnorePath(p, tracked.has(p) || (listed.has(p) && !existsSync(path.join(resolved, p)))));
     const paths = entries.map(([p]) => p);
     if (paths.length === 0) return;
     const rebasing = (await git(resolved, ["rev-parse", "--git-path", "rebase-merge", "--git-path", "rebase-apply"]))
@@ -224,7 +228,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     // store.update only writes the mindmap if this changed it.
     await record((doc) => {
       let churn = 0;
-      const recorded = new Set(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.path)));
+      const recorded = recordedPaths(doc);
 
       // Classify by the file's state before the batch, not by event type: editors and git replace files
       // by renaming a temp over them, which fs.watch reports as `rename` just like a new file.
