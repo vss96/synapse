@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import { tools, type ToolResult } from "../src/tools.js";
+import { stopWorkspaceWatcher, watchedMindmap } from "../src/watcher.js";
 import { isTask } from "../src/model/kinds.js";
 import { z } from "zod";
 import { MindmapDocument, MindmapId, NodeId, ROOT_ID, type FileTouch, type MindmapNode, type TaskNode } from "../src/model/schema.js";
@@ -62,6 +63,13 @@ function taskOf(doc: MindmapDocument, id: NodeId | undefined): TaskNode {
 }
 const childrenOf = (doc: MindmapDocument, id: NodeId = ROOT_ID) => nodeOf(doc, id).children;
 const changesOf = (f: FileTouch | undefined) => (!f || f.action === "read" ? [] : f.changes);
+
+/** Stops the repo's watcher first, or it could flush after the data directory has been restored. */
+async function removeRepo(repoDir: string): Promise<void> {
+  const watched = watchedMindmap(repoDir);
+  if (watched) stopWorkspaceWatcher(watched);
+  await rm(repoDir, { recursive: true, force: true });
+}
 
 describe("MCP tools integration", () => {
   let tmpDir: string;
@@ -225,7 +233,7 @@ describe("MCP tools integration", () => {
       assert.match(modFile?.summary ?? "", /\+2\/-1 lines/);
       assert.equal(files.find((f) => f.path === "new-helper.ts")?.action, "create");
     } finally {
-      await rm(repoDir, { recursive: true, force: true });
+      await removeRepo(repoDir);
     }
   });
 
@@ -312,7 +320,7 @@ describe("MCP tools integration", () => {
       assert.ok(file?.action === "rename");
       assert.equal(file.previousPath, "old.ts");
     } finally {
-      await rm(repoDir, { recursive: true, force: true });
+      await removeRepo(repoDir);
     }
   });
 
@@ -380,7 +388,7 @@ describe("MCP tools integration", () => {
       assert.equal(synced.isError, true);
       assert.match(textOf(synced), /not found/);
     } finally {
-      await rm(repoDir, { recursive: true, force: true });
+      await removeRepo(repoDir);
     }
   });
 
