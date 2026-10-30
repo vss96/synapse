@@ -1,7 +1,7 @@
 import { describe, it, beforeAll, afterAll, spyOn } from "bun:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, unlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, unlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
@@ -201,6 +201,24 @@ describe("store & renderer", () => {
     assert.equal(await store.remove(tail), true, "it can still be deleted");
     await store.remove(junk);
     errors.mockRestore();
+  });
+
+  // Root can read a file whatever its permissions
+  it.skipIf(process.getuid?.() === 0)("reports a file it isn't allowed to read instead of treating it as missing", async () => {
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    const doc = emptyDoc("mm_denied", "Denied");
+    await store.save(doc);
+    const file = path.join(tmpDir, "mm_denied.json");
+    await chmod(file, 0o000);
+    try {
+      await assert.rejects(store.load(doc.id), store.UnreadableMindmapError);
+      await assert.rejects(store.update(doc.id, () => "x"), store.UnreadableMindmapError);
+      assert.deepEqual((await store.list()).unreadable.map((m) => m.id), [doc.id]);
+    } finally {
+      await chmod(file, 0o600);
+      errors.mockRestore();
+    }
+    await store.remove(doc.id);
   });
 
   it("caps activityLog at 100 entries with newest first", () => {

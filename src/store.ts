@@ -26,7 +26,7 @@ export function recordActivity(doc: MindmapDocument, message: string, extra?: { 
   if (doc.activityLog.length > 100) doc.activityLog.length = 100;
 }
 
-/** A mindmap file exists but can't be loaded: its JSON is damaged, or it isn't a valid mindmap. */
+/** A mindmap file exists but can't be loaded: it can't be opened, its JSON is damaged, or it isn't a valid mindmap. */
 export class UnreadableMindmapError extends Error {
   constructor(
     readonly id: string,
@@ -53,8 +53,9 @@ async function readDocument(file: string): Promise<MindmapDocument | null> {
   let raw: string;
   try {
     raw = await readFile(file, "utf-8");
-  } catch {
-    return null;
+  } catch (err) {
+    if (errorCode(err) === "ENOENT") return null;
+    throw unreadableError(file, String(err));
   }
   let json: unknown;
   try {
