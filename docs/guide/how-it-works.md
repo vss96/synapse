@@ -30,8 +30,8 @@
 | `GET /` | The viewer page (`viewer/index.html`) |
 | `GET /app.js` | The bundled viewer script |
 | `GET /logo.png`, `GET /favicon.png` | Images |
-| `GET /api/mindmaps` | Session list, newest first: `id`, `title`, `workspacePath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `activeTask`, `fileCount`, and `archivedAt` when the session is archived |
-| `GET /api/mindmaps/:id` | One full mindmap document |
+| `GET /api/mindmaps` | `{ mindmaps, unreadable }`. `mindmaps` is the session list, newest first: `id`, `title`, `workspacePath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `activeTask`, `fileCount`, and `archivedAt` when the session is archived. `unreadable` lists files that can't be read, as `{ id, error }` |
+| `GET /api/mindmaps/:id` | One full mindmap document, or `500` if it can't be read |
 | `POST /api/sync-git` | Body `{ "mindmapId": "…", "workspacePath"?: "…" }`. Runs [git sync](#git-sync) and returns `{ synced, mindmap }` |
 | `POST /api/archive` | Body `{ "mindmapId": "…", "archived": true \| false }`. Archives or restores a session without changing its `updatedAt`, and returns `{ id, archivedAt }` (`null` once restored) |
 | `GET /events` | SSE stream of `{ type: "connected" \| "mindmap_updated", id?, timestamp }` |
@@ -65,10 +65,11 @@ When a mindmap has a `workspacePath`, the MCP server watches that directory recu
 
 - Classifies a file by its state before the batch, not by the kind of file event: a file git tracks or that the mindmap already lists is a `modify`, even when an editor or git saved it by renaming a temp file over it. A file that appears and disappears within one batch is skipped.
 - In a git repo, skips whatever the repo ignores: its `.gitignore` files, `.git/info/exclude` and global excludes.
+- Skips git worktrees inside the watched directory, such as `.claude/worktrees/*`, even when the repo doesn't ignore them. Their files belong to the sessions working there.
 - Leaves out changes made by git itself. After a checkout, reset, merge or pull, files that now match `HEAD` exactly are recorded as one activity entry, such as `Git checkout: moving from main to fix: 277 file change(s) not attributed to a task`; files that differ from `HEAD` are still recorded. While a rebase is in progress, no changes are recorded.
 
 - Runs inside the MCP server process, so it stops when the client stops the server. After a restart it starts again the next time a tool changes the mindmap.
-- Stops when its mindmap is deleted or moves to another `workspacePath`, or once it has changes to record into a mindmap that was archived in the viewer. Changes it hadn't recorded yet are dropped.
+- Stops when its mindmap is deleted or moves to another `workspacePath`, or once it has changes to record into a mindmap that was archived in the viewer or can't be read. Changes it hadn't recorded yet are dropped.
 - Outside a git repo, skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__` instead.
 - Always skips `.git`, `data/*.json`, directories, and editor and atomic-write temp files (`*~`, `*.swp`, `*.tmp`, `*.tmp.<pid>.<hex>`, `.!<pid>!*`).
 - Doesn't detect renames.

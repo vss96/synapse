@@ -163,6 +163,15 @@ describe("MCP tools integration", () => {
     assert.match(await fails("delete_mindmap", { mindmapId: doc.id }), /not found/);
   });
 
+  it("says a damaged mindmap can't be read, rather than that it doesn't exist", async () => {
+    const file = path.join(tmpDir, "mm_damaged.json");
+    await writeFile(file, "{ not json");
+    assert.match(await fails("get_mindmap", { mindmapId: "mm_damaged" }), /can't be read/);
+    assert.match(await fails("add_node", { mindmapId: "mm_damaged", parentId: "root", label: "x", type: "task" }), /can't be read/);
+    assert.match(await ok("list_mindmaps"), /mm_damaged {2}– {2}can't be read/);
+    await ok("delete_mindmap", { mindmapId: "mm_damaged" });
+  });
+
   it("rejects invalid input and impossible requests with isError", async () => {
     const doc = await docFrom("create_mindmap", { title: "Strict", initialPlan: [{ label: "Task", status: "in_progress" }] });
     const taskId = childrenOf(doc)[0];

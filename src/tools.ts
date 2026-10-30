@@ -59,7 +59,7 @@ function defineTool<S extends z.ZodObject>(def: {
         const result = await def.run(input.data);
         return text(typeof result === "string" ? result : JSON.stringify(result, null, 2));
       } catch (err) {
-        if (err instanceof ToolError) return text(err.message, true);
+        if (err instanceof ToolError || err instanceof store.UnreadableMindmapError) return text(err.message, true);
         throw err;
       }
     },
@@ -643,9 +643,12 @@ const listMindmaps = defineTool({
   description: "List all stored mindmaps with their IDs, titles, and last updated timestamps.",
   inputSchema: z.object({}),
   async run() {
-    const items = await store.list();
-    if (items.length === 0) return "No mindmaps yet.";
-    return items.map((m) => `• ${m.id}  –  "${m.title}" (${m.nodeCount} nodes, updated ${m.updatedAt}${m.archivedAt ? ", archived" : ""})`).join("\n");
+    const { mindmaps, unreadable } = await store.list();
+    const lines = [
+      ...mindmaps.map((m) => `• ${m.id}  –  "${m.title}" (${m.nodeCount} nodes, updated ${m.updatedAt}${m.archivedAt ? ", archived" : ""})`),
+      ...unreadable.map((m) => `• ${m.id}  –  can't be read: ${m.error}`),
+    ];
+    return lines.length > 0 ? lines.join("\n") : "No mindmaps yet.";
   },
 });
 

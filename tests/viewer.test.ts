@@ -1,6 +1,6 @@
 import { describe, it, beforeAll, afterAll, expect, spyOn } from "bun:test";
 import { createServer, request, type Server } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
@@ -81,11 +81,23 @@ describe("viewer server", () => {
   it("serves the session list and single mindmaps", async () => {
     const list = await call(viewer.port, { path: "/api/mindmaps" });
     expect(list.status).toBe(200);
-    expect(JSON.parse(list.body)).toMatchObject([{ id: "mm_test", totalTasks: 1, activeTask: "Step" }]);
+    expect(JSON.parse(list.body)).toMatchObject({ mindmaps: [{ id: "mm_test", totalTasks: 1, activeTask: "Step" }], unreadable: [] });
 
     const doc = await call(viewer.port, { path: "/api/mindmaps/mm_test" });
     expect(JSON.parse(doc.body).title).toBe("Viewer test");
     expect((await call(viewer.port, { path: "/api/mindmaps/..%2F..%2Fsecret" })).status).toBe(404);
+  });
+
+  it("lists a damaged mindmap as unreadable and says why it can't be opened", async () => {
+    const file = path.join(tmpDir, "mm_damaged.json");
+    await writeFile(file, `${JSON.stringify(emptyDoc("mm_damaged", "Damaged"))}\n}`);
+    const list = JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body);
+    expect(list.unreadable).toMatchObject([{ id: "mm_damaged" }]);
+
+    const doc = await call(viewer.port, { path: "/api/mindmaps/mm_damaged" });
+    expect(doc.status).toBe(500);
+    expect(JSON.parse(doc.body).error).toContain("can't be read");
+    await rm(file);
   });
 
   it("rejects requests from other hosts and cross-site writes", async () => {
@@ -108,7 +120,7 @@ describe("viewer server", () => {
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body).archivedAt).toBeString();
     const list = JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body);
-    expect(list[0].archivedAt).toBeString();
+    expect(list.mindmaps[0].archivedAt).toBeString();
 
     expect(JSON.parse((await archive({ mindmapId: "mm_test", archived: false })).body)).toEqual({ id: "mm_test", archivedAt: null });
     expect((await archive({ mindmapId: "mm_nope", archived: true })).status).toBe(404);
