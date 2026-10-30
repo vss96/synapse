@@ -28,7 +28,8 @@ Each mindmap is a session. Sessions are grouped by repository (the `workspacePat
 - **Live dot**: shown on sessions updated in the last 2 minutes.
 - **Filter**: type in the box to narrow the list.
 - **<kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd>** (<kbd>Alt</kbd> on Windows and Linux): switch to the previous or next session in the list as shown, skipping collapsed groups.
-- **Links**: the URL hash holds the session ID, for example `http://localhost:4040/#mm_Ab12Cd34`. Bookmark or share it to open that session directly.
+- **Links**: the URL hash holds the session ID, for example `http://localhost:4040/#mm_Ab12Cd34`. Bookmark or share it to open that session directly, or paste it into an open viewer tab to switch to it. A link to a session that doesn't exist leaves the open session on screen.
+- **Back and Forward**: each switch adds an entry to the browser's history, so these buttons step through the sessions you opened.
 - **☰** collapses the sidebar. The viewer remembers this setting. In narrow windows it opens the list as a drawer instead.
 
 When an agent updates a session you aren't viewing, only the session list refreshes. The canvas keeps showing the session you picked.

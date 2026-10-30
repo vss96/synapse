@@ -22,6 +22,7 @@ import {
 } from "./camera.js";
 import { ROOT, VIEW_MODES, layoutTree, type ViewMode } from "./layout.js";
 import { matchesQuery } from "./search.js";
+import { sessionHash, sessionIdFromHash } from "./session-link.js";
 import { dayLabel } from "./time.js";
 
 const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
@@ -109,7 +110,7 @@ const CHANGE_KINDS: Record<ChangeKind, { glyph: string; label: string }> = {
   test: { glyph: "✓", label: "Tested" },
 };
 
-let currentId = decodeURIComponent(location.hash.slice(1));
+let currentId = sessionIdFromHash(location.hash);
 let currentDoc: MindmapDocument | null = null;
 /** Plain string: it also comes from DOM data attributes; resolve it with nodeById. */
 let selectedNodeId: string = ROOT;
@@ -1132,10 +1133,9 @@ function renderSessions() {
   });
 }
 
-async function selectSession(id: string | undefined) {
-  if (!id || id === currentId) return;
+/** Switch to a session, leaving the URL as it is. */
+async function showSession(id: string) {
   currentId = id;
-  history.replaceState(null, "", `#${encodeURIComponent(id)}`);
   selectedNodeId = ROOT;
   highlightedFilePath = null;
   changeKindFilter = null;
@@ -1144,6 +1144,33 @@ async function selectSession(id: string | undefined) {
   document.querySelector(".session-item.active")?.scrollIntoView({ block: "nearest" });
   await fetchMindmapById(id);
 }
+
+/**
+ * Open a session. Switching adds a history entry, so Back returns to the session you left. With
+ * `replace`, for a session nobody picked, it doesn't, so Back leaves the viewer instead of landing
+ * on a URL with no session in it.
+ */
+async function selectSession(id: string | undefined, { replace = false } = {}) {
+  if (!id || id === currentId) return;
+  if (replace) history.replaceState(null, "", sessionHash(id));
+  else history.pushState(null, "", sessionHash(id));
+  await showSession(id);
+}
+
+/**
+ * Switch to the session the URL names (Back, Forward or a pasted link). If there is no such
+ * session, put back the URL of the open one.
+ */
+function followUrl() {
+  const id = sessionIdFromHash(location.hash);
+  if (id === currentId) return;
+  if (sessions.some((s) => s.id === id)) showSession(id);
+  else history.replaceState(null, "", sessionHash(currentId));
+}
+
+// Back and Forward fire both; a pasted link fires hashchange.
+window.addEventListener("popstate", followUrl);
+window.addEventListener("hashchange", followUrl);
 
 async function refreshSessions() {
   try {
@@ -1164,7 +1191,7 @@ async function init() {
     currentId = "";
     // Prefer a session that isn't archived: the Archived group starts collapsed.
     const first = sessions.find((s) => !s.archivedAt) ?? sessions[0];
-    if (first) await selectSession(first.id);
+    if (first) await selectSession(first.id, { replace: true });
   }
 }
 
@@ -1264,7 +1291,7 @@ function connectSSE() {
       if (payload.type === "mindmap_updated") {
         // Refresh the session list, but only reload the canvas for the session being viewed.
         await refreshSessions();
-        if (!currentId && payload.id) await selectSession(payload.id);
+        if (!currentId && payload.id) await selectSession(payload.id, { replace: true });
         else if (payload.id === currentId) await fetchMindmapById(currentId);
       }
     } catch {
