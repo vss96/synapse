@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { combineTouches, fileTouchTarget, upsertFileTouch } from "../src/model/file-touch.js";
+import { combineTouches, fileTouchTarget, isFinished, upsertFileTouch, upsertFileTouches } from "../src/model/file-touch.js";
 import { isTask } from "../src/model/kinds.js";
 import { reparent, retype } from "../src/model/node.js";
 import {
@@ -10,6 +10,7 @@ import {
   MindmapId,
   NodeId,
   ROOT_ID,
+  Timestamp,
   now,
   type EditTouch,
   type TaskNode,
@@ -114,6 +115,62 @@ describe("model: file touches", () => {
     expect(node.files[0]).toMatchObject({ action: "rename", path: "new.ts", previousPath: "old.ts", changes: [fix] });
   });
 
+  it("applies a batch in order: repeats merge, and a rename moves the entry to its new path", () => {
+    const node = addChild(emptyDoc(), { type: "task", label: "Step" });
+    upsertFileTouch(node, touch("modify", "old.ts", [fix]));
+    upsertFileTouches(node, [
+      touch("create", "b.ts"),
+      touch("modify", "b.ts"),
+      touch("rename", "new.ts"),
+      touch("modify", "new.ts", [add]),
+      touch("modify", "old.ts"),
+    ]);
+    expect(node.files.map((f) => `${f.action}:${f.path}`)).toEqual(["rename:new.ts", "create:b.ts", "modify:old.ts"]);
+    expect(node.files[0]).toMatchObject({ previousPath: "old.ts", changes: [fix, add] });
+  });
+
+  it("merges a rename into an entry under its new path, leaving the old path's entry alone", () => {
+    const node = addChild(emptyDoc(), { type: "task", label: "Step" });
+    upsertFileTouches(node, [touch("modify", "old.ts"), touch("modify", "new.ts"), touch("rename", "new.ts")]);
+    expect(node.files.map((f) => `${f.action}:${f.path}`)).toEqual(["modify:old.ts", "rename:new.ts"]);
+  });
+
+  it("merges into the first entry of a path listed twice", () => {
+    const node = addChild(emptyDoc(), { type: "task", label: "Step", files: [touch("modify", "a.ts"), touch("modify", "a.ts")] });
+    upsertFileTouches(node, [touch("modify", "a.ts", [fix])]);
+    expect(node.files.map((f) => (f.action === "read" ? [] : f.changes))).toEqual([[fix], []]);
+  });
+
+  it("merges into a path's next entry once a rename has moved its first", () => {
+    const files = [touch("modify", "old.ts"), touch("modify", "old.ts"), touch("modify", "old.ts")];
+    const node = addChild(emptyDoc(), { type: "task", label: "Step", files });
+    upsertFileTouches(node, [touch("rename", "new.ts"), touch("modify", "old.ts", [fix])]);
+    expect(node.files.map((f) => `${f.action}:${f.path}`)).toEqual(["rename:new.ts", "modify:old.ts", "modify:old.ts"]);
+    expect(node.files.map((f) => (f.action === "read" ? [] : f.changes))).toEqual([[], [fix], []]);
+  });
+
+  it("leaves a node stamped with the batch's last touch", () => {
+    const node = addChild(emptyDoc(), { type: "task", label: "Step" });
+    const last = { ...touch("modify", "b.ts"), timestamp: Timestamp.parse("2030-01-01T00:00:00.000Z") };
+    upsertFileTouches(node, [touch("modify", "a.ts"), last]);
+    expect(node.updatedAt).toBe(last.timestamp);
+  });
+
+  it("reads a node's files once per batch, not once per touch", () => {
+    const files = Array.from({ length: 1000 }, (_, i) => touch("modify", `old${i}.ts`));
+    const node = addChild(emptyDoc(), { type: "task", label: "Step", files });
+    let reads = 0;
+    node.files = new Proxy(node.files, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    upsertFileTouches(node, Array.from({ length: 1000 }, (_, i) => touch("modify", `new${i}.ts`)));
+    expect(node.files).toHaveLength(2000);
+    expect(reads).toBeLessThan(5000); // a scan per touch would be at least 1,000,000
+  });
+
   it("attaches to the active task, never a concept, and falls back to one Touched Files node", () => {
     const doc = emptyDoc();
     addChild(doc, { type: "component", label: "Gateway" });
@@ -124,6 +181,26 @@ describe("model: file touches", () => {
     expect(fileTouchTarget(doc)).toBe(active);
     expect(MindmapDocument.safeParse(doc).success).toBe(true);
   });
+});
+
+describe("model: finished mindmaps", () => {
+  it("is finished once it has tasks and all of them are completed", () => {
+    const doc = emptyDoc();
+    addChild(doc, { type: "component", label: "Gateway" });
+    addChild(doc, { type: "note", label: "Idea" });
+    expect(isFinished(doc)).toBe(false); // no tasks: nothing has been finished
+    addChild(doc, { type: "task", label: "Done", status: "completed" });
+    expect(isFinished(doc)).toBe(true);
+  });
+
+  for (const status of ["planned", "in_progress", "blocked"] as const) {
+    it(`isn't finished while a task is ${status}`, () => {
+      const doc = emptyDoc();
+      addChild(doc, { type: "task", label: "Done", status: "completed" });
+      addChild(doc, { type: "task", label: "Open", status });
+      expect(isFinished(doc)).toBe(false);
+    });
+  }
 });
 
 describe("model: nodes", () => {

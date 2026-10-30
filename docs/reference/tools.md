@@ -39,7 +39,7 @@ Create a new mindmap to track a coding plan, touched files, and the agent's ment
 |---|---|---|---|
 | `title` | string | ✓ | Title of the mindmap / task |
 | `rootLabel` | string | | Label for the root node (defaults to `title`) |
-| `workspacePath` | string | | Absolute path to the project workspace/repo. It's used by git sync, and it starts the [workspace watcher](../guide/how-it-works#workspace-watcher). |
+| `workspacePath` | string | | Absolute path to the project workspace/repo. It's used by git sync, and it starts the [workspace watcher](../guide/how-it-works#workspace-watcher), unless the plan's tasks are all completed. |
 | `initialPlan` | PlanItem[] | | Plan steps to create under the root |
 
 *PlanItem*: `{ label: string (required), type?: NodeType, status?: TaskStatus, notes?: string, children?: PlanItem[] }`. Children are one level deep, so they don't have their own `children`. `type` defaults to `task` and `status` defaults to `planned`.
@@ -156,7 +156,7 @@ Inspect `git status` and `git diff` in the workspace and attach every modified, 
 | `workspacePath` | string | | Repository path. Defaults to the mindmap's `workspacePath`, then the server's working directory. It's saved to the mindmap. |
 | `targetNodeId` | string | | Node to attach changes to. Defaults to the active `in_progress` node. |
 
-Returns `No uncommitted git changes detected in <path>.` when the tree is clean. Like any tool that changes a mindmap, it also points the workspace watcher at this mindmap.
+Returns `No uncommitted git changes detected in <path>.` when the tree is clean. Like any tool that changes a mindmap, it also points the workspace watcher at this mindmap, unless all its tasks are completed.
 
 ## `link_nodes`
 

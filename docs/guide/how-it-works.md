@@ -61,7 +61,7 @@ Git only reports a rename when it's **staged** (`git mv`, or `git add` on both p
 
 ### Workspace watcher
 
-When a mindmap has a `workspacePath`, the MCP server watches that directory recursively. It starts watching when `create_mindmap` is called with `workspacePath`, and whenever a tool changes a mindmap that has one. Each directory has one watcher, which records into the mindmap that a tool changed most recently for that directory. So when an agent starts a new mindmap in the same repo, the earlier one stops collecting its edits. File events are batched every 600 ms and attached to the active task as `create`, `modify`, or `delete`, with the summary `Auto-detected file <action>`. The watcher:
+When a mindmap has a `workspacePath`, the MCP server watches that directory recursively. It starts watching when `create_mindmap` is called with `workspacePath`, and whenever a tool changes a mindmap that has one, unless every task in that mindmap is completed. Each directory has one watcher, which records into the mindmap that a tool changed most recently for that directory. So when an agent starts a new mindmap in the same repo, the earlier one stops collecting its edits. File events are batched every 600 ms and attached to the active task as `create`, `modify`, or `delete`, with the summary `Auto-detected file <action>`. The watcher:
 
 - Classifies a file by its state before the batch, not by the kind of file event: a file git tracks or that the mindmap already lists is a `modify`, even when an editor or git saved it by renaming a temp file over it. A file that appears and disappears within one batch is skipped.
 - In a git repo, skips whatever the repo ignores: its `.gitignore` files, `.git/info/exclude` and global excludes.
@@ -69,8 +69,9 @@ When a mindmap has a `workspacePath`, the MCP server watches that directory recu
 - Leaves out changes made by git itself. After a checkout, reset, merge or pull, files that now match `HEAD` exactly are recorded as one activity entry, such as `Git checkout: moving from main to fix: 277 file change(s) not attributed to a task`; files that differ from `HEAD` are still recorded. While a rebase is in progress, no changes are recorded.
 
 - Runs inside the MCP server process, so it stops when the client stops the server. After a restart it starts again the next time a tool changes the mindmap.
-- Stops when its mindmap is deleted or moves to another `workspacePath`, or once it has changes to record into a mindmap that was archived in the viewer or can't be read. Changes it hadn't recorded yet are dropped.
-- Outside a git repo, skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__` instead.
+- Stops when its mindmap is deleted or moves to another `workspacePath`, or once it has changes to record into a mindmap that was archived in the viewer, can't be read, or has all its tasks completed. Changes it hadn't recorded yet are dropped, including an edit still waiting in the 600 ms batch when the last task is completed.
+- Starts again for a finished mindmap when a tool gives it an open task. Until then, `log_file_touch` and git sync still record into it. A mindmap with no tasks at all isn't finished, so it keeps collecting.
+- Skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__`, inside a repo or not, unless git tracks the file. So an `npm install` is left out even in a repo with no `node_modules` rule, while a committed `dist/bundle.js` is still recorded.
 - Always skips `.git`, `data/*.json`, directories, and editor and atomic-write temp files (`*~`, `*.swp`, `*.tmp`, `*.tmp.<pid>.<hex>`, `.!<pid>!*`).
 - Doesn't detect renames.
 - Fails silently where recursive file watching isn't supported.
@@ -81,7 +82,7 @@ When a mindmap has a `workspacePath`, the MCP server watches that directory recu
 
 1. The node ID passed explicitly (`nodeId` / `targetNodeId`), if it exists. `log_file_touch` also starts a `planned` task it is given, so the watcher's changes follow it from then on.
 2. Otherwise, the most recently updated node with status `in_progress`.
-3. Otherwise, a top-level **Touched Files** node, which is created if it doesn't exist.
+3. Otherwise, a top-level **Touched Files** node, which is created if it doesn't exist. The watcher never gets this far in a mindmap whose tasks are all completed: it stops instead, so unrelated later work doesn't pile up there.
 
 ## Data model
 
