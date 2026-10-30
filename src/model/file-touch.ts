@@ -43,14 +43,47 @@ export function combineTouches(prev: FileTouch, next: FileTouch): FileTouch {
   return { ...common, ...combinedAction(prev, next), changes: mergeChanges(prev.changes, next.changes) };
 }
 
-/** Record a file touch on a node, merging with an earlier touch of the same file (or of a renamed file's old path). */
+/**
+ * Record file touches on a node in order, merging each with an earlier touch of the same file (or of a
+ * renamed file's old path). The node's paths are indexed once, so a big batch doesn't rescan them per touch.
+ */
+export function upsertFileTouches(node: MindmapNode, touches: readonly FileTouch[]): void {
+  const indexOf = new Map<string, number>();
+  const repeats = new Map<string, number[]>(); // a path's later entries, when it's listed more than once
+  node.files.forEach((f, i) => {
+    const later = repeats.get(f.path);
+    if (later) later.push(i);
+    else if (indexOf.has(f.path)) repeats.set(f.path, [i]);
+    else indexOf.set(f.path, i);
+  });
+  for (const touch of touches) {
+    const i = indexOf.get(touch.path) ?? (touch.action === "rename" ? indexOf.get(touch.previousPath) : undefined) ?? node.files.length;
+    const earlier = node.files[i];
+    node.files[i] = earlier ? combineTouches(earlier, touch) : touch;
+    if (earlier && earlier.path !== touch.path) {
+      // A rename moved it, so the old path is found at its next entry, if it has one.
+      const next = repeats.get(earlier.path)?.shift();
+      if (next === undefined) indexOf.delete(earlier.path);
+      else indexOf.set(earlier.path, next);
+    }
+    indexOf.set(touch.path, i);
+    node.updatedAt = touch.timestamp;
+  }
+}
+
 export function upsertFileTouch(node: MindmapNode, touch: FileTouch): void {
-  let i = node.files.findIndex((f) => f.path === touch.path);
-  if (i < 0 && touch.action === "rename") i = node.files.findIndex((f) => f.path === touch.previousPath);
-  const earlier = node.files[i];
-  if (earlier) node.files[i] = combineTouches(earlier, touch);
-  else node.files.push(touch);
-  node.updatedAt = touch.timestamp;
+  upsertFileTouches(node, [touch]);
+}
+
+/** Whether a mindmap's work is done: it has tasks and all are completed. With no tasks, it hasn't started. */
+export function isFinished(doc: MindmapDocument): boolean {
+  const tasks = Object.values(doc.nodes).filter(isTask);
+  return tasks.length > 0 && tasks.every((n) => n.status === "completed");
+}
+
+/** Whether the workspace watcher records into a mindmap, so whether the mindmap can take it over. */
+export function collectsWorkspaceChanges(doc: MindmapDocument): boolean {
+  return !doc.archivedAt && !isFinished(doc);
 }
 
 const TOUCHED_FILES_LABEL = "Touched Files";

@@ -2,7 +2,7 @@ import { z } from "zod";
 import * as store from "./store.js";
 import { render } from "./renderer.js";
 import { ensureWorkspaceWatcher, inspectGitChanges, stopWorkspaceWatcher } from "./watcher.js";
-import { fileTouchTarget, mergeChanges, upsertFileTouch } from "./model/file-touch.js";
+import { collectsWorkspaceChanges, fileTouchTarget, mergeChanges, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
 import { CHANGE_KINDS, FILE_ACTIONS, LINK_STYLES, NODE_TYPES, TASK_STATUSES, isConcept, isTask, isTaskType, type ChildNodeType, type LinkStyle, type TaskStatus } from "./model/kinds.js";
 import { attachChild, createChild, reparent, retype } from "./model/node.js";
 import {
@@ -88,12 +88,12 @@ async function updateMindmap<T extends Ack>(id: MindmapId, mutate: (doc: Mindmap
   let workspacePath: string | undefined;
   const result = await store.update(id, (doc) => {
     const reply = mutate(doc);
-    if (!doc.archivedAt) workspacePath = doc.workspacePath;
+    if (collectsWorkspaceChanges(doc)) workspacePath = doc.workspacePath;
     return reply;
   });
   if (!result) throw new ToolError(`Mindmap "${id}" not found.`);
   // The mindmap an agent changes is the one it's working on, so its workspace's file changes go there,
-  // even when an earlier server process created it.
+  // even when an earlier server process created it. A note on a finished mindmap doesn't reopen it.
   ensureWorkspaceWatcher(id, workspacePath);
   return result;
 }
@@ -224,7 +224,7 @@ const createMindmap = defineTool({
     }
 
     await store.save(doc);
-    ensureWorkspaceWatcher(doc.id, doc.workspacePath);
+    if (collectsWorkspaceChanges(doc)) ensureWorkspaceWatcher(doc.id, doc.workspacePath);
     const nodes = Object.values(doc.nodes).filter((n) => n.type !== "root").map(ref);
     return { mindmapId: doc.id, summary: `Created mindmap "${doc.title}" with ${nodes.length} node(s)`, nodes };
   },
@@ -279,7 +279,7 @@ const updateNode = defineTool({
       if (input.notes !== undefined) node.notes = input.notes;
       const status = statusFor(node.type, input.status, node.label);
       if (status && isTask(node)) node.status = status;
-      for (const f of input.files ?? []) upsertFileTouch(node, toFileTouch(f));
+      upsertFileTouches(node, input.files?.map(toFileTouch) ?? []);
       node.updatedAt = now();
       doc.nodes[node.id] = node;
 
@@ -395,7 +395,7 @@ const mapArchitecture = defineTool({
           node.label = item.label;
           if (item.notes) node.notes = item.notes;
           if (status && isTask(node)) node.status = status;
-          for (const f of files) upsertFileTouch(node, f);
+          upsertFileTouches(node, files);
           doc.nodes[node.id] = node;
           byKey.set(item.key, node.id);
           placed.push([item, node.id]);
@@ -547,7 +547,7 @@ const syncGitStatus = defineTool({
       if (input.targetNodeId) getNode(doc, input.targetNodeId);
       doc.workspacePath = workspacePath;
       const target = fileTouchTarget(doc, input.targetNodeId);
-      for (const touch of changes) upsertFileTouch(target, touch);
+      upsertFileTouches(target, changes);
       const summary = `Synced ${changes.length} changed file(s) from git status into "${target.label}"`;
       store.recordActivity(doc, summary, { nodeId: target.id });
       return { mindmapId: doc.id, summary, node: ref(target) };
