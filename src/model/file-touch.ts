@@ -49,14 +49,23 @@ export function combineTouches(prev: FileTouch, next: FileTouch): FileTouch {
  */
 export function upsertFileTouches(node: MindmapNode, touches: readonly FileTouch[]): void {
   const indexOf = new Map<string, number>();
+  const repeats = new Map<string, number[]>(); // a path's later entries, when it's listed more than once
   node.files.forEach((f, i) => {
-    if (!indexOf.has(f.path)) indexOf.set(f.path, i);
+    const later = repeats.get(f.path);
+    if (later) later.push(i);
+    else if (indexOf.has(f.path)) repeats.set(f.path, [i]);
+    else indexOf.set(f.path, i);
   });
   for (const touch of touches) {
     const i = indexOf.get(touch.path) ?? (touch.action === "rename" ? indexOf.get(touch.previousPath) : undefined) ?? node.files.length;
     const earlier = node.files[i];
     node.files[i] = earlier ? combineTouches(earlier, touch) : touch;
-    if (earlier) indexOf.delete(earlier.path); // a rename moved it
+    if (earlier && earlier.path !== touch.path) {
+      // A rename moved it, so the old path is found at its next entry, if it has one.
+      const next = repeats.get(earlier.path)?.shift();
+      if (next === undefined) indexOf.delete(earlier.path);
+      else indexOf.set(earlier.path, next);
+    }
     indexOf.set(touch.path, i);
     node.updatedAt = touch.timestamp;
   }

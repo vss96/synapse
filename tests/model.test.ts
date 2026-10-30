@@ -141,6 +141,14 @@ describe("model: file touches", () => {
     expect(node.files.map((f) => (f.action === "read" ? [] : f.changes))).toEqual([[fix], []]);
   });
 
+  it("merges into a path's next entry once a rename has moved its first", () => {
+    const files = [touch("modify", "old.ts"), touch("modify", "old.ts"), touch("modify", "old.ts")];
+    const node = addChild(emptyDoc(), { type: "task", label: "Step", files });
+    upsertFileTouches(node, [touch("rename", "new.ts"), touch("modify", "old.ts", [fix])]);
+    expect(node.files.map((f) => `${f.action}:${f.path}`)).toEqual(["rename:new.ts", "modify:old.ts", "modify:old.ts"]);
+    expect(node.files.map((f) => (f.action === "read" ? [] : f.changes))).toEqual([[], [fix], []]);
+  });
+
   it("leaves a node stamped with the batch's last touch", () => {
     const node = addChild(emptyDoc(), { type: "task", label: "Step" });
     const last = { ...touch("modify", "b.ts"), timestamp: Timestamp.parse("2030-01-01T00:00:00.000Z") };
