@@ -275,6 +275,18 @@ describe("workspace watcher", () => {
     assert.deepEqual(touched((await store.load(done))!), []);
   }, 30000);
 
+  it("leaves the workspace with the mindmap in use when a finished one is created there", async () => {
+    const { repoDir } = await makeRepo("finished-create");
+    const active = await createMindmap({ title: "Active", workspacePath: repoDir, initialPlan: [{ label: "New work", status: "in_progress" }] });
+    await settle();
+
+    const done = await createMindmap({ title: "Done", workspacePath: repoDir, initialPlan: [{ label: "Old work", status: "completed" }] });
+    assert.equal(watchedMindmap(repoDir), active);
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await eventually(active, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]));
+    assert.deepEqual(touched((await store.load(done))!), []);
+  }, 30000);
+
   it("stops watching when its mindmap is deleted", async () => {
     const { repoDir } = await makeRepo("deleted");
     const id = await createMindmap({ title: "Deleted", workspacePath: repoDir });

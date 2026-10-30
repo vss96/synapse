@@ -72,6 +72,11 @@ export function isFinished(doc: MindmapDocument): boolean {
   return tasks.length > 0 && tasks.every((n) => n.status === "completed");
 }
 
+/** Whether the workspace watcher records into a mindmap, so whether the mindmap can take it over. */
+export function collectsWorkspaceChanges(doc: MindmapDocument): boolean {
+  return !doc.archivedAt && !isFinished(doc);
+}
+
 const TOUCHED_FILES_LABEL = "Touched Files";
 
 /**

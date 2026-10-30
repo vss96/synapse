@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { watch, existsSync, statSync, type FSWatcher } from "node:fs";
 import path from "node:path";
 import * as store from "./store.js";
-import { fileTouchTarget, isFinished, upsertFileTouches } from "./model/file-touch.js";
+import { collectsWorkspaceChanges, fileTouchTarget, upsertFileTouches } from "./model/file-touch.js";
 import { now, type EditTouch, type MindmapDocument, type MindmapId } from "./model/schema.js";
 
 const execFileAsync = promisify(execFile);
@@ -190,7 +190,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     const record = async (change: (doc: MindmapDocument) => void) => {
       if (!current()) return; // stopped while git ran
       const recorded = await store.update(mindmapId, (doc) => {
-        if (doc.archivedAt || isFinished(doc)) return false;
+        if (!collectsWorkspaceChanges(doc)) return false;
         change(doc);
         return true;
       });

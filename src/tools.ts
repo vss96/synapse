@@ -2,7 +2,7 @@ import { z } from "zod";
 import * as store from "./store.js";
 import { render } from "./renderer.js";
 import { ensureWorkspaceWatcher, inspectGitChanges, stopWorkspaceWatcher } from "./watcher.js";
-import { fileTouchTarget, isFinished, mergeChanges, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
+import { collectsWorkspaceChanges, fileTouchTarget, mergeChanges, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
 import { CHANGE_KINDS, FILE_ACTIONS, LINK_STYLES, NODE_TYPES, TASK_STATUSES, isConcept, isTask, isTaskType, type ChildNodeType, type LinkStyle, type TaskStatus } from "./model/kinds.js";
 import { attachChild, createChild, reparent, retype } from "./model/node.js";
 import {
@@ -88,7 +88,7 @@ async function updateMindmap<T extends Ack>(id: MindmapId, mutate: (doc: Mindmap
   let workspacePath: string | undefined;
   const result = await store.update(id, (doc) => {
     const reply = mutate(doc);
-    if (!doc.archivedAt && !isFinished(doc)) workspacePath = doc.workspacePath;
+    if (collectsWorkspaceChanges(doc)) workspacePath = doc.workspacePath;
     return reply;
   });
   if (!result) throw new ToolError(`Mindmap "${id}" not found.`);
@@ -224,7 +224,7 @@ const createMindmap = defineTool({
     }
 
     await store.save(doc);
-    ensureWorkspaceWatcher(doc.id, doc.workspacePath);
+    if (collectsWorkspaceChanges(doc)) ensureWorkspaceWatcher(doc.id, doc.workspacePath);
     const nodes = Object.values(doc.nodes).filter((n) => n.type !== "root").map(ref);
     return { mindmapId: doc.id, summary: `Created mindmap "${doc.title}" with ${nodes.length} node(s)`, nodes };
   },
