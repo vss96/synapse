@@ -867,15 +867,13 @@ byId("zoom-focus").onclick = focusActive;
 
 // End #svg above the bottom overlays (legend, zoom controls) so fitting and centering use the
 // unobstructed area; panned content still shows beneath them because #svg doesn't clip.
-const bottomOverlays = [query(".legend"), query(".controls")];
+const bottomOverlays = query(".canvas-bottom");
 const fitAboveOverlays = () => {
-  const shown = bottomOverlays.filter((el) => el.offsetParent !== null);
-  const top = shown.length ? Math.min(...shown.map((el) => el.offsetTop)) : viewport.clientHeight;
-  svgEl.style.height = `${Math.max(0, top - 8)}px`;
+  svgEl.style.height = `${Math.max(0, bottomOverlays.offsetTop - 8)}px`;
 };
 fitAboveOverlays(); // now, not only when observed: the first view is measured against this size
 const overlayObserver = new ResizeObserver(fitAboveOverlays);
-[viewport, ...bottomOverlays].forEach((el) => overlayObserver.observe(el));
+[viewport, bottomOverlays].forEach((el) => overlayObserver.observe(el));
 
 viewport.addEventListener("mousedown", (e) => {
   if (e.target instanceof Element && (e.target.closest(".node-group") || e.target.closest(".controls") || e.target.closest(".map-search"))) return;

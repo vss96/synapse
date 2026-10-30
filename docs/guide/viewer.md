@@ -46,7 +46,7 @@ Use the view switcher in the header to pick what the canvas shows:
 
 ![Code Mental Model view](../screenshots/hld-mental-model.png)
 
-Node cards are colored by status (in progress, completed) or by concept type (component, data flow, decision, hypothesis, risk). See the legend at the bottom of the canvas. Cards with logged changes show a tally such as `+2 ✱1 ⟲1`. Long labels and notes are cut short on the card. Hover over a card to read them in full.
+Node cards are colored by status (in progress, completed, blocked) or by concept type (component, data flow, decision, hypothesis, risk). Planned cards stay neutral. See the legend at the bottom of the canvas. Cards with logged changes show a tally such as `+2 ✱1 ⟲1`. Long labels and notes are cut short on the card. Hover over a card to read them in full.
 
 The tree grows to the right. In the split view, plan tasks come before the architecture branch, so the mental model never splits the plan in two. A long run of sibling cards without children (7 or more, such as a flat plan) wraps into rows inside a dashed frame, read left to right and then top to bottom. Tasks in the frame are numbered in that order.
 
@@ -73,7 +73,7 @@ A file path or symbol matches every card that logged it, including the old names
 
 The viewer follows your system's light or dark setting.
 
-To keep room for the session name, the view switcher shows short names (**Split**, **Plan**, **HLD**) below 1400 pixels wide, and the toolbar shows icons only below 1200.
+To keep room for the session name, the view switcher shows short names (**Split**, **Plan**, **HLD**) below 1400 pixels wide, and the toolbar shows icons only below 1200. When the canvas is too narrow for the legend beside the zoom controls, the legend moves above them.
 
 Below 900 pixels wide, for example in a side pane next to your editor, the layout changes:
 

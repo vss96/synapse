@@ -871,12 +871,26 @@
   }
 
   /* ── Controls & Legend ── */
-  .controls {
+  /* Along the bottom of the canvas. The legend moves above the controls rather than shrink too far,
+     and only these two take the mouse, so cards can be clicked in the gap between them. */
+  .canvas-bottom {
     position: absolute;
-    bottom: 16px;
+    left: 16px;
     right: 16px;
+    bottom: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px 12px;
+    pointer-events: none;
+  }
+
+  .canvas-bottom > * { pointer-events: auto; }
+
+  .controls {
     display: flex;
     gap: 6px;
+    margin-left: auto;
     background: var(--panel);
     padding: 6px 10px;
     border-radius: 10px;
@@ -921,9 +935,7 @@
   .map-search-count:empty { display: none; }
 
   .legend {
-    position: absolute;
-    bottom: 16px;
-    left: 16px;
+    flex: 1 1 320px;
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
@@ -951,6 +963,8 @@
   }
 
   .legend-swatch.tone-hypothesis { border-style: dashed; }
+
+  #legend-kinds { flex-wrap: wrap; }
 
   .empty-state {
     position: absolute;
@@ -1025,7 +1039,7 @@
       border-top: 1px solid var(--border);
     }
     .legend { display: none; }
-    .controls { bottom: 10px; right: 10px; }
+    .canvas-bottom { left: 10px; right: 10px; bottom: 10px; }
   }
 </style>
 </head>
@@ -1083,21 +1097,25 @@
       <h2>Waiting for Agent Mindmap…</h2>
       <p>When your agent calls <code>create_mindmap</code>, <code>map_architecture</code>, or <code>log_file_touch</code>, the plan and code mental model will update here live.</p>
     </div>
-    <div class="legend">
-      <div class="legend-item"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
-      <div class="legend-item"><span class="legend-swatch tone-completed"></span> Completed</div>
-      <div class="legend-item"><span class="legend-swatch tone-component"></span> 📦 Component</div>
-      <div class="legend-item"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
-      <div class="legend-item"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
-      <div class="legend-item"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
-      <div class="legend-item"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
-      <div class="legend-item" id="legend-kinds"></div>
-    </div>
-    <div class="controls">
-      <button id="zoom-out" class="secondary" title="Zoom out">−</button>
-      <button id="zoom-fit" class="secondary" title="Show the whole map">Fit</button>
-      <button id="zoom-focus" class="secondary" title="Center the task the agent is working on at full size">◎ Focus</button>
-      <button id="zoom-in" class="secondary" title="Zoom in">+</button>
+    <div class="canvas-bottom">
+      <div class="legend">
+        <div class="legend-item"><span class="legend-swatch tone-planned"></span> Planned</div>
+        <div class="legend-item"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
+        <div class="legend-item"><span class="legend-swatch tone-completed"></span> Completed</div>
+        <div class="legend-item"><span class="legend-swatch tone-blocked"></span> Blocked</div>
+        <div class="legend-item"><span class="legend-swatch tone-component"></span> 📦 Component</div>
+        <div class="legend-item"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
+        <div class="legend-item"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
+        <div class="legend-item"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
+        <div class="legend-item"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
+        <div class="legend-item" id="legend-kinds"></div>
+      </div>
+      <div class="controls">
+        <button id="zoom-out" class="secondary" title="Zoom out">−</button>
+        <button id="zoom-fit" class="secondary" title="Show the whole map">Fit</button>
+        <button id="zoom-focus" class="secondary" title="Center the task the agent is working on at full size">◎ Focus</button>
+        <button id="zoom-in" class="secondary" title="Zoom in">+</button>
+      </div>
     </div>
   </div>
 
