@@ -155,6 +155,40 @@ describe("workspace watcher", () => {
     assert.deepEqual(touched((await store.load(id))!), ["create:new.ts", "modify:dist/bundle.js"]);
   }, 20000);
 
+  it("records a git rm of a recorded file in a built-in folder", async () => {
+    const { repoDir, git } = await makeRepo("git-rm");
+    await mkdir(path.join(repoDir, "dist"));
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "1;\n");
+    await git("add", ".");
+    await git("commit", "-qm", "commit the bundle");
+    const id = await createMindmap({ title: "Git rm", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "2;\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:dist/bundle.js"]));
+
+    // Out of the index by the time the watcher asks git, so only the mindmap knows the path mattered
+    await git("rm", "-qf", "dist/bundle.js");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["delete:dist/bundle.js"]));
+  }, 20000);
+
+  it("keeps a removed untracked folder out of the git churn count", async () => {
+    const { repoDir, git } = await makeRepo("removed-deps");
+    await mkdir(path.join(repoDir, "node_modules", "left-pad"), { recursive: true });
+    await writeFile(path.join(repoDir, "node_modules", "left-pad", "index.js"), "1;\n");
+    const id = await createMindmap({ title: "Removed deps", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    const churn = (d: MindmapDocument) => d.activityLog.map((e) => e.message).filter((m) => m.includes("not attributed")).join("\n");
+
+    // The checkout rewrites b.ts, the only change it should count
+    await git("checkout", "-q", "other");
+    await rm(path.join(repoDir, "node_modules"), { recursive: true });
+    await eventually(id, (d) => assert.notEqual(churn(d), ""));
+    await settle();
+    const doc = (await store.load(id))!;
+    assert.match(churn(doc), /^Git checkout: [^\n]*: 1 file change\(s\) not attributed to a task$/);
+    assert.deepEqual(touched(doc), []);
+  }, 30000);
+
   it("skips the same untracked folders in git sync, keeping tracked files inside them", async () => {
     const { repoDir, git } = await makeRepo("sync-deps");
     await mkdir(path.join(repoDir, "dist"));
