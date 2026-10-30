@@ -71,17 +71,17 @@ const SyncGitRequest = z.object({ mindmapId: MindmapId, workspacePath: z.string(
 const ArchiveRequest = z.object({ mindmapId: MindmapId, archived: z.boolean() });
 
 /** Remembered per workspace: the list is read after every change, and a workspace stays in its repository. */
-const repoRoots = new Map<string, Promise<string | undefined>>();
+const repoRoots = new Map<string, string | undefined>();
 
 /** The session list. Mindmaps saved before `repoPath` existed don't have one, so look it up for them. */
 async function listWithRepos(): Promise<MindmapList> {
   const list = await store.list();
   const mindmaps = await Promise.all(
     list.mindmaps.map(async (m) => {
-      if (m.repoPath || !m.workspacePath) return m;
-      const root = repoRoots.get(m.workspacePath) ?? repoRoot(m.workspacePath);
-      repoRoots.set(m.workspacePath, root);
-      return { ...m, repoPath: await root };
+      const { repoPath, workspacePath } = m;
+      if (repoPath || !workspacePath) return m;
+      if (!repoRoots.has(workspacePath)) repoRoots.set(workspacePath, await repoRoot(workspacePath));
+      return { ...m, repoPath: repoRoots.get(workspacePath) };
     }),
   );
   return { ...list, mindmaps };
