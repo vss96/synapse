@@ -1049,10 +1049,10 @@ function sessionItemHtml(s: MindmapListItem) {
   const action = s.archivedAt ? "restore" : "archive";
   return `
     <div class="session-item ${s.id === currentId ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
-      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<span class="session-title-text">${escXml(s.title)}</span>
+      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<span class="session-title-text">${escXml(s.title)}</span></div>
+      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}
         <button class="session-action" data-action="${action}" title="${s.archivedAt ? "Restore this session" : "Archive this session"}">${s.archivedAt ? "Restore" : "Archive"}</button>
       </div>
-      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}</div>
       ${s.activeTask ? `<div class="session-task">◐ ${escXml(s.activeTask)}</div>` : ""}
       <div class="session-progress">
         <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${pct}%"></div></div>

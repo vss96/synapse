@@ -328,18 +328,16 @@
 
   .session-title {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 6px;
     font-size: 12.5px;
     font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .session-live-dot {
     width: 7px;
     height: 7px;
+    margin-top: 4px;
     border-radius: 50%;
     background: var(--c-live);
     flex-shrink: 0;
@@ -350,12 +348,16 @@
     font-size: 11px;
     color: var(--muted);
     margin-top: 3px;
+  }
+
+  .session-sub { position: relative; }
+
+  .session-task {
+    color: color-mix(in srgb, var(--c-in_progress) var(--tone-text), var(--text));
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
-  .session-task { color: color-mix(in srgb, var(--c-in_progress) var(--tone-text), var(--text)); }
 
   .session-progress {
     display: flex;
@@ -393,12 +395,23 @@
 
   .session-group.archived .session-item { opacity: 0.75; }
 
-  .session-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .session-title-text {
+    flex: 1;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
 
-  /* Hidden until hover or keyboard focus, but still focusable; always shown without hover (touch). */
+  /* Hidden until hover or keyboard focus, but still focusable; always shown without hover (touch).
+     It takes no room in the row: it sits over the free end of the line with the (short) time. */
   .session-action {
+    position: absolute;
+    top: -2px;
+    right: 0;
     opacity: 0;
-    flex-shrink: 0;
     padding: 1px 6px;
     background: var(--panel);
     color: var(--muted);
