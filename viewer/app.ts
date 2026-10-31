@@ -41,11 +41,11 @@ interface AggregatedFile {
   nodes: MindmapNode[];
 }
 
-interface ViewerEvent {
-  type: "connected" | "mindmap_updated";
-  id?: string;
-  timestamp: string;
-}
+type ViewerEvent =
+  | { type: "connected" }
+  | { type: "mindmap_updated"; id: string; item: MindmapListItem }
+  | { type: "mindmap_deleted"; id: string }
+  | { type: "mindmap_unreadable"; id: string; error: string };
 
 interface SyncGitResponse {
   synced?: number;
@@ -1160,6 +1160,20 @@ async function refreshSessions() {
   }
 }
 
+/** Apply a live event to the session list; the list stays newest first, like the server sends it. */
+function applyToSessions(event: Exclude<ViewerEvent, { type: "connected" }>) {
+  sessions = sessions.filter((s) => s.id !== event.id);
+  unreadableSessions = unreadableSessions.filter((s) => s.id !== event.id);
+  if (event.type === "mindmap_updated") {
+    sessions.push(event.item);
+    sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  } else if (event.type === "mindmap_unreadable") {
+    unreadableSessions.push({ id: event.id, error: event.error });
+    unreadableSessions.sort((a, b) => a.id.localeCompare(b.id));
+  }
+  renderSessions();
+}
+
 async function init() {
   await refreshSessions();
   if (currentId && sessions.some((s) => s.id === currentId)) {
@@ -1262,15 +1276,25 @@ function connectSSE() {
     liveText.textContent = "Live";
   };
 
+  // The first "connected" is covered by init(); a later one means events may have been missed.
+  let reconnecting = false;
+
   es.onmessage = async (event) => {
     try {
       const payload = serverJson<ViewerEvent>(event.data);
-      if (payload.type === "mindmap_updated") {
-        // Refresh the session list, but only reload the canvas for the session being viewed.
-        await refreshSessions();
-        if (!currentId && payload.id) await selectSession(payload.id, { replace: true });
-        else if (payload.id === currentId) await fetchMindmapById(currentId);
+      if (payload.type === "connected") {
+        if (reconnecting) {
+          await refreshSessions();
+          await fetchMindmapById(currentId);
+        }
+        reconnecting = true;
+        return;
       }
+      applyToSessions(payload);
+      // Only reload the canvas for the session being viewed; a file that can't be read isn't opened.
+      if (payload.type !== "mindmap_updated") return;
+      if (!currentId) await selectSession(payload.id, { replace: true });
+      else if (payload.id === currentId) await fetchMindmapById(currentId);
     } catch {
       // ignore malformed event
     }
