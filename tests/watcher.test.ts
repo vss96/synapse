@@ -47,6 +47,22 @@ async function eventually(id: MindmapId, check: (doc: MindmapDocument) => void, 
   }
 }
 const settle = () => new Promise((r) => setTimeout(r, 1500));
+const activity = (doc: MindmapDocument) => doc.activityLog.map((e) => e.message);
+
+/** Keeps rewriting `file` until the returned function stops it, the way an install or a watch build does. */
+function keepWriting(file: string): () => Promise<void> {
+  let stopped = false;
+  const writing = (async () => {
+    for (let i = 0; !stopped; i++) {
+      await writeFile(file, `${i}\n`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  })();
+  return () => {
+    stopped = true;
+    return writing;
+  };
+}
 
 describe("shouldIgnorePath", () => {
   it("always skips git internals and atomic-write temp files", () => {
@@ -54,7 +70,7 @@ describe("shouldIgnorePath", () => {
       assert.ok(shouldIgnorePath(p, true), p);
       assert.ok(shouldIgnorePath(p, false), p);
     }
-    for (const p of ["src/index.ts", "src/target/x.ts", "src/tmp.ts", "docs/out.md"]) assert.ok(!shouldIgnorePath(p, false), p);
+    for (const p of ["src/index.ts", "src/targets/x.ts", "src/tmp.ts", "docs/out.md"]) assert.ok(!shouldIgnorePath(p, false), p);
   });
 
   it("skips Synapse's own data files, which are JSON files at the top of `data`", () => {
@@ -68,6 +84,16 @@ describe("shouldIgnorePath", () => {
     for (const p of [".gradle/9.8.1/fileHashes/fileHashes.lock", "buildSrc/.gradle/x", "app/__pycache__/m.pyc", ".idea/workspace.xml", "node_modules/x/index.js"]) {
       assert.ok(shouldIgnorePath(p, false), p);
       assert.ok(!shouldIgnorePath(p, true), p);
+    }
+  });
+
+  it("knows the build and cache folders of Rust, Maven, Python, Xcode and the JS frameworks", () => {
+    const folders = ["target", ".turbo", ".svelte-kit", ".nuxt", ".astro", ".output", ".parcel-cache", "out", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", "DerivedData", "Pods"];
+    for (const folder of folders) {
+      for (const p of [`${folder}/x`, `pkg/${folder}/deep/x`]) {
+        assert.ok(shouldIgnorePath(p, false), p);
+        assert.ok(!shouldIgnorePath(p, true), p);
+      }
     }
   });
 });
@@ -264,6 +290,239 @@ describe("workspace watcher", () => {
     await git("rm", "-qf", "dist/bundle.js");
     await eventually(id, (d) => assert.deepEqual(touched(d), ["delete:dist/bundle.js"]));
   }, 20000);
+
+  it("records the delete of a recorded file git stopped tracking a while ago", async () => {
+    const { repoDir, git } = await makeRepo("untracked-later");
+    await mkdir(path.join(repoDir, "dist"));
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "1;\n");
+    await git("add", ".");
+    await git("commit", "-qm", "commit the bundle");
+    const id = await createMindmap({ title: "Untracked later", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "2;\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:dist/bundle.js"]));
+
+    await git("rm", "-q", "--cached", "dist/bundle.js");
+    await settle();
+    // Any event makes the watcher ask git what it tracks. A temp file also leaves no batch to look at the mindmap again.
+    await writeFile(path.join(repoDir, "debug.tmp"), "x");
+    await settle();
+
+    await unlink(path.join(repoDir, "dist", "bundle.js"));
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["delete:dist/bundle.js"]));
+  }, 20000);
+
+  it("records the delete of a file only the mindmap knows about, even in a new watcher", async () => {
+    const { repoDir } = await makeRepo("listed-only");
+    await mkdir(path.join(repoDir, "dist"));
+    await writeFile(path.join(repoDir, "dist", "report.html"), "x");
+    const id = await createMindmap({ title: "Listed only", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await callTool("log_file_touch", { mindmapId: id, path: "dist/report.html", action: "create" });
+
+    // As after a restart: a new watcher that has seen no batch yet
+    stopWorkspaceWatcher(id);
+    await callTool("add_node", { mindmapId: id, parentId: "root", label: "Next" });
+    await settle();
+    await unlink(path.join(repoDir, "dist", "report.html"));
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["delete:dist/report.html"]));
+  }, 20000);
+
+  it("records the delete of a file only the mindmap knows about, once a batch has seen it listed", async () => {
+    const { repoDir } = await makeRepo("listed-later");
+    await mkdir(path.join(repoDir, "dist"));
+    await writeFile(path.join(repoDir, "dist", "report.html"), "x");
+    const id = await createMindmap({ title: "Listed later", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+    await callTool("log_file_touch", { mindmapId: id, path: "dist/report.html", action: "create" });
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await eventually(id, (d) => assert.ok(touched(d).includes("modify:a.ts")));
+
+    await unlink(path.join(repoDir, "dist", "report.html"));
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["delete:dist/report.html", "modify:a.ts"]));
+  }, 20000);
+
+  it("records tracked files in the built-in folders at any depth, and files named like those folders", async () => {
+    const { repoDir, git } = await makeRepo("tracked-segments");
+    await mkdir(path.join(repoDir, "pkg", "node_modules", "dep"), { recursive: true });
+    await mkdir(path.join(repoDir, "scripts"));
+    const files = ["pkg/node_modules/dep/index.js", "scripts/build", "pkg/.DS_Store"];
+    for (const file of files) await writeFile(path.join(repoDir, file), "1\n");
+    await git("add", ".");
+    await git("commit", "-qm", "commit them");
+    const id = await createMindmap({ title: "Tracked", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+
+    for (const file of files) await writeFile(path.join(repoDir, file), "2\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), files.map((f) => `modify:${f}`).sort()));
+  }, 20000);
+
+  it("records tracked files in a built-in folder when watching a subdirectory of the repo", async () => {
+    const { repoDir, git } = await makeRepo("tracked-subdir");
+    await mkdir(path.join(repoDir, "pkg", "dist"));
+    await writeFile(path.join(repoDir, "pkg", "dist", "bundle.js"), "1;\n");
+    await git("add", ".");
+    await git("commit", "-qm", "commit the bundle");
+    const id = await createMindmap({ title: "Subdir", workspacePath: path.join(repoDir, "pkg"), initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+
+    await writeFile(path.join(repoDir, "pkg", "dist", "bundle.js"), "2;\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:dist/bundle.js"]));
+  }, 20000);
+
+  it("counts a file in a built-in folder once it's committed, with nothing else changing", async () => {
+    const { repoDir, git } = await makeRepo("committed-later");
+    const id = await createMindmap({ title: "Committed later", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+    await mkdir(path.join(repoDir, "dist"));
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "1;\n");
+    await settle();
+    await git("add", ".");
+    await git("commit", "-qm", "commit the bundle");
+    await settle();
+
+    await writeFile(path.join(repoDir, "dist", "bundle.js"), "2;\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:dist/bundle.js"]));
+  }, 20000);
+
+  it("catches up with a commit in a linked worktree, whose git files it can't see change", async () => {
+    const { repoDir, git } = await makeRepo("committed-worktree");
+    const worktree = path.join(tmpDir, "committed-worktree-linked");
+    await git("worktree", "add", "-q", worktree, "-b", "linked");
+    const id = await createMindmap({ title: "Linked", workspacePath: worktree, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+    await mkdir(path.join(worktree, "dist"));
+    await writeFile(path.join(worktree, "dist", "bundle.js"), "1;\n");
+    await settle();
+    const inWorktree = (...args: string[]) => execFileAsync("git", args, { cwd: worktree });
+    await inWorktree("add", ".");
+    await inWorktree("commit", "-qm", "commit the bundle");
+    await settle();
+
+    // The first save after the commit makes the watcher ask git again; the next one is recorded
+    await writeFile(path.join(worktree, "dist", "bundle.js"), "2;\n");
+    await settle();
+    await writeFile(path.join(worktree, "dist", "bundle.js"), "3;\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:dist/bundle.js"]));
+  }, 20000);
+
+  it("doesn't let an install hold back a real edit in a repo with no rule for node_modules", async () => {
+    const { repoDir } = await makeRepo("noisy-install");
+    await mkdir(path.join(repoDir, "node_modules", "left-pad"), { recursive: true });
+    const id = await createMindmap({ title: "Install", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+
+    const stopInstalling = keepWriting(path.join(repoDir, "node_modules", "left-pad", "index.js"));
+    try {
+      await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+      // Under the 3 s limit on a batch's wait: the edit gets through because the install's events don't count at all
+      await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]), 2500);
+    } finally {
+      await stopInstalling();
+    }
+  }, 20000);
+
+  it("marks what it records, so it can be told from what an agent logged", async () => {
+    const { repoDir } = await makeRepo("marks-source");
+    const id = await createMindmap({ title: "Source", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    const doc = await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]));
+    assert.deepEqual(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.source)), ["watcher"]);
+
+    await callTool("log_file_touch", { mindmapId: id, path: "a.ts", action: "modify", summary: "Fixed a" });
+    const logged = Object.values((await store.load(id))!.nodes).flatMap((n) => n.files);
+    assert.deepEqual(logged.map((f) => [f.summary, f.source]), [["Fixed a", undefined]]);
+  });
+
+  it("holds a batch back while git has the index locked, so a slow checkout isn't taken for edits", async () => {
+    const { repoDir } = await makeRepo("slow-checkout");
+    const id = await createMindmap({ title: "Slow checkout", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+
+    const lock = path.join(repoDir, ".git", "index.lock");
+    await writeFile(lock, "");
+    await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.deepEqual(touched((await store.load(id))!), [], "well past the 600 ms debounce");
+
+    await unlink(lock);
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]), 3000);
+  }, 20000);
+
+  it("records a batch after about 3 s even if changes never pause", async () => {
+    const { repoDir } = await makeRepo("never-pauses");
+    const id = await createMindmap({ title: "Never pauses", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+
+    const stopWriting = keepWriting(path.join(repoDir, "b.ts"));
+    try {
+      await writeFile(path.join(repoDir, "a.ts"), "export const a = 2;\n");
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.deepEqual(touched((await store.load(id))!), [], "still waiting for a pause, well past the 600 ms debounce");
+      await eventually(id, (d) => assert.deepEqual(touched(d), ["modify:a.ts", "modify:b.ts"]), 3000);
+    } finally {
+      await stopWriting();
+    }
+  }, 20000);
+
+  it("skips other ecosystems' build folders in a repo with no rule for them, and outside git", async () => {
+    const { repoDir } = await makeRepo("other-ecosystems");
+    const plain = path.join(tmpDir, "plain-ecosystems");
+    await mkdir(plain);
+    for (const dir of [repoDir, plain]) {
+      const id = await createMindmap({ title: "Build", workspacePath: dir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+      await settle();
+      for (const file of ["target/debug/app", ".pytest_cache/v/lastfailed", "web/.svelte-kit/output/x.js", "ios/Pods/Manifest.lock"]) {
+        await mkdir(path.dirname(path.join(dir, file)), { recursive: true });
+        await writeFile(path.join(dir, file), "x");
+      }
+      await writeFile(path.join(dir, "new.ts"), "export const n = 1;\n");
+
+      await eventually(id, (d) => assert.deepEqual(touched(d), ["create:new.ts"]));
+      await settle();
+      assert.deepEqual(touched((await store.load(id))!), ["create:new.ts"]);
+    }
+  }, 30000);
+
+  it("summarises a batch of more than 100 files instead of attaching them", async () => {
+    const { repoDir } = await makeRepo("flood");
+    const id = await createMindmap({ title: "Flood", workspacePath: repoDir });
+    await settle();
+
+    await Promise.all(Array.from({ length: 101 }, (_, i) => writeFile(path.join(repoDir, `generated-${i}.ts`), "1;\n")));
+    const doc = await eventually(id, (d) => assert.ok(activity(d).includes("Bulk workspace change: 101 files changed (not attached individually)"), activity(d).join("\n")));
+    assert.deepEqual(touched(doc), []);
+    assert.ok(!activity(doc).some((m) => m.startsWith("File ")), "no entry per file");
+    assert.ok(!Object.values(doc.nodes).some((n) => n.label === "Touched Files"), "no node for files that aren't attached");
+  }, 20000);
+
+  it("attaches a batch of exactly 100 files", async () => {
+    const { repoDir } = await makeRepo("full-batch");
+    const id = await createMindmap({ title: "Full batch", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
+    await settle();
+
+    await Promise.all(Array.from({ length: 100 }, (_, i) => writeFile(path.join(repoDir, `generated-${i}.ts`), "1;\n")));
+    const doc = await eventually(id, (d) => assert.equal(touched(d).length, 100));
+    assert.ok(!activity(doc).some((m) => m.startsWith("Bulk workspace change")));
+  }, 20000);
+
+  it("leaves a big checkout to its own summary, which isn't a bulk change", async () => {
+    const { repoDir, git } = await makeRepo("big-checkout");
+    await git("checkout", "-q", "other");
+    await Promise.all(Array.from({ length: 150 }, (_, i) => writeFile(path.join(repoDir, `generated-${i}.ts`), "1;\n")));
+    await git("add", ".");
+    await git("commit", "-qm", "generated files");
+    await git("checkout", "-q", "-");
+    await git("commit", "-q", "--allow-empty", "-m", "empty");
+    const id = await createMindmap({ title: "Big checkout", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+
+    await git("checkout", "-q", "other");
+    const doc = await eventually(id, (d) => assert.match(activity(d).join("\n"), /^Git checkout: .*: \d+ file change\(s\) not attributed to a task$/m));
+    await settle();
+    assert.ok(!activity((await store.load(id))!).some((m) => m.startsWith("Bulk workspace change")), activity(doc).join("\n"));
+    assert.deepEqual(touched(doc), []);
+  }, 30000);
 
   it("keeps a removed untracked folder out of the git churn count", async () => {
     const { repoDir, git } = await makeRepo("removed-deps");

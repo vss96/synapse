@@ -22,7 +22,24 @@ const FALLBACK_IGNORED_SEGMENTS = new Set([
   ".kotlin",
   ".venv",
   "__pycache__",
+  "target",
+  ".turbo",
+  ".svelte-kit",
+  ".nuxt",
+  ".astro",
+  ".output",
+  ".parcel-cache",
+  "out",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".tox",
+  "DerivedData",
+  "Pods",
 ]);
+
+/** Every path at or under a fallback segment, at any depth. `**` needs glob magic, and a segment can be a file (`.DS_Store`, a `scripts/build`). */
+const FALLBACK_PATHSPECS = [...FALLBACK_IGNORED_SEGMENTS].flatMap((segment) => [`:(glob)**/${segment}`, `:(glob)**/${segment}/**`]);
 
 /** Editor and atomic-write temp files: `x~`, `.x.swp`, `x.tmp`, Claude Code's `x.tmp.<pid>.<hex>`, BSD `sed -i`'s `.!<pid>!x`. */
 const TEMP_FILE = /(~|\.swp|\.tmp|\.tmp\.\d+\.[0-9a-f]+)$|(^|\/)\.!\d+!/;
@@ -55,6 +72,12 @@ async function git(cwd: string, args: string[], input?: string): Promise<string>
 async function gitIgnored(cwd: string, paths: string[]): Promise<Set<string>> {
   const out = await git(cwd, ["check-ignore", "--stdin", "-z"], paths.join("\0"));
   return new Set(out.split("\0").filter(Boolean));
+}
+
+/** The paths git tracks inside the fallback segments, usually none. Empty outside a repo. */
+async function gitTrackedInFallback(cwd: string): Promise<string[]> {
+  const out = await git(cwd, ["ls-files", "-z", "--", ...FALLBACK_PATHSPECS]);
+  return out.split("\0").filter(Boolean);
 }
 
 /** Those of `paths` that git lists with `args` (`ls-files` for tracked, `diff --name-only HEAD` for changed). */
@@ -106,6 +129,20 @@ function ifReadable<T>(read: Promise<T | null>): Promise<T | null> {
 
 /** How long after a checkout, rebase, reset, merge or pull its file events may still arrive. */
 const VCS_SETTLE_MS = 30_000;
+
+/** A batch is recorded once its events pause for this long... */
+const DEBOUNCE_MS = 600;
+/** ...or this long after its first event, so events that never pause can't put it off forever. */
+const MAX_WAIT_MS = 3000;
+/** How far behind git the fast path's list of paths to keep can fall while files are changing. */
+const KEPT_REFRESH_MS = 1000;
+
+/**
+ * More touches than this from one batch are recorded as one activity entry, not attached. A mindmap
+ * has reached 98,882 entries this way (#22), and it's as many as the activity log holds, so one
+ * entry per file would push out everything else in it.
+ */
+const MAX_BATCH_TOUCHES = 100;
 
 /**
  * Inspect git status and diff --numstat in a workspace directory. Staged renames
@@ -207,10 +244,40 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
   const pendingFiles = new Map<string, boolean>();
   let batchStart = 0;
   let debounceTimer: NodeJS.Timeout | null = null;
+  let flushDeadline = 0;
   let flushing = Promise.resolve();
-  // Until git answers, assume no repo: the fallback list filters more, never less.
-  let inRepo = false;
-  void git(resolved, ["rev-parse", "--is-inside-work-tree"]).then((out) => (inRepo = out.trim() === "true"));
+
+  // Paths in the fallback segments that go on to flushBatch, which has the final say: what git tracks and what the
+  // mindmap lists. Every other event in those segments stops at the fast path, so an install or a build can't fill a
+  // batch or hold it back. Until git answers this is empty: the fallback list filters more, never less. It only grows,
+  // so that a file `git rm` has just untracked still gets through for flushBatch to find in the mindmap.
+  const kept = new Set<string>();
+  const keep = (paths: Iterable<string>) => {
+    for (const p of paths) kept.add(p);
+  };
+  const logError = (err: unknown) => console.error(`[synapse] watcher: ${err}`);
+  void gitTrackedInFallback(resolved).then(keep);
+
+  // Where git locks the index while a checkout, merge or reset rewrites the worktree. A linked worktree has its own.
+  let indexLock: string | undefined;
+  void git(resolved, ["rev-parse", "--git-path", "index.lock"]).then((out) => {
+    const lock = out.trim();
+    if (lock) indexLock = path.resolve(resolved, lock);
+  });
+  void ifReadable(store.load(mindmapId))
+    .then((doc) => keep(doc ? recordedPaths(doc) : []))
+    .catch(logError);
+
+  // git can start tracking a path without any event here (`.git` is elsewhere in a linked worktree or from a
+  // subdirectory), so any event prompts a look, at most one at a time. Only git: this runs throughout an install,
+  // when loading the mindmap each time would be the bigger cost.
+  let refreshTimer: NodeJS.Timeout | null = null;
+  const refreshKept = () => {
+    refreshTimer ??= setTimeout(async () => {
+      keep(await gitTrackedInFallback(resolved));
+      refreshTimer = null;
+    }, KEPT_REFRESH_MS).unref();
+  };
 
   // Whether this watcher still owns the directory: once stopped (and maybe replaced), its batches are dropped.
   const current = () => activeWatchers.get(resolved) === entry;
@@ -244,6 +311,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     // No other deleted path does: removing node_modules mustn't reach the rebase and churn counts below.
     const mindmap = await ifReadable(store.load(mindmapId));
     const listed = mindmap ? recordedPaths(mindmap) : new Set<string>();
+    keep(listed);
     const entries = unignored.filter(([p]) => !shouldIgnorePath(p, tracked.has(p) || (listed.has(p) && !existsSync(path.join(resolved, p)))));
     const paths = entries.map(([p]) => p);
     if (paths.length === 0) return;
@@ -289,11 +357,15 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
       }
       if (churn > 0) store.recordActivity(doc, `Git ${operation}: ${churn} file change(s) not attributed to a task`);
       if (touches.length === 0) return;
+      if (touches.length > MAX_BATCH_TOUCHES) {
+        store.recordActivity(doc, `Bulk workspace change: ${touches.length} files changed (not attached individually)`);
+        return;
+      }
 
       const targetNode = fileTouchTarget(doc);
       upsertFileTouches(
         targetNode,
-        touches.map(([relPath, action]) => ({ path: relPath, action, changes: [], summary: `Auto-detected file ${action}`, timestamp: now() })),
+        touches.map(([relPath, action]) => ({ path: relPath, action, changes: [], summary: `Auto-detected file ${action}`, timestamp: now(), source: "watcher" })),
       );
       for (const [relPath, action] of touches) store.recordActivity(doc, `File ${action}: ${relPath}`, { nodeId: targetNode.id, file: relPath });
     });
@@ -301,8 +373,14 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
 
   // One batch at a time, so two flushes never load and save the document over each other.
   const flush = () => {
+    // A long checkout moves HEAD last, so a batch recorded now would look like edits. Wait for git, but not for
+    // a lock a crashed git left behind.
+    if (indexLock && existsSync(indexLock) && Date.now() - batchStart < VCS_SETTLE_MS) {
+      debounceTimer = setTimeout(flush, DEBOUNCE_MS);
+      return;
+    }
     debounceTimer = null;
-    flushing = flushing.then(flushBatch).catch((err) => console.error(`[synapse] watcher: ${err}`));
+    flushing = flushing.then(flushBatch).catch(logError);
   };
 
   let watcher: FSWatcher;
@@ -310,12 +388,17 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     watcher = watch(resolved, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
       const relPath = filename.replace(/\\/g, "/");
-      if (shouldIgnorePath(relPath, inRepo)) return; // in a repo git may track it: flushBatch asks
+      refreshKept();
+      if (shouldIgnorePath(relPath, kept.has(relPath))) return; // a kept path only gets as far as flushBatch, which asks git
 
       if (pendingFiles.size === 0) batchStart = Date.now();
       pendingFiles.set(relPath, pendingFiles.get(relPath) === true || eventType === "rename");
+
+      const eventAt = Date.now();
+      if (!debounceTimer) flushDeadline = eventAt + MAX_WAIT_MS;
+      if (eventAt >= flushDeadline) return; // the timer is due: restarting it for every event could keep it from ever firing
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(flush, 600);
+      debounceTimer = setTimeout(flush, Math.min(DEBOUNCE_MS, flushDeadline - eventAt));
     });
   } catch {
     return; // Recursive watch may fail on unsupported mounts; fail gracefully
@@ -327,6 +410,7 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
     close() {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = null;
+      if (refreshTimer) clearTimeout(refreshTimer);
       pendingFiles.clear();
       watcher.close();
     },
