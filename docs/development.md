@@ -40,16 +40,33 @@ src/
     schema.ts      zod schemas: the source of the data model's types and boundary checks
     node.ts        Creating and attaching nodes
     file-touch.ts  Merging file touches and symbol-level changes
+    file-stats.ts  Reading file touches: aggregation across nodes, auto-detection; no deps, used by the browser
   version.ts       Package version
 viewer/
   index.html       Viewer markup and CSS
-  app.ts           Browser code (strict TypeScript, bundled by esbuild to dist/web/app.js)
-  layout.ts        Tree layout: card positions and wrapped grids (pure, unit-tested)
+  app.ts           Entry point (bundled by esbuild to dist/web/app.js): composes render(), toolbar, live events
+  state.ts         What the viewer is showing; modules change it and call render()
+  canvas.ts        The camera on the page: pan, zoom, bringing cards into view
+  svg-render.ts    Drawing the map, and clicks and keys on it
+  sidebar.ts       The Inspector, Changes and Activity tabs
+  sessions.ts      The session list, and opening sessions
+  find.ts          The find box
+  panels.ts        Showing and hiding the session list, sidebar and legend
+  collapse.ts      Folded branches, remembered per session
+  toast.ts         Short messages, with an optional Undo
+  display.ts       Labels, glyphs, tones and tallies
+  dom.ts           DOM and text helpers
+  layout.ts        Tree layout: views, folding, card positions, wrapped grids (pure, unit-tested)
+  link-routing.ts  Flow link curves and label pills (pure, unit-tested)
+  text-fit.ts      Fitting card text to a pixel width (pure, unit-tested)
   camera.ts        Pan/zoom math (pure, unit-tested)
+  search.ts        Matching cards for the find box (pure, unit-tested)
+  session-filter.ts  What the session list shows (pure, unit-tested)
   session-groups.ts  Grouping the session list by repository (pure, unit-tested)
   session-link.ts  The session ID in a URL hash (pure, unit-tested)
-  tsconfig.json    DOM type-check for app.ts
-tests/             bun:test suites: model, store-renderer, tools, viewer, installer
+  local-file.ts    Checking a mindmap file opened from disk (pure, unit-tested)
+  tsconfig.json    DOM type-check, starting from app.ts
+tests/             bun:test suites, including viewer-dom, which runs the built page in a simulated DOM
 docs/              This site (VitePress); docs/public holds the logo and favicon
 ```
 
