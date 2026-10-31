@@ -57,6 +57,13 @@ describe("shouldIgnorePath", () => {
     for (const p of ["src/index.ts", "src/target/x.ts", "src/tmp.ts", "docs/out.md"]) assert.ok(!shouldIgnorePath(p, false), p);
   });
 
+  it("skips Synapse's own data files, which are JSON files at the top of `data`", () => {
+    for (const tracked of [true, false]) {
+      assert.ok(shouldIgnorePath("data/mm_Ab12Cd34.json", tracked));
+      for (const p of ["package.json", "src/data/fixture.json", "data/notes.md"]) assert.ok(!shouldIgnorePath(p, tracked), p);
+    }
+  });
+
   it("skips tool, dependency and build folders unless git tracks the file", () => {
     for (const p of [".gradle/9.8.1/fileHashes/fileHashes.lock", "buildSrc/.gradle/x", "app/__pycache__/m.pyc", ".idea/workspace.xml", "node_modules/x/index.js"]) {
       assert.ok(shouldIgnorePath(p, false), p);
@@ -177,6 +184,45 @@ describe("workspace watcher", () => {
     await settle();
     const later = (await store.load(id))!;
     assert.deepEqual(Object.values(later.nodes).flatMap((n) => n.files).map((f) => f.path).sort(), ["a.ts", "new.ts"]);
+    const activity = later.activityLog.map((e) => e.message);
+    assert.ok(activity.includes("File modify: a.ts"));
+    assert.ok(activity.includes("File create: new.ts"));
+    assert.ok(!activity.some((m) => m.includes("not attributed")), "no git churn to report");
+  }, 20000);
+
+  it("keeps watching other workspaces when a mindmap changes in one of them", async () => {
+    const { repoDir: first } = await makeRepo("two-first");
+    const { repoDir: second } = await makeRepo("two-second");
+    const a = await createMindmap({ title: "A", workspacePath: first, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    const b = await createMindmap({ title: "B", workspacePath: second, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    assert.equal(watchedMindmap(first), a);
+    assert.equal(watchedMindmap(second), b);
+
+    await settle();
+    await writeFile(path.join(first, "a.ts"), "export const a = 2;\n");
+    await eventually(a, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]));
+  }, 20000);
+
+  it("records a new untracked file written right after a checkout", async () => {
+    const { repoDir, git } = await makeRepo("after-checkout");
+    const id = await createMindmap({ title: "After checkout", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    await git("checkout", "-q", "other");
+    await writeFile(path.join(repoDir, "new.ts"), "export const n = 1;\n");
+    await eventually(id, (d) => assert.deepEqual(touched(d), ["create:new.ts"]));
+  }, 20000);
+
+  it("keeps a file new when it's written again in the same batch", async () => {
+    const { repoDir } = await makeRepo("written-twice");
+    const id = await createMindmap({ title: "Twice", workspacePath: repoDir, initialPlan: [{ label: "Work", status: "in_progress" }] });
+    await settle();
+    await writeFile(path.join(repoDir, "new.ts"), "1;\n");
+    await new Promise((r) => setTimeout(r, 200)); // separate events, but inside the 600 ms batch
+    await writeFile(path.join(repoDir, "new.ts"), "2;\n");
+    await settle();
+    const doc = (await store.load(id))!;
+    assert.deepEqual(touched(doc), ["create:new.ts"]);
+    assert.deepEqual(doc.activityLog.map((e) => e.message).filter((m) => m.endsWith(": new.ts")), ["File create: new.ts"]);
   }, 20000);
 
   it("skips untracked files in the built-in folders even when the repo doesn't ignore them", async () => {
