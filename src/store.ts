@@ -3,7 +3,7 @@ import { readdir, readFile, writeFile, mkdir, unlink, rename, open, stat } from 
 import os from "node:os";
 import path from "node:path";
 import { errorCode } from "./errors.js";
-import { aggregateFiles } from "./model/file-stats.js";
+import { aggregateFiles, isFileEvent } from "./model/file-stats.js";
 import { isTask } from "./model/kinds.js";
 import { MindmapDocument, now, type MindmapId, type MindmapList, type MindmapListItem, type NodeId, type UnreadableMindmap } from "./model/schema.js";
 
@@ -21,10 +21,19 @@ export async function ensureDataDir(): Promise<string> {
 // MindmapId only admits [A-Za-z0-9_-], so the file name can't escape the data directory.
 const filePath = (id: MindmapId): string => path.join(getDataDir(), `${id}.json`);
 
-/** Append an activity entry to a mindmap document (keeps the latest 100 entries). */
+/** The most entries a mindmap's activity log holds; `MindmapDocument` refuses more. */
+const MAX_ACTIVITY = 100;
+
+/**
+ * Append an activity entry to a mindmap document. A full log gives up its oldest file event, and only
+ * if it has none its oldest entry: the watcher can write hundreds in minutes, which would push out the
+ * session's history.
+ */
 export function recordActivity(doc: MindmapDocument, message: string, extra?: { nodeId?: NodeId; file?: string }): void {
   doc.activityLog.unshift({ timestamp: now(), message, ...extra });
-  if (doc.activityLog.length > 100) doc.activityLog.length = 100;
+  if (doc.activityLog.length <= MAX_ACTIVITY) return;
+  const oldestFileEvent = doc.activityLog.map(isFileEvent).lastIndexOf(true);
+  doc.activityLog.splice(oldestFileEvent === -1 ? MAX_ACTIVITY : oldestFileEvent, 1);
 }
 
 /** A mindmap file exists but can't be loaded: it can't be opened, its JSON is damaged, or it isn't a valid mindmap. */

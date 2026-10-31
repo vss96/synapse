@@ -187,4 +187,4 @@ A `CodeChange` is `{ kind, symbol, previousSymbol?, detail? }`. For renames, `sy
 
 ### Activity log
 
-Every change appends an entry to `activityLog`, newest first, with a timestamp, a message, and optionally `nodeId` and `file`. Each mindmap keeps its latest 100 entries.
+Every change appends an entry to `activityLog`, newest first, with a timestamp, a message, and optionally `nodeId` and `file`. Each mindmap keeps 100 entries. When the log is full, the oldest `File <action>: <path>` entry from the workspace watcher goes first, so a busy workspace can't push out the rest of the session's history. Only a log with none of those loses its oldest entry, and a log with nothing else has no room for more of them.

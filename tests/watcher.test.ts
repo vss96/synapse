@@ -9,6 +9,7 @@ import { z } from "zod";
 import { tools } from "../src/tools.js";
 import * as store from "../src/store.js";
 import { inspectGitChanges, repoRoot, shouldIgnorePath, stopWorkspaceWatcher, watchedMindmap } from "../src/watcher.js";
+import { isFileEvent } from "../src/model/file-stats.js";
 import { MindmapId, type MindmapDocument } from "../src/model/schema.js";
 import { addChild, emptyDoc } from "./fixtures.js";
 
@@ -213,6 +214,7 @@ describe("workspace watcher", () => {
     const activity = later.activityLog.map((e) => e.message);
     assert.ok(activity.includes("File modify: a.ts"));
     assert.ok(activity.includes("File create: new.ts"));
+    assert.ok(later.activityLog.filter((e) => e.file).every(isFileEvent), "the log can tell what the watcher wrote");
     assert.ok(!activity.some((m) => m.includes("not attributed")), "no git churn to report");
   }, 20000);
 

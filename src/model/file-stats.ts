@@ -3,7 +3,7 @@
  * the MCP tools and the viewer, so like kinds.ts it has no runtime dependencies (schema.ts would bundle zod).
  */
 
-import type { CodeChange, EditTouch, FileTouch, MindmapNode } from "./schema.js";
+import type { ActivityEntry, CodeChange, EditTouch, FileTouch, MindmapNode } from "./schema.js";
 
 export function touchChanges(f: FileTouch): readonly CodeChange[] {
   return f.action === "read" ? [] : f.changes;
@@ -15,6 +15,14 @@ const AUTO_SUMMARY_PREFIX = "Auto-detected file ";
 /** Whether the watcher or a git sync found this touch, rather than an agent logging it. */
 export function isAutoDetected(f: FileTouch): boolean {
   return f.source !== undefined || (f.summary?.startsWith(AUTO_SUMMARY_PREFIX) ?? false);
+}
+
+/** What the watcher writes for each file it records. Mindmaps already saved have no other sign of it. */
+const FILE_EVENT = /^File (create|modify|delete): /;
+
+/** Whether the watcher wrote this activity entry for one changed file, rather than it being part of the session's story. */
+export function isFileEvent(entry: ActivityEntry): boolean {
+  return FILE_EVENT.test(entry.message);
 }
 
 /** Merge symbol-level changes; a later change with the same kind + symbol replaces the earlier one. */
