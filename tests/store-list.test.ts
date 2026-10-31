@@ -1,5 +1,5 @@
-import { describe, it, beforeAll, afterAll, expect, spyOn } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { describe, it, beforeAll, afterAll, afterEach, expect, spyOn } from "bun:test";
+import { chmod, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
@@ -21,6 +21,15 @@ describe("listing stored mindmaps", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
+  // Each test counts what's listed, so a failure mustn't leave files for the next one.
+  afterEach(async () => {
+    await Promise.all((await readdir(tmpDir)).map((name) => rm(path.join(tmpDir, name), { force: true })));
+  });
+
+  // Whole seconds: a file's own mtime can be finer than the milliseconds a Date holds, so it couldn't be put back exactly.
+  const EARLIER = new Date("2026-01-01T00:00:00Z");
+  const LATER = new Date("2026-01-01T00:00:05Z");
+
   /** Rewrites a stored file without changing its size, then sets its mtime. */
   async function retitle(file: string, from: string, to: string, mtime: Date) {
     expect(to.length).toBe(from.length);
@@ -31,15 +40,14 @@ describe("listing stored mindmaps", () => {
   it("reads a file again only when its mtime or size changed", async () => {
     await store.save(emptyDoc("mm_cached", "Before"));
     const file = path.join(tmpDir, "mm_cached.json");
+    await utimes(file, EARLIER, EARLIER);
     await store.list();
 
-    const { mtime } = await stat(file);
-    await retitle(file, "Before", "Sneaky", mtime);
+    await retitle(file, "Before", "Sneaky", EARLIER);
     expect((await store.list()).mindmaps.find((m) => m.id === "mm_cached")?.title).toBe("Before");
 
-    await retitle(file, "Sneaky", "Edited", new Date(mtime.getTime() + 5000));
+    await retitle(file, "Sneaky", "Edited", LATER);
     expect((await store.list()).mindmaps.find((m) => m.id === "mm_cached")?.title).toBe("Edited");
-    await store.remove(MindmapId.parse("mm_cached"));
   });
 
   it("stops listing a removed file and keeps reporting an unreadable one", async () => {
