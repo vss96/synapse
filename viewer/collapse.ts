@@ -17,6 +17,7 @@ export function loadCollapsed(sessionId: string): Set<string> {
 }
 
 export function saveCollapsed(): void {
+  if (!state.currentId) return; // a file from disk isn't a session to remember anything about
   try {
     const key = storageKey(state.currentId);
     if (state.collapsed.size === 0) localStorage.removeItem(key);

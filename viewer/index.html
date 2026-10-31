@@ -1324,7 +1324,7 @@
   }
 </style>
 </head>
-<body>
+<body class="no-session">
 <header>
   <button id="sessions-toggle" class="secondary" title="Show/hide sessions" aria-label="Show or hide sessions" aria-controls="sessions">☰</button>
   <h1>Synapse</h1>
@@ -1349,7 +1349,7 @@
   </div>
 
   <div id="toolbar">
-    <button id="sync-git-btn" class="secondary" title="Sync uncommitted git status & diff into current mindmap">⎇<span class="btn-label"> Sync Git</span></button>
+    <button id="sync-git-btn" class="secondary" disabled title="Sync uncommitted git status & diff into current mindmap">⎇<span class="btn-label"> Sync Git</span></button>
     <button id="refresh-btn" class="secondary" title="Refresh">↻<span class="btn-label"> Refresh</span></button>
     <button id="upload-btn" class="secondary" title="Open a mindmap JSON file">📁<span class="btn-label"> Open</span></button>
     <input type="file" id="file-upload" accept=".json">
