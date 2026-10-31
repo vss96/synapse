@@ -189,12 +189,14 @@ describe("model: file touches", () => {
     expect(MindmapDocument.safeParse(doc).success).toBe(true);
   });
 
-  it("doesn't take another node called Touched Files for the fallback", () => {
+  it("only takes a file node under the root called Touched Files for the fallback", () => {
     const doc = emptyDoc();
-    const lookalike = addChild(doc, { type: "component", label: "Touched Files" });
+    const concept = addChild(doc, { type: "component", label: "Touched Files" });
+    const otherFile = addChild(doc, { type: "file", label: "Other" });
+    const nested = addChild(doc, { type: "file", label: "Touched Files", parent: concept.id });
     const fallback = fileTouchTarget(doc);
-    expect(fallback.id).not.toBe(lookalike.id);
-    expect(fallback.type).toBe("file");
+    expect([concept.id, otherFile.id, nested.id]).not.toContain(fallback.id);
+    expect(fallback).toMatchObject({ type: "file", label: "Touched Files", parent: ROOT_ID });
   });
 });
 

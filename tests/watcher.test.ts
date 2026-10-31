@@ -184,7 +184,10 @@ describe("workspace watcher", () => {
     await settle();
     const later = (await store.load(id))!;
     assert.deepEqual(Object.values(later.nodes).flatMap((n) => n.files).map((f) => f.path).sort(), ["a.ts", "new.ts"]);
-    assert.ok(!later.activityLog.some((e) => e.message.includes("not attributed")), "no git churn to report");
+    const activity = later.activityLog.map((e) => e.message);
+    assert.ok(activity.includes("File modify: a.ts"));
+    assert.ok(activity.includes("File create: new.ts"));
+    assert.ok(!activity.some((m) => m.includes("not attributed")), "no git churn to report");
   }, 20000);
 
   it("keeps watching other workspaces when a mindmap changes in one of them", async () => {
@@ -194,7 +197,11 @@ describe("workspace watcher", () => {
     const b = await createMindmap({ title: "B", workspacePath: second, initialPlan: [{ label: "Work", status: "in_progress" }] });
     assert.equal(watchedMindmap(first), a);
     assert.equal(watchedMindmap(second), b);
-  });
+
+    await settle();
+    await writeFile(path.join(first, "a.ts"), "export const a = 2;\n");
+    await eventually(a, (d) => assert.deepEqual(touched(d), ["modify:a.ts"]));
+  }, 20000);
 
   it("records a new untracked file written right after a checkout", async () => {
     const { repoDir, git } = await makeRepo("after-checkout");
@@ -212,7 +219,10 @@ describe("workspace watcher", () => {
     await writeFile(path.join(repoDir, "new.ts"), "1;\n");
     await new Promise((r) => setTimeout(r, 200)); // separate events, but inside the 600 ms batch
     await writeFile(path.join(repoDir, "new.ts"), "2;\n");
-    await eventually(id, (d) => assert.deepEqual(touched(d), ["create:new.ts"]));
+    await settle();
+    const doc = (await store.load(id))!;
+    assert.deepEqual(touched(doc), ["create:new.ts"]);
+    assert.deepEqual(doc.activityLog.map((e) => e.message).filter((m) => m.endsWith(": new.ts")), ["File create: new.ts"]);
   }, 20000);
 
   it("skips untracked files in the built-in folders even when the repo doesn't ignore them", async () => {
