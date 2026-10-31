@@ -143,7 +143,9 @@ Filter chips at the top (**All**, **+ Added**, **~ Modified**, **✱ Fixed**, **
 
 ## Activity tab
 
-The Activity tab is a timeline of everything that happened in the session, newest first, under a heading for each day (**Today**, **Yesterday**, or the date): mindmap creation, plan status changes, HLD mappings, links, file touches with change tallies, and git syncs. Hover over a time to see the full date. Each session keeps its latest 100 entries.
+The Activity tab is a timeline of everything that happened in the session, newest first, under a heading for each day (**Today**, **Yesterday**, or the date): mindmap creation, plan status changes, HLD mappings, links, the files an agent logged with their change tallies, and git syncs. Hover over a time to see the full date.
+
+Files that only the [workspace watcher](./how-it-works#git-sync-and-the-workspace-watcher) picked up are left out at first, because there can be hundreds of them. Click **Auto-detected file changes (N)** to mix them in, and again to take them out. A session keeps 100 entries, and these are the first to go when it's full, so a busy workspace can't push out the history of what the agent did. The [Changes tab](#changes-tab) always lists every file.
 
 Click an entry to select its node and bring it into view. The tab stays open, so you can step through entries one by one, and the entries about the selected node are marked with a blue bar. Entries about a node that has since been removed can't be clicked.
 

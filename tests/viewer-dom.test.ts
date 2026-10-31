@@ -438,6 +438,65 @@ describe("viewer page", () => {
     });
   });
 
+  describe("the Activity tab", () => {
+    const entries = (page: ReturnType<typeof openViewer>) => [...page.document.querySelectorAll(".activity-item")].map((el) => el.textContent ?? "");
+    const toggle = "[data-toggle-file-events]";
+
+    function busyDoc() {
+      const doc = plan("mm_one");
+      const timestamp = now();
+      doc.activityLog = [
+        { timestamp, message: "File modify: src/a.ts", nodeId: NodeId.parse("mm_one_first"), file: "src/a.ts" },
+        { timestamp, message: 'Task "First" marked completed', nodeId: NodeId.parse("mm_one_first") },
+        { timestamp, message: "[MODIFY] src/b.ts — logged by the agent", nodeId: NodeId.parse("mm_one_second"), file: "src/b.ts" },
+        { timestamp, message: "File delete: src/c.ts", nodeId: NodeId.parse("mm_one_second"), file: "src/c.ts" },
+      ];
+      return doc;
+    }
+
+    it("shows task history first, and what the agent logged, with file events a click away", async () => {
+      const page = openViewer({ docs: [busyDoc()] });
+      await page.settle();
+      page.click('.sidebar-tab[data-tab="activity"]');
+      expect(entries(page).some((e) => e.includes("File "))).toBe(false);
+      expect(entries(page).some((e) => e.includes("marked completed"))).toBe(true);
+      expect(entries(page).some((e) => e.includes("logged by the agent"))).toBe(true);
+      expect(page.document.querySelector(toggle)?.textContent).toContain("(2)");
+      expect(page.document.querySelector(toggle)?.getAttribute("aria-expanded")).toBe("false");
+
+      page.click(toggle);
+      expect(entries(page).length).toBe(4);
+      expect(page.document.querySelector(toggle)?.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("keeps file events showing while stepping through them", async () => {
+      const page = openViewer({ docs: [busyDoc()] });
+      await page.settle();
+      page.click('.sidebar-tab[data-tab="activity"]');
+      page.click(toggle);
+      page.click(".activity-item");
+      expect(page.document.querySelector(".node-group.selected")?.getAttribute("data-node-id")).toBe("mm_one_first");
+      expect(entries(page).length).toBe(4);
+    });
+
+    it("explains a log that holds only file events", async () => {
+      const doc = plan("mm_one");
+      doc.activityLog = [{ timestamp: now(), message: "File create: src/a.ts", file: "src/a.ts" }];
+      const page = openViewer({ docs: [doc] });
+      await page.settle();
+      page.click('.sidebar-tab[data-tab="activity"]');
+      expect(entries(page)).toEqual([]);
+      expect(page.document.querySelector("#sidebar-content")?.textContent).toContain("Only auto-detected file changes so far");
+    });
+
+    it("has no toggle without file events", async () => {
+      const page = openViewer({ docs: [plan("mm_one")] });
+      await page.settle();
+      page.click('.sidebar-tab[data-tab="activity"]');
+      expect(page.document.querySelector(toggle)).toBeNull();
+    });
+  });
+
   it("clears a file highlight when another card is picked", async () => {
     const doc = plan("mm_one");
     const worked = addChild(doc, { type: "task", label: "With a file", id: "mm_one_file" });

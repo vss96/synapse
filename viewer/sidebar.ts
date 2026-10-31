@@ -1,6 +1,6 @@
 /** The right-hand panel: the Inspector, Changes and Activity tabs. */
 
-import { aggregateFiles, isAutoDetected, touchChanges, type AggregatedFile } from "../src/model/file-stats.js";
+import { aggregateFiles, isAutoDetected, isFileEvent, touchChanges, type AggregatedFile } from "../src/model/file-stats.js";
 import { isChangeKind, isTask } from "../src/model/kinds.js";
 import type { CodeChange, FileTouch, MindmapDocument, MindmapNode } from "../src/model/schema.js";
 import { revealHighlighted, showNode } from "./canvas.js";
@@ -243,9 +243,15 @@ function changesHtml(doc: MindmapDocument): string {
 function activityHtml(doc: MindmapDocument): string {
   const log = doc.activityLog;
   if (log.length === 0) return `<div style="color:var(--muted);font-size:12.5px;">No activity recorded yet.</div>`;
+  const fileEvents = log.filter(isFileEvent).length;
+  const shown = state.showFileEvents ? log : log.filter((entry) => !isFileEvent(entry));
+  const toggle = fileEvents
+    ? `<button class="file-group-toggle" data-toggle-file-events data-focus="toggle-file-events" aria-expanded="${state.showFileEvents}">${state.showFileEvents ? "▾" : "▸"} Auto-detected file changes (${fileEvents})</button>`
+    : "";
+  const empty = shown.length === 0 ? `<div style="color:var(--muted);font-size:12.5px;">Only auto-detected file changes so far.</div>` : "";
   // Newest first, under a heading for each day. Entries about a node that still exists jump to it.
   let day = "";
-  return log
+  const rows = shown
     .map((entry) => {
       const label = dayLabel(entry.timestamp);
       const heading = label === day ? "" : `<div class="section-title">${escXml(label)}</div>`;
@@ -260,6 +266,7 @@ function activityHtml(doc: MindmapDocument): string {
         : `${heading}<div class="activity-item">${body}</div>`;
     })
     .join("");
+  return `${toggle}${empty}${rows}`;
 }
 
 const content = byId("sidebar-content");
@@ -304,7 +311,7 @@ async function copyId(id: string) {
 
 content.addEventListener("click", (e) => {
   if (!(e.target instanceof Element)) return;
-  const el = e.target.closest<HTMLElement>("[data-jump-node], [data-copy], [data-kind], [data-toggle-auto], [data-show-more], .file-item");
+  const el = e.target.closest<HTMLElement>("[data-jump-node], [data-copy], [data-kind], [data-toggle-auto], [data-toggle-file-events], [data-show-more], .file-item");
   if (!el) return;
   if (el.dataset.jumpNode !== undefined) {
     showNode(el.dataset.jumpNode);
@@ -320,6 +327,9 @@ content.addEventListener("click", (e) => {
     if (state.changeKindFilter) revealHighlighted();
   } else if (el.dataset.toggleAuto !== undefined) {
     state.showAutoFiles = !state.showAutoFiles;
+    renderSidebar(state.currentDoc);
+  } else if (el.dataset.toggleFileEvents !== undefined) {
+    state.showFileEvents = !state.showFileEvents;
     renderSidebar(state.currentDoc);
   } else if (el.dataset.showMore !== undefined) {
     state.fileLimit += FILE_PAGE;

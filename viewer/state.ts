@@ -39,6 +39,8 @@ export interface ViewerState {
   showAutoFiles: boolean;
   /** How many rows of a file list are rendered. */
   fileLimit: number;
+  /** Whether the Activity tab includes the watcher's entry for each file. */
+  showFileEvents: boolean;
   /** Branches folded on the canvas in this session. */
   collapsed: Set<string>;
 }
@@ -65,6 +67,7 @@ export const state: ViewerState = {
   fileQuery: "",
   showAutoFiles: false,
   fileLimit: FILE_PAGE,
+  showFileEvents: false,
   collapsed: new Set(),
 };
 
