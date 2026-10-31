@@ -29,6 +29,8 @@ export interface ViewerState {
   sessionStatus: StatusFilter;
   /** The session list shows the archive instead of the working sessions. */
   showArchived: boolean;
+  /** The session list is one list, newest first, instead of groups. */
+  recentSessions: boolean;
   /** The text in the canvas's find box; matching cards are highlighted. */
   mapQuery: string;
   /** The path filter over the file list in the sidebar. */
@@ -58,6 +60,7 @@ export const state: ViewerState = {
   sessionQuery: "",
   sessionStatus: "all",
   showArchived: false,
+  recentSessions: false,
   mapQuery: "",
   fileQuery: "",
   showAutoFiles: false,

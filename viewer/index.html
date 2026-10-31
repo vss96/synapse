@@ -327,9 +327,9 @@
   }
 
   .sessions-search-row { display: flex; gap: 6px; }
-  #archived-toggle { flex-shrink: 0; padding: 3px 7px; font-size: 11px; }
+  .sessions-search-row button { flex-shrink: 0; padding: 3px 7px; font-size: 11px; }
+  .sessions-search-row button[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
   #archived-toggle[hidden] { display: none; }
-  #archived-toggle[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
 
   .session-status { display: flex; gap: 2px; }
 
@@ -500,7 +500,7 @@
   .session-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .session-group-count { font-weight: 500; }
 
-  .session-group.archived .session-item { opacity: 0.75; }
+  .session-item.archived { opacity: 0.75; }
 
   .session-title-text {
     flex: 1;
@@ -1286,7 +1286,7 @@
   }
 
   @media (max-width: 1200px) {
-    #toolbar .btn-label { display: none; }
+    #toolbar .btn-label, .sessions-search-row .btn-label { display: none; }
     #toolbar button { padding: 5px 9px; }
     #sessions { width: 220px; }
     #sidebar { width: 310px; }
@@ -1371,6 +1371,7 @@
       </div>
       <div class="sessions-search-row">
         <input id="session-search" type="search" placeholder="Filter sessions…" aria-label="Filter sessions">
+        <button id="recent-toggle" class="secondary" aria-pressed="false" aria-label="Recent" title="List every session newest first, without repository groups">◷<span class="btn-label"> Recent</span></button>
         <button id="archived-toggle" class="secondary" aria-pressed="false" title="Show archived sessions" hidden>Archived</button>
       </div>
       <div id="session-status" class="session-status" role="group" aria-label="Show sessions that are">

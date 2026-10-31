@@ -13,7 +13,7 @@ The viewer is a local web page that draws every mindmap in your data directory. 
 | Area | What it shows |
 |---|---|
 | Header | The sessions toggle (☰), the name of the open session (also on the browser tab), the **Live** indicator, the view switcher, the task progress bar, the **Sync Git**, **Refresh**, and **Open** buttons, and the side panel toggle (◨) |
-| Left: Sessions | Every mindmap, grouped by repository, most recently updated first |
+| Left: Sessions | Every mindmap, grouped by repository or as one list, most recently updated first |
 | Center: canvas | The plan tree and/or the code mental model |
 | Right: sidebar | The **Inspector**, **Changes**, and **Activity** tabs |
 
@@ -23,16 +23,17 @@ Each mindmap is a session. Sessions are grouped by repository, so a repository a
 
 The file count is the files an agent logged, followed by the ones found only by the workspace watcher or a git sync, for example `6 files · 240 auto`. Rows also show what needs your attention: a red **blocked** badge counts blocked tasks, and a green **done** badge marks a session with every task completed. An active task that hasn't changed for a day is dimmed, because the session has probably been abandoned.
 
-- **Groups**: click a group name to collapse or expand it. The viewer remembers which groups you collapsed. While you filter, every match is shown.
+- **Groups**: click a group name to collapse or expand it. The viewer remembers which groups you collapsed.
+- **Recent**: click **◷ Recent** beside the filter to see every session in one list, newest first, whichever repository it's from. Each row then names its repository as well. The viewer remembers this setting.
 - **Archive**: hover over a session and click **Archive** to take it out of the list. A message offers **Undo**. If it was the open session, the next one in the list opens. Archiving hides a finished session without deleting it, and the agent can keep writing to it.
-- **Archive completed**: hover over a group name and click **Archive N done** to archive every finished session in the group at once. **Undo** brings them all back.
+- **Archive completed**: hover over a group name and click **Archive N done** to archive every finished session in the group at once. **Undo** brings them all back. Lists without groups don't have this button.
 - **Archived**: the button beside the filter shows how many sessions are archived. Click it to list them, with **Restore** and **Delete** on each one, and again to go back.
 
   <img src="../screenshots/archive-sessions.png" alt="Sessions panel with the Archive button on a hovered session and the Archived group expanded" width="260">
 - **Delete**: on an archived or unreadable session, click **Delete**, then **Confirm** within a few seconds. This removes the mindmap file for good and can't be undone. An unreadable file whose name isn't a mindmap ID has no **Delete** button, so remove it from the data directory yourself. An agent can do the same with [`delete_mindmap`](../reference/tools#delete-mindmap).
 - **Live dot**: shown on sessions updated in the last 2 minutes.
-- **Filter**: type in the box to narrow the list. It matches session titles, what's inside a session (node labels and notes, up to about 8,000 characters per session), and repository and worktree names. Archived sessions are included, in a group of their own. The header shows how many match, for example **Sessions (34 of 124)**.
-- **All / Running / Blocked / Finished**: show only sessions with a task in progress, a blocked task, or every task completed.
+- **Filter**: type in the box to narrow the list. It matches session titles, what's inside a session (node labels and notes, up to about 8,000 characters per session), and repository and worktree names. Matches are one list, newest first, and each row names its repository. Archived sessions are included and marked **archived**. The header shows how many match, for example **Sessions (34 of 124)**.
+- **All / Running / Blocked / Finished**: show only sessions with a task in progress, a blocked task, or every task completed, in one list like the filter's.
 - **<kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd>** (<kbd>Alt</kbd> on Windows and Linux): switch to the previous or next session in the list as shown, skipping collapsed groups.
 - **Session titles** are links: <kbd>Tab</kbd> to one and press <kbd>Enter</kbd> to open it, or <kbd>⌘</kbd>-click (<kbd>Ctrl</kbd>-click on Windows and Linux) to open it in a new tab.
 - **Unreadable sessions**: a mindmap file that can't be read, because of its permissions, damaged JSON, or not being a valid mindmap, is listed at the bottom of the sidebar with the reason. It can't be opened, but you can **Delete** it there, or the agent can remove it with [`delete_mindmap`](../reference/tools#delete-mindmap).

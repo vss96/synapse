@@ -294,6 +294,62 @@ describe("viewer page", () => {
     });
   });
 
+  describe("flat session lists", () => {
+    const inRepo = (name: string) => ({ repoPath: `/code/${name}`, workspacePath: `/code/${name}` });
+    const order = (page: ReturnType<typeof openViewer>) => [...page.document.querySelectorAll(".session-item")].map((el) => el.getAttribute("data-session-id"));
+
+    /** Newest first across two repositories, so grouping pulls mm_c up beside mm_a, above the newer mm_b. */
+    function twoRepos() {
+      const [a, b, c] = [plan("mm_a"), plan("mm_b"), plan("mm_c")];
+      return openViewer({ docs: [a, b, c], items: [listItem(a, inRepo("one")), listItem(b, { ...inRepo("two"), blockedTasks: 1 }), listItem(c, { ...inRepo("one"), blockedTasks: 1 })] });
+    }
+
+    it("shows every session newest first in the Recent view, says which repository each is from, and remembers the choice", async () => {
+      const page = twoRepos();
+      await page.settle();
+      expect(order(page)).toEqual(["mm_a", "mm_c", "mm_b"]);
+
+      page.click("#recent-toggle");
+      expect(order(page)).toEqual(["mm_a", "mm_b", "mm_c"]);
+      expect(page.document.querySelector(".session-group")).toBeNull();
+      expect(page.row("mm_b")?.querySelector(".session-sub")?.textContent).toContain("two");
+      expect(page.document.querySelector("#recent-toggle")?.getAttribute("aria-pressed")).toBe("true");
+      expect(page.window.localStorage.getItem("synapse.sessionsRecent")).toBe("1");
+
+      page.click("#recent-toggle");
+      expect(order(page)).toEqual(["mm_a", "mm_c", "mm_b"]);
+      expect(page.window.localStorage.getItem("synapse.sessionsRecent")).toBe("0");
+    });
+
+    it("lists text matches flat, newest first", async () => {
+      const page = twoRepos();
+      await page.settle();
+      page.type("#session-search", "session");
+      expect(order(page)).toEqual(["mm_a", "mm_b", "mm_c"]);
+      expect(page.document.querySelector(".session-group")).toBeNull();
+      page.type("#session-search", "");
+      expect(page.document.querySelectorAll(".session-group").length).toBe(2);
+    });
+
+    it("lists status matches flat, newest first", async () => {
+      const page = twoRepos();
+      await page.settle();
+      page.click('#session-status [data-status="blocked"]');
+      expect(order(page)).toEqual(["mm_b", "mm_c"]);
+      expect(page.document.querySelector(".session-group")).toBeNull();
+    });
+
+    it("says so when a flat list includes an archived session", async () => {
+      const [one, two] = [plan("mm_one"), plan("mm_two")];
+      const page = openViewer({ docs: [one, two], items: [listItem(one), listItem(two, { archivedAt: two.updatedAt })] });
+      await page.settle();
+      page.type("#session-search", "mm_two");
+      expect(page.row("mm_two")?.classList.contains("archived")).toBe(true);
+      expect(page.row("mm_two")?.querySelector(".session-sub")?.textContent).toContain("archived");
+      expect(page.row("mm_two")?.querySelector('[data-action="restore"]')).not.toBeNull();
+    });
+  });
+
   it("clears a file highlight when another card is picked", async () => {
     const doc = plan("mm_one");
     const worked = addChild(doc, { type: "task", label: "With a file", id: "mm_one_file" });
