@@ -35,6 +35,8 @@ function syncSessionsToggle() {
 }
 
 export function closeDrawer(): void {
+  // Its rows are about to disappear: don't drop keyboard focus at the top of the page.
+  if (document.body.classList.contains("sessions-open") && byId("sessions").contains(document.activeElement)) sessionsToggle.focus();
   document.body.classList.remove("sessions-open");
   syncSessionsToggle();
 }

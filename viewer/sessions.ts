@@ -109,6 +109,7 @@ function deleteButton(id: string) {
 
 function sessionItemHtml(s: MindmapListItem) {
   const pct = s.totalTasks > 0 ? Math.round((s.completedTasks / s.totalTasks) * 100) : 0;
+  const open = s.id === state.currentId;
   const nowMs = Date.now();
   const live = nowMs - new Date(s.updatedAt).getTime() < LIVE_WINDOW_MS;
   const worktree = worktreeName(s);
@@ -117,8 +118,8 @@ function sessionItemHtml(s: MindmapListItem) {
     ? `<button class="session-action" data-action="restore" data-focus="restore:${escXml(s.id)}" title="Restore this session">Restore</button>${deleteButton(s.id)}`
     : `<button class="session-action" data-action="archive" data-focus="archive:${escXml(s.id)}" title="Archive this session">Archive</button>`;
   return `
-    <div class="session-item ${s.id === state.currentId ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
-      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<span class="session-title-text">${escXml(s.title)}</span>${stateBadge(s)}</div>
+    <div class="session-item ${open ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
+      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<a class="session-title-text" href="${escXml(sessionHash(s.id))}" data-focus="open:${escXml(s.id)}" ${open ? `aria-current="true"` : ""}>${escXml(s.title)}</a>${stateBadge(s)}</div>
       <div class="session-sub">${escXml(timeAgo(s.updatedAt))}${worktree ? `<span class="session-worktree">· ${escXml(worktree)}</span>` : ""}
         <span class="session-actions">${actions}</span>
       </div>
@@ -298,8 +299,14 @@ function onSessionClick(e: MouseEvent) {
     return;
   }
   const head = e.target.closest<HTMLElement>(".session-group-head");
-  if (head) toggleGroup(head.dataset.group ?? "");
-  else if (e.target.closest(".session-item")) void selectSession(id);
+  if (head) {
+    toggleGroup(head.dataset.group ?? "");
+  } else if (e.target.closest(".session-item")) {
+    // Opening a title in a new tab or window is the browser's job.
+    if (e.target.closest("a") && (e.metaKey || e.ctrlKey || e.shiftKey)) return;
+    e.preventDefault();
+    void selectSession(id);
+  }
 }
 
 byId("sessions").addEventListener("click", onSessionClick);

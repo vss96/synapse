@@ -246,6 +246,54 @@ describe("viewer page", () => {
     expect(page.row("mm_two")).toBeNull();
   });
 
+  describe("opening a session with the keyboard", () => {
+    const titleLink = (page: ReturnType<typeof openViewer>, id: string) => {
+      const link = page.row(id)?.querySelector("a.session-title-text");
+      if (!(link instanceof page.window.HTMLElement)) throw new Error(`No title link on ${id}`);
+      return link;
+    };
+
+    it("makes each title a link to the session, and keeps focus on it after opening", async () => {
+      const page = openViewer({ docs: [plan("mm_one"), plan("mm_two")] });
+      await page.settle();
+      expect(titleLink(page, "mm_two").getAttribute("href")).toBe("#mm_two");
+      expect(titleLink(page, "mm_one").getAttribute("aria-current")).toBe("true");
+      expect(titleLink(page, "mm_two").hasAttribute("aria-current")).toBe(false);
+
+      titleLink(page, "mm_two").focus();
+      titleLink(page, "mm_two").click(); // what Enter does on a link
+      await page.settle();
+      expect(page.window.location.hash).toBe("#mm_two");
+      expect(page.document.querySelector("#session-name")?.textContent).toBe("Session mm_two");
+      expect(page.document.activeElement?.getAttribute("data-focus")).toBe("open:mm_two");
+      expect(titleLink(page, "mm_two").getAttribute("aria-current")).toBe("true");
+    });
+
+    it("leaves a new-tab click on a title to the browser", async () => {
+      const page = openViewer({ docs: [plan("mm_one"), plan("mm_two")] });
+      await page.settle();
+      const opened: string[] = [];
+      // happy-dom follows an unhandled link click with window.open, where a browser would open the tab.
+      Reflect.set(page.window, "open", (url: string) => opened.push(url));
+      const event = new page.window.MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true });
+      titleLink(page, "mm_two").dispatchEvent(event);
+      await page.settle();
+      expect(opened).toEqual(["http://localhost:4040/#mm_two"]);
+      expect(page.document.querySelector("#session-name")?.textContent).toBe("Session mm_one");
+    });
+
+    it("hands focus to the sessions button when a keyboard pick closes the drawer", async () => {
+      const page = openViewer({ docs: [plan("mm_one"), plan("mm_two")] });
+      await page.settle();
+      page.document.body.classList.add("sessions-open");
+      titleLink(page, "mm_two").focus();
+      titleLink(page, "mm_two").click();
+      await page.settle();
+      expect(page.document.body.classList.contains("sessions-open")).toBe(false);
+      expect(page.document.activeElement?.id).toBe("sessions-toggle");
+    });
+  });
+
   it("clears a file highlight when another card is picked", async () => {
     const doc = plan("mm_one");
     const worked = addChild(doc, { type: "task", label: "With a file", id: "mm_one_file" });

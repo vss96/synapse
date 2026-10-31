@@ -34,6 +34,7 @@ The file count is the files an agent logged, followed by the ones found only by 
 - **Filter**: type in the box to narrow the list. It matches session titles, what's inside a session (node labels and notes, up to about 8,000 characters per session), and repository and worktree names. Archived sessions are included, in a group of their own. The header shows how many match, for example **Sessions (34 of 124)**.
 - **All / Running / Blocked / Finished**: show only sessions with a task in progress, a blocked task, or every task completed.
 - **<kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd>** (<kbd>Alt</kbd> on Windows and Linux): switch to the previous or next session in the list as shown, skipping collapsed groups.
+- **Session titles** are links: <kbd>Tab</kbd> to one and press <kbd>Enter</kbd> to open it, or <kbd>⌘</kbd>-click (<kbd>Ctrl</kbd>-click on Windows and Linux) to open it in a new tab.
 - **Unreadable sessions**: a mindmap file that can't be read, because of its permissions, damaged JSON, or not being a valid mindmap, is listed at the bottom of the sidebar with the reason. It can't be opened, but you can **Delete** it there, or the agent can remove it with [`delete_mindmap`](../reference/tools#delete-mindmap).
 - **Links**: the URL hash holds the session ID, for example `http://localhost:4040/#mm_Ab12Cd34`. Bookmark or share it to open that session directly, or paste it into an open viewer tab to switch to it. A link to a session that doesn't exist leaves the open session on screen and puts its URL back.
 - **Back and Forward**: each switch adds an entry to the browser's history, so these buttons step through the sessions you opened.
@@ -103,6 +104,7 @@ Below 900 pixels wide, for example in a side pane next to your editor, the layou
 |---|---|---|
 | <kbd>/</kbd> | Anywhere | Go to the find box |
 | <kbd>⌥</kbd> <kbd>↑</kbd> / <kbd>⌥</kbd> <kbd>↓</kbd> | Anywhere | Previous or next session |
+| <kbd>Enter</kbd> | On a session title | Open that session |
 | <kbd>]</kbd> | Anywhere | Show or hide the side panel |
 | <kbd>Esc</kbd> | Anywhere | Close the session drawer, or clear a file or change-kind highlight |
 | <kbd>←</kbd> / <kbd>→</kbd> | On a card | Go to its parent, or to its first child |
