@@ -699,6 +699,18 @@ describe("workspace watcher", () => {
     assert.equal(watchedMindmap(repoDir), undefined);
   });
 
+  it("stops watching before it deletes, not once it has the lock", async () => {
+    const { repoDir } = await makeRepo("deleting");
+    const id = await createMindmap({ title: "Deleting", workspacePath: repoDir });
+    const lock = path.join(store.getDataDir(), `${id}.json.lock`);
+    await writeFile(lock, String(process.pid));
+    const deleted = callTool("delete_mindmap", { mindmapId: id });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(watchedMindmap(repoDir), undefined);
+    await unlink(lock);
+    await deleted;
+  });
+
   it("stops recording into a mindmap that can't be read, leaving the file as it is", async () => {
     const { repoDir } = await makeRepo("damaged");
     const id = await createMindmap({ title: "Damaged", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
