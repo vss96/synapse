@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
 import { render } from "../src/renderer.js";
-import { MindmapId, ROOT_ID, now } from "../src/model/schema.js";
+import { MindmapDocument, MindmapId, ROOT_ID, now } from "../src/model/schema.js";
 import { addChild, emptyDoc } from "./fixtures.js";
 
 describe("store & renderer", () => {
@@ -54,6 +54,26 @@ describe("store & renderer", () => {
 
     assert.equal(await store.remove(id), true);
     assert.equal(await store.load(id), null);
+  });
+
+  it("counts only completed tasks as completed", async () => {
+    const doc = emptyDoc("mm_counts", "Counts");
+    addChild(doc, { type: "task", label: "Done", status: "completed" });
+    addChild(doc, { type: "task", label: "Also done", status: "completed" });
+    addChild(doc, { type: "task", label: "Open", status: "planned" });
+    await store.save(doc);
+    const item = (await store.list()).mindmaps.find((m) => m.id === doc.id);
+    assert.equal(item?.completedTasks, 2);
+    assert.equal(item?.totalTasks, 3);
+    await store.remove(doc.id);
+  });
+
+  it("lists only JSON files, so nothing else in the folder looks like a damaged mindmap", async () => {
+    await writeFile(path.join(tmpDir, "notes.txt"), "not a mindmap");
+    await mkdir(path.join(tmpDir, "folder.json"));
+    assert.deepEqual((await store.list()).unreadable, []);
+    await rm(path.join(tmpDir, "notes.txt"));
+    await rm(path.join(tmpDir, "folder.json"), { recursive: true });
   });
 
   it("refuses to save a document that breaks the tree", async () => {
@@ -182,7 +202,8 @@ describe("store & renderer", () => {
     const errors = spyOn(console, "error").mockImplementation(() => {});
     const junk = MindmapId.parse("mm_junk");
     const tail = MindmapId.parse("mm_tail");
-    await writeFile(path.join(tmpDir, "mm_junk.json"), JSON.stringify({ id: "mm_junk", nodes: {} }));
+    const junkDoc = { id: "mm_junk", title: "", nodes: {} }; // its first two issues read differently
+    await writeFile(path.join(tmpDir, "mm_junk.json"), JSON.stringify(junkDoc));
     await writeFile(path.join(tmpDir, "mm_tail.json"), `${JSON.stringify(emptyDoc("mm_tail", "Tail"))}\n"/fileHashes.bin"\n}`);
 
     for (const id of [junk, tail]) {
@@ -194,7 +215,8 @@ describe("store & renderer", () => {
     const { mindmaps, unreadable } = await store.list();
     assert.ok(mindmaps.every((m) => m.id !== junk && m.id !== tail));
     assert.deepEqual(unreadable.map((m) => m.id), [junk, tail]);
-    assert.match(unreadable[0]?.error ?? "", /not a valid mindmap/);
+    const firstIssue = MindmapDocument.safeParse(junkDoc).error?.issues[0]?.message;
+    assert.equal(unreadable[0]?.error, `not a valid mindmap (${firstIssue})`);
     assert.match(unreadable[1]?.error ?? "", /SyntaxError/);
     assert.equal(errors.mock.calls.filter(([line]) => String(line).includes("mm_tail")).length, 1, "logged once, not on every listing");
 

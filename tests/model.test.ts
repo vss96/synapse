@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { combineTouches, fileTouchTarget, isFinished, upsertFileTouch, upsertFileTouches } from "../src/model/file-touch.js";
+import { combineTouches, fileTouchTarget, isFinished, mergeChanges, upsertFileTouch, upsertFileTouches } from "../src/model/file-touch.js";
 import { isTask } from "../src/model/kinds.js";
 import { reparent, retype } from "../src/model/node.js";
 import {
@@ -107,6 +107,13 @@ describe("model: file touches", () => {
     expect(merged.action !== "read" && merged.changes).toEqual([{ ...fix, detail: "v2" }, add]);
   });
 
+  it("keeps changes apart that share only a kind or only a symbol", () => {
+    const addParse: CodeChange = { kind: "add", symbol: "parse" };
+    const addFormat: CodeChange = { kind: "add", symbol: "format" };
+    const fixParse: CodeChange = { kind: "fix", symbol: "parse" };
+    expect(mergeChanges([addParse], [addFormat, fixParse])).toEqual([addParse, addFormat, fixParse]);
+  });
+
   it("lets a rename take over the entry logged under the old path", () => {
     const node = addChild(emptyDoc(), { type: "task", label: "Step" });
     upsertFileTouch(node, touch("modify", "old.ts", [fix]));
@@ -180,6 +187,14 @@ describe("model: file touches", () => {
     const active = addChild(doc, { type: "task", label: "Step", status: "in_progress" });
     expect(fileTouchTarget(doc)).toBe(active);
     expect(MindmapDocument.safeParse(doc).success).toBe(true);
+  });
+
+  it("doesn't take another node called Touched Files for the fallback", () => {
+    const doc = emptyDoc();
+    const lookalike = addChild(doc, { type: "component", label: "Touched Files" });
+    const fallback = fileTouchTarget(doc);
+    expect(fallback.id).not.toBe(lookalike.id);
+    expect(fallback.type).toBe("file");
   });
 });
 
