@@ -8,7 +8,7 @@ import { nodeBoxes, placeCamera, setSceneSize, showNode, svgEl } from "./canvas.
 import { expandTo, toggleCollapsed } from "./collapse.js";
 import { STATUS_LABELS, TYPE_BADGES, nodeChanges, tallyChanges, tallySvg, toneClass } from "./display.js";
 import { byId, escXml, setHtml } from "./dom.js";
-import { ROOT, layoutTree, type ViewMode } from "./layout.js";
+import { ROOT, latestActiveTask, layoutTree, type ViewMode } from "./layout.js";
 import { routeBounds, routeLinks } from "./link-routing.js";
 import { openSidebar } from "./panels.js";
 import { updateTabUI } from "./sidebar.js";
@@ -93,7 +93,7 @@ const EMPTY_VIEW_MESSAGES: Record<ViewMode, string> = {
 };
 
 const viewEmpty = byId("view-empty");
-let lastActiveTask: string | undefined;
+let lastActive: { session?: string; task?: string } = {};
 
 /** Draw `doc`, or the empty state without one. */
 export function renderMap(doc: MindmapDocument | null): void {
@@ -171,8 +171,8 @@ export function renderMap(doc: MindmapDocument | null): void {
     // Determine node classes
     const classes = ["node-group"];
     if (node.type === "root") classes.push("root");
-    classes.push(`type-${node.type}`);
-    if (isTask(node)) classes.push(`status-${node.status}`);
+    classes.push(`type-${escXml(node.type)}`);
+    if (isTask(node)) classes.push(`status-${escXml(node.status)}`);
     // Concepts are colored by type, tasks by status (planned tasks stay neutral).
     const tone = TYPE_BADGES[node.type] ? node.type : isTask(node) ? node.status : undefined;
     if (tone && tone !== "planned") classes.push("toned", toneClass(tone));
@@ -285,13 +285,14 @@ export function renderMap(doc: MindmapDocument | null): void {
   placeCamera(doc);
 }
 
-/** Unfold, as the agent moves on to a task, the branches hiding it. Folding it again afterwards sticks. */
+/**
+ * Unfold the branches hiding a task as the agent moves on to it. Only then: folding it again sticks,
+ * and so does a fold a session is opened with, which isn't the agent moving on.
+ */
 function followActiveTask(doc: MindmapDocument) {
-  const active = Object.values(doc.nodes)
-    .filter((n) => isTask(n) && n.status === "in_progress")
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-  if (active && active.id !== lastActiveTask) expandTo(doc, active);
-  lastActiveTask = active?.id;
+  const active = latestActiveTask(doc);
+  if (active && doc.id === lastActive.session && active.id !== lastActive.task) expandTo(doc, active);
+  lastActive = { session: doc.id, task: active?.id };
 }
 
 /** Pick a card, the way clicking it does. */
@@ -344,7 +345,9 @@ function focusCard(id: string) {
 
 /** The card an arrow key leads to: Left to the parent, Right to the first child, Up and Down to siblings. */
 function cardByArrow(doc: MindmapDocument, node: MindmapNode, key: string): string | undefined {
-  const drawn = (ids: readonly string[]) => ids.filter((id) => nodeBoxes.has(id));
+  // As drawn: the layout puts the plan above the mental model, whichever came first.
+  const boxOf = (id: string) => nodeBoxes.get(id) ?? { x: 0, y: 0 };
+  const drawn = (ids: readonly string[]) => ids.filter((id) => nodeBoxes.has(id)).sort((a, b) => boxOf(a).y - boxOf(b).y || boxOf(a).x - boxOf(b).x);
   if (key === "ArrowRight") return drawn(node.children)[0];
   if (key === "ArrowLeft") return node.parent ?? undefined;
   const siblings = drawn(node.parent === null ? [] : (doc.nodes[node.parent]?.children ?? []));
@@ -361,8 +364,9 @@ svgEl.addEventListener("keydown", (e) => {
     if (next) focusCard(next);
   } else if (e.key === "Enter" || e.key === " ") {
     pickCard(node.id);
-  } else if ((e.key === "-" && !state.collapsed.has(node.id)) || ((e.key === "+" || e.key === "=") && state.collapsed.has(node.id))) {
-    toggleFold(node.id);
+  } else if (e.key === "-" || e.key === "+" || e.key === "=") {
+    const folds = node.type !== "root" && (state.collapsed.has(node.id) || node.children.some((id) => nodeBoxes.has(id)));
+    if (folds && state.collapsed.has(node.id) === (e.key !== "-")) toggleFold(node.id);
   } else {
     return;
   }

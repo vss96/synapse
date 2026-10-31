@@ -179,7 +179,7 @@ export async function inspectGitChanges(workspacePath: string): Promise<EditTouc
 
     const diffStat = statsMap.get(filePath);
     const describe = (action: string) => (diffStat ? `Git ${action} (${diffStat})` : `Git ${action}`);
-    const common = { path: filePath, changes: [], timestamp };
+    const common = { path: filePath, changes: [], timestamp, source: "git" as const };
     if (code.includes("R") && previousPath) {
       changes.push({ ...common, action: "rename", previousPath, summary: describe("rename") });
     } else {

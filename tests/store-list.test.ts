@@ -1,5 +1,5 @@
 import { describe, it, beforeAll, afterAll, expect, spyOn } from "bun:test";
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
@@ -54,6 +54,26 @@ describe("listing stored mindmaps", () => {
       await rm(path.join(tmpDir, "mm_broken.json"));
       expect(await store.list()).toEqual({ mindmaps: [], unreadable: [] });
     } finally {
+      logged.mockRestore();
+    }
+  });
+
+  // Permissions don't stop root, so a test run as root can't see this.
+  it.skipIf(process.getuid?.() === 0)("notices a file becoming unreadable and readable again, which leaves its mtime alone", async () => {
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    const file = path.join(tmpDir, "mm_perms.json");
+    try {
+      await store.save(emptyDoc("mm_perms", "Perms"));
+      expect((await store.list()).mindmaps).toHaveLength(1);
+
+      await chmod(file, 0o000);
+      expect(await store.list()).toMatchObject({ mindmaps: [], unreadable: [{ id: "mm_perms" }] });
+
+      await chmod(file, 0o644);
+      expect(await store.list()).toMatchObject({ mindmaps: [{ id: "mm_perms" }], unreadable: [] });
+    } finally {
+      await chmod(file, 0o644);
+      await store.remove(MindmapId.parse("mm_perms"));
       logged.mockRestore();
     }
   });

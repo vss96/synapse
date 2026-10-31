@@ -72,6 +72,14 @@ export function resetFileList(): void {
   state.fileLimit = FILE_PAGE;
 }
 
+/** Back to the root with nothing highlighted, for a different mindmap. */
+export function resetSelection(): void {
+  state.selectedNodeId = ROOT;
+  state.highlightedFilePath = null;
+  state.changeKindFilter = null;
+  resetFileList();
+}
+
 /** Select a card. A file highlight belongs to the card it was picked on, so it ends here. */
 export function selectNode(id: string): void {
   if (id !== state.selectedNodeId) resetFileList();

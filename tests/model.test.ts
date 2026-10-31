@@ -115,6 +115,57 @@ describe("model: file touches", () => {
     expect(isAutoDetected(unsummarized)).toBe(false);
   });
 
+  it("counts a file as logged once an agent reads it, without calling the edit a read", () => {
+    const auto = { ...touch("modify"), summary: "Auto-detected file modify", source: "watcher" } as const;
+    expect(combineTouches(auto, { ...read(), summary: "Checked the retry" })).toMatchObject({ action: "modify", summary: "Checked the retry", source: undefined });
+    const logged = { ...touch("modify"), summary: "Fixed the retry" };
+    expect(combineTouches(logged, { ...read(), summary: "Checked it" }).summary).toBe("Fixed the retry");
+  });
+
+  it("treats a git sync as auto-detected, so it can't pass the files it finds off as logged", () => {
+    const watcher = { ...touch("modify"), summary: "Auto-detected file modify", source: "watcher" } as const;
+    const synced = { ...touch("modify"), summary: "Git modify (+1/-0 lines)", source: "git" } as const;
+    expect(isAutoDetected(synced)).toBe(true);
+    expect(combineTouches(watcher, synced)).toMatchObject({ summary: "Git modify (+1/-0 lines)", source: "git" });
+    expect(combineTouches({ ...touch("modify"), summary: "Fixed it" }, synced)).toMatchObject({ summary: "Fixed it", source: undefined });
+  });
+
+  describe("across nodes", () => {
+    const at = (touched: FileTouch, seconds: number): FileTouch => ({ ...touched, timestamp: Timestamp.parse(new Date(seconds * 1000).toISOString()) });
+    /** The file a.ts, aggregated from two nodes in the given order. */
+    function aggregated(first: FileTouch, second: FileTouch) {
+      const doc = emptyDoc();
+      const a = addChild(doc, { type: "task", label: "A" });
+      const b = addChild(doc, { type: "task", label: "B" });
+      a.files.push(first);
+      b.files.push(second);
+      const file = aggregateFiles([a, b]).get("a.ts");
+      if (!file) throw new Error("a.ts not aggregated");
+      return file;
+    }
+
+    it("doesn't let a later read on another node downgrade an edit", () => {
+      const edit = at(touch("modify", "a.ts", [fix]), 1);
+      const later = at(read(), 2);
+      expect(aggregated(edit, later).touch.action).toBe("modify");
+      expect(aggregated(later, edit).touch.action).toBe("modify");
+    });
+
+    it("keeps an agent's summary when the watcher sees the file later on another node", () => {
+      const logged = at({ ...touch("modify"), summary: "By hand" }, 1);
+      const auto = at({ ...touch("modify"), summary: "Auto-detected file modify", source: "watcher" }, 2);
+      expect(aggregated(logged, auto).touch.summary).toBe("By hand");
+      expect(aggregated(auto, logged).touch.summary).toBe("By hand");
+    });
+
+    it("gives the same result whichever node comes first", () => {
+      const older = at({ ...touch("modify"), lines: "1-5", summary: "Older" }, 1);
+      const newer = at(touch("modify"), 2);
+      expect(aggregated(older, newer).touch).toMatchObject({ lines: "1-5", summary: "Older" });
+      expect(aggregated(newer, older).touch).toMatchObject({ lines: "1-5", summary: "Older" });
+    });
+  });
+
   it("recognises auto-detected touches on mindmaps saved before they were marked", () => {
     expect(isAutoDetected({ ...touch("modify"), summary: "Auto-detected file create" })).toBe(true);
     expect(isAutoDetected({ ...touch("modify"), source: "watcher" })).toBe(true);

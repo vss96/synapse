@@ -40,8 +40,18 @@ export function pillLabel(label: string): string {
 
 const pillWidth = (label: string) => Math.max(54, label.length * 6.2 + 14);
 
-/** The curve between two cards, and where along it the label sits. `spread` fans out parallel links. */
-function curve(from: NodeBox, to: NodeBox, spread: number) {
+/**
+ * The curve between two cards, and where along it the label sits. `spread` fans out parallel links either
+ * side of the straight line, and `stack` lifts them above each other where a curve can only go one way.
+ */
+function curve(from: NodeBox, to: NodeBox, spread: number, stack: number) {
+  if (from === to) {
+    // A card linked to itself: a small loop off its right side.
+    const x = from.x + from.w;
+    const y1 = from.y - from.h / 4;
+    const y2 = from.y + from.h / 4;
+    return { x1: x, y1, cx: x + GUTTER + stack, cy: from.y, x2: x, y2, mx: x + GUTTER_PILL_INSET, my: from.y, inGutter: true };
+  }
   const sameColumn = Math.abs(from.x - to.x) < SAME_COLUMN;
   const gap = Math.abs(to.y - from.y);
 
@@ -60,7 +70,7 @@ function curve(from: NodeBox, to: NodeBox, spread: number) {
     const x2 = to.x + to.w / 2;
     const y2 = to.y - to.h / 2;
     const cx = (x1 + x2) / 2;
-    const cy = Math.min(y1, y2) - ARC_HEIGHT - Math.abs(spread);
+    const cy = Math.min(y1, y2) - ARC_HEIGHT - stack;
     return { x1, y1, cx, cy, x2, y2, mx: cx, my: 0.25 * y1 + 0.5 * cy + 0.25 * y2, inGutter: false };
   }
   if (sameColumn) {
@@ -104,7 +114,7 @@ export function routeLinks(links: readonly MindmapLink[], positions: ReadonlyMap
     seen.set(key, index + 1);
     const spread = (index - ((pairSize.get(key) ?? 1) - 1) / 2) * PARALLEL_SPREAD;
 
-    const { mx, my, inGutter, ...points } = curve(from, to, spread);
+    const { mx, my, inGutter, ...points } = curve(from, to, spread, index * PARALLEL_SPREAD);
     const label = pillLabel(link.label);
     const w = pillWidth(label);
     const pill = { x: inGutter ? mx : mx - w / 2, y: my - PILL_H / 2, w, h: PILL_H };

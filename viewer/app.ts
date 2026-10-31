@@ -10,7 +10,7 @@ import { byId, errorMessage, serverJson } from "./dom.js";
 import { updateMapSearchCount } from "./find.js";
 import { VIEW_MODES, finishedBranches } from "./layout.js";
 import { isMindmapDocument } from "./local-file.js";
-import { applyToSessions, fetchMindmapById, init, leaveDeletedSession, loadMindmap, openLocalFile, refreshSessions, renderSessions, selectSession, type ViewerEvent } from "./sessions.js";
+import { applyToSessions, fetchMindmapById, init, leaveDeletedSession, loadMindmap, openLocalFile, reloadSessions, renderSessions, selectSession, type ViewerEvent } from "./sessions.js";
 import { renderSidebar } from "./sidebar.js";
 import { onRender, render, state } from "./state.js";
 import { renderMap } from "./svg-render.js";
@@ -85,11 +85,11 @@ onRender(() => {
   document.body.classList.toggle("no-session", !doc);
   syncGitBtn.disabled = !state.currentId;
   legend.dataset.view = state.viewMode;
-  updateFoldButton(doc);
   updateSessionName(doc);
   updateHeaderProgress(doc);
   renderSidebar(doc);
   renderMap(doc);
+  updateFoldButton(doc); // after the map: drawing it can unfold a branch for the agent's new task
   updateMapSearchCount(doc);
 });
 
@@ -104,10 +104,7 @@ byId("legend-kinds").innerHTML = KIND_ORDER.map(
   (k) => `<span class="kind-tally ${toneClass(k)}" title="${CHANGE_KINDS[k].label}">${CHANGE_KINDS[k].glyph} ${k}</span>`,
 ).join("");
 
-byId("refresh-btn").onclick = async () => {
-  await refreshSessions();
-  await fetchMindmapById(state.currentId);
-};
+byId("refresh-btn").onclick = reloadSessions;
 
 syncGitBtn.onclick = async () => {
   syncGitBtn.disabled = true;
@@ -119,7 +116,7 @@ syncGitBtn.onclick = async () => {
     });
     const data = serverJson<SyncGitResponse>(await res.text());
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-    if (data.mindmap) loadMindmap(data.mindmap);
+    if (data.mindmap?.id === state.currentId) loadMindmap(data.mindmap); // unless another session was opened meanwhile
     const synced = data.synced ?? 0;
     toast(synced > 0 ? `Synced ${synced} changed file${synced === 1 ? "" : "s"} from git` : "Working tree clean (0 uncommitted changes)");
   } catch (err) {
@@ -164,10 +161,7 @@ function connectSSE() {
     try {
       const payload = serverJson<ViewerEvent>(event.data);
       if (payload.type === "connected") {
-        if (reconnecting) {
-          await refreshSessions();
-          await fetchMindmapById(state.currentId);
-        }
+        if (reconnecting) await reloadSessions();
         reconnecting = true;
         return;
       }

@@ -10,7 +10,7 @@ import { closeDrawer } from "./panels.js";
 import { STATUS_FILTERS, isFinished, isIdle, sessionsInView, visibleSessions, type SessionView } from "./session-filter.js";
 import { ARCHIVED_GROUP, groupSessions, worktreeName } from "./session-groups.js";
 import { sessionHash, sessionIdFromHash } from "./session-link.js";
-import { nodeById, render, resetFileList, selectNode, state } from "./state.js";
+import { nodeById, render, resetSelection, state } from "./state.js";
 import { toast } from "./toast.js";
 
 /** A change the server pushes to every open page. */
@@ -19,6 +19,8 @@ export type ViewerEvent =
   | { type: "mindmap_updated"; id: string; item: MindmapListItem }
   | { type: "mindmap_deleted"; id: string }
   | { type: "mindmap_unreadable"; id: string; error: string };
+
+type SessionEvent = Exclude<ViewerEvent, { type: "connected" }>;
 
 export function loadMindmap(doc: MindmapDocument) {
   if (doc.id !== state.currentDoc?.id) {
@@ -31,18 +33,26 @@ export function loadMindmap(doc: MindmapDocument) {
   render();
 }
 
+let latestFetch = 0;
+
 export async function fetchMindmapById(id: string) {
   if (!id) return;
+  const fetchId = ++latestFetch;
   const res = await fetch(`/api/mindmaps/${encodeURIComponent(id)}`, { cache: "no-store" });
   if (res.ok) {
     const doc = serverJson<MindmapDocument>(await res.text());
-    if (id === state.currentId) loadMindmap(doc); // ignore responses for a session we already switched away from
+    // Ignore a session we already switched away from, and an older copy that lost a race with a newer one.
+    if (id === state.currentId && fetchId === latestFetch) loadMindmap(doc);
   }
 }
 
 const LIVE_WINDOW_MS = 2 * 60 * 1000;
 /** How long a Delete button waits for its second click. */
 const DELETE_ARMED_MS = 4000;
+/** A second click sooner than this is a double-click on Delete, not a decision. */
+const DELETE_MIN_CONFIRM_MS = 500;
+/** The server deletes by mindmap id, so a file with any other name has to be removed by hand. */
+const DELETABLE_ID = /^[A-Za-z0-9_-]+$/;
 
 const sessionList = byId("session-list");
 const archivedToggle = byId("archived-toggle");
@@ -89,6 +99,8 @@ function stateBadge(s: MindmapListItem) {
 
 /** The session whose Delete button was clicked once; the next click there deletes it. */
 let armedDelete: string | null = null;
+let armedAt = 0;
+let disarmDelete: ReturnType<typeof setTimeout> | undefined;
 
 function deleteButton(id: string) {
   const armed = armedDelete === id;
@@ -131,39 +143,40 @@ function neighbourOf(ids: readonly string[]): string | undefined {
   return rows.slice(at + 1).find(stays) ?? rows.slice(0, Math.max(at, 0)).reverse().find(stays);
 }
 
-async function postArchived(ids: readonly string[], archived: boolean): Promise<boolean> {
-  try {
-    await Promise.all(
-      ids.map(async (id) => {
-        const res = await fetch("/api/archive", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mindmapId: id, archived }),
-        });
-        if (!res.ok) throw new Error(serverJson<{ error?: string }>(await res.text()).error ?? `HTTP ${res.status}`);
-      }),
-    );
-    return true;
-  } catch (err) {
-    toast(`Could not ${archived ? "archive" : "restore"} the session: ${errorMessage(err)}`, { error: true });
-    return false;
-  } finally {
-    await refreshSessions();
-  }
+/** Archive or restore sessions, and return the ones that took: some may fail while others go through. */
+async function postArchived(ids: readonly string[], archived: boolean): Promise<string[]> {
+  const results = await Promise.allSettled(
+    ids.map(async (id) => {
+      const res = await fetch("/api/archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mindmapId: id, archived }),
+      });
+      if (!res.ok) throw new Error(serverJson<{ error?: string }>(await res.text()).error ?? `HTTP ${res.status}`);
+      return id;
+    }),
+  );
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) toast(`Could not ${archived ? "archive" : "restore"} the session: ${errorMessage(failed.reason)}`, { error: true });
+  await refreshSessions();
+  return results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
 }
 
 /** Archive sessions, moving off the open one, and offer to undo it. */
 async function archiveSessions(ids: readonly string[]) {
   const open = ids.includes(state.currentId) ? state.currentId : undefined;
   const next = open ? neighbourOf(ids) : undefined;
-  const title = ids.length === 1 ? `“${state.sessions.find((s) => s.id === ids[0])?.title}”` : `${ids.length} sessions`;
-  if (!(await postArchived(ids, true))) return;
-  if (next) await selectSession(next);
-  toast(`Archived ${title}`, {
+  const titleOf = (id: string) => state.sessions.find((s) => s.id === id)?.title;
+  const title = ids[0] && ids.length === 1 ? `“${titleOf(ids[0])}”` : `${ids.length} sessions`;
+  const archived = await postArchived(ids, true);
+  if (archived.length === 0) return;
+  if (next && open && archived.includes(open)) await selectSession(next);
+  toast(`Archived ${archived.length === ids.length ? title : `${archived.length} of ${ids.length} sessions`}`, {
     action: {
       label: "Undo",
       run: async () => {
-        if ((await postArchived(ids, false)) && open) await selectSession(open);
+        const restored = await postArchived(archived, false);
+        if (open && restored.includes(open)) await selectSession(open);
       },
     },
   });
@@ -180,22 +193,26 @@ async function deleteSession(id: string) {
     toast(`Could not delete the session: ${errorMessage(err)}`, { error: true });
   }
   await refreshSessions();
+  if (id === state.currentId && !state.sessions.some((s) => s.id === id)) await leaveDeletedSession();
 }
 
-/** Delete on the second click: there's no undo, so one stray click can't do it. */
+/** Delete on a deliberate second click: there's no undo. */
 function clickDelete(id: string) {
   if (armedDelete === id) {
+    if (Date.now() - armedAt < DELETE_MIN_CONFIRM_MS) return;
+    clearTimeout(disarmDelete);
     armedDelete = null;
     void deleteSession(id);
     return;
   }
   armedDelete = id;
-  renderSessions();
-  setTimeout(() => {
-    if (armedDelete !== id) return;
+  armedAt = Date.now();
+  clearTimeout(disarmDelete);
+  disarmDelete = setTimeout(() => {
     armedDelete = null;
     renderSessions();
   }, DELETE_ARMED_MS);
+  renderSessions();
 }
 
 const sessionView = (): SessionView => ({ query: state.sessionQuery, status: state.sessionStatus, archived: state.showArchived });
@@ -228,7 +245,7 @@ export function renderSessions() {
     unreadable,
     `
     <div class="sessions-unreadable-head">⚠ Can't read ${state.unreadableSessions.length} session${state.unreadableSessions.length === 1 ? "" : "s"}</div>
-    ${state.unreadableSessions.map((s) => `<div class="sessions-unreadable-item" data-session-id="${escXml(s.id)}"><code>${escXml(s.id)}</code> ${escXml(s.error)} ${deleteButton(s.id)}</div>`).join("")}`,
+    ${state.unreadableSessions.map((s) => `<div class="sessions-unreadable-item" data-session-id="${escXml(s.id)}"><code>${escXml(s.id)}</code> ${escXml(s.error)} ${DELETABLE_ID.test(s.id) ? deleteButton(s.id) : ""}</div>`).join("")}`,
   );
 
   if (visible.length === 0) {
@@ -303,10 +320,7 @@ statusButtons.forEach((el) => {
 async function showSession(id: string) {
   state.currentId = id;
   state.localFile = null;
-  state.selectedNodeId = ROOT;
-  state.highlightedFilePath = null;
-  state.changeKindFilter = null;
-  resetFileList();
+  resetSelection();
   closeDrawer();
   renderSessions();
   document.querySelector(".session-item.active")?.scrollIntoView({ block: "nearest" });
@@ -343,17 +357,34 @@ async function followUrl() {
 window.addEventListener("popstate", followUrl);
 window.addEventListener("hashchange", followUrl);
 
+/** How many full lists are on their way, and the live events since: each list may predate them. */
+let listsLoading = 0;
+const eventsSinceList: SessionEvent[] = [];
+
 export async function refreshSessions() {
+  listsLoading++;
   try {
     const res = await fetch("/api/mindmaps", { cache: "no-store" });
     if (!res.ok) return;
     const list = serverJson<MindmapList>(await res.text());
     state.sessions = list.mindmaps;
     state.unreadableSessions = list.unreadable;
+    eventsSinceList.forEach(applyEvent);
     renderSessions();
   } catch {
     // Viewer opened without the API server; sessions list stays empty
+  } finally {
+    listsLoading--;
+    if (listsLoading === 0) eventsSinceList.length = 0;
   }
+}
+
+/** Catch up when events may have been missed: the list, and the open session, which may be gone by now. */
+export async function reloadSessions() {
+  await refreshSessions();
+  if (!state.currentId) return;
+  if (state.sessions.some((s) => s.id === state.currentId)) await fetchMindmapById(state.currentId);
+  else await leaveDeletedSession();
 }
 
 /** The open session is gone: open another, or show that nothing is open. */
@@ -376,14 +407,13 @@ export function openLocalFile(doc: MindmapDocument, fileName: string) {
   state.currentDoc = doc;
   state.currentId = "";
   state.collapsed = new Set();
-  selectNode(ROOT);
+  resetSelection();
   history.replaceState(null, "", location.pathname);
   renderSessions();
   render();
 }
 
-/** Apply a live event to the session list; the list stays newest first, like the server sends it. */
-export function applyToSessions(event: Exclude<ViewerEvent, { type: "connected" }>) {
+function applyEvent(event: SessionEvent) {
   state.sessions = state.sessions.filter((s) => s.id !== event.id);
   state.unreadableSessions = state.unreadableSessions.filter((s) => s.id !== event.id);
   if (event.type === "mindmap_updated") {
@@ -393,6 +423,12 @@ export function applyToSessions(event: Exclude<ViewerEvent, { type: "connected" 
     state.unreadableSessions.push({ id: event.id, error: event.error });
     state.unreadableSessions.sort((a, b) => a.id.localeCompare(b.id));
   }
+}
+
+/** Apply a live event to the session list; the list stays newest first, like the server sends it. */
+export function applyToSessions(event: SessionEvent) {
+  if (listsLoading > 0) eventsSinceList.push(event);
+  applyEvent(event);
   renderSessions();
 }
 

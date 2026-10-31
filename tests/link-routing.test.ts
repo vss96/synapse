@@ -71,6 +71,17 @@ describe("viewer link routing", () => {
     expect(route?.pill.x).toBeLessThanOrEqual(235 + 4);
   });
 
+  it("keeps parallel links between cards in a row apart too", () => {
+    const routes = routeLinks([link("a", "e", "one", 1), link("a", "e", "two", 2), link("e", "a", "back", 3)], columns);
+    expect(new Set(routes.map((r) => r.cy)).size).toBe(3);
+  });
+
+  it("draws a card linked to itself as a loop, not a line of no width", () => {
+    const [route] = routeLinks([link("a", "a")], columns);
+    expect(route?.cx).toBeGreaterThan(route?.x1 ?? Infinity);
+    expect(route?.y1).not.toBe(route?.y2);
+  });
+
   it("skips links with an end this view doesn't draw", () => {
     expect(routeLinks([link("a", "missing")], columns)).toEqual([]);
   });

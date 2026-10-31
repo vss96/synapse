@@ -63,8 +63,8 @@ const TouchFields = {
   symbols: z.array(z.string()).optional(),
   summary: z.string().optional(),
   timestamp: Timestamp,
-  /** Set when the workspace watcher recorded this touch, not an agent. See `isAutoDetected` for older mindmaps. */
-  source: z.literal("watcher").optional(),
+  /** What found this touch, when it wasn't an agent logging it. See `isAutoDetected` for older mindmaps. */
+  source: z.enum(["watcher", "git"]).optional(),
 };
 
 /** A file the agent touched. Reads carry no changes; renames always know the previous path. */

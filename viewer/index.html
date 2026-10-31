@@ -797,6 +797,8 @@
     padding: 16px;
   }
 
+  .sidebar-content:focus { outline: none; }
+
   .section-title {
     font-size: 11px;
     font-weight: 700;
@@ -1422,7 +1424,7 @@
       <button class="sidebar-tab" data-tab="files" id="tab-files-btn" role="tab" aria-selected="false" aria-controls="sidebar-content">Changes (0)</button>
       <button class="sidebar-tab" data-tab="activity" role="tab" aria-selected="false" aria-controls="sidebar-content">Activity</button>
     </div>
-    <div class="sidebar-content" id="sidebar-content" role="tabpanel"></div>
+    <div class="sidebar-content" id="sidebar-content" role="tabpanel" tabindex="-1"></div>
   </aside>
 </div>
 

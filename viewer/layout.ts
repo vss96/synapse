@@ -76,6 +76,13 @@ function isHldBranchNode(doc: MindmapDocument, node: MindmapNode) {
   return false;
 }
 
+/** The task the agent is working on: the most recently updated one in progress, in any view. */
+export function latestActiveTask(doc: MindmapDocument): MindmapNode | undefined {
+  return Object.values(doc.nodes)
+    .filter((n) => isTask(n) && n.status === "in_progress")
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+}
+
 /** Whether a node is plan work: tasks are, and notes and files go with whatever they annotate. */
 function isPlanNode(doc: MindmapDocument, node: MindmapNode) {
   let cur: MindmapNode | undefined = node;

@@ -17,7 +17,7 @@ import {
 } from "./camera.js";
 import { expandTo } from "./collapse.js";
 import { byId, query } from "./dom.js";
-import { ROOT, ancestors, type ViewMode } from "./layout.js";
+import { ROOT, ancestors, latestActiveTask, type ViewMode } from "./layout.js";
 import { isHighlighted, nodeById, render, selectNode, state } from "./state.js";
 
 // View Mode Switcher (Split / Plan / HLD)
@@ -45,7 +45,9 @@ const viewport = byId("viewport");
 export const svgEl = byId("svg", SVGSVGElement);
 
 let camera: Camera = { scale: 1, tx: 0, ty: 0 };
-let panning = false, startX = 0, startY = 0, startTx = 0, startTy = 0;
+/** The pointer dragging the canvas, if one is. */
+let panning: number | null = null;
+let startX = 0, startY = 0, startTx = 0, startTy = 0;
 /** Size of the laid-out tree and the box of each visible card, in scene coordinates. */
 let sceneSize: Size = { w: 0, h: 0 };
 export const nodeBoxes = new Map<string, Box>();
@@ -67,7 +69,8 @@ export function requestFreshView(): void {
  * otherwise live updates and clicks keep whatever the user panned to.
  */
 export function placeCamera(doc: MindmapDocument): void {
-  const active = activeNodeId(doc);
+  // Any view's task, not the drawn one: folding its branch away isn't the agent moving on.
+  const active = latestActiveTask(doc)?.id ?? null;
   if (viewPending || active !== lastActiveId) initialView();
   viewPending = false;
   lastActiveId = active;
@@ -154,20 +157,23 @@ fitAboveOverlays(); // now, not only when observed: the first view is measured a
 const overlayObserver = new ResizeObserver(fitAboveOverlays);
 [viewport, bottomOverlays].forEach((el) => overlayObserver.observe(el));
 
-// Pointer events, so touch and pen pan the canvas too. Capture keeps the drag going outside it.
+// Pointer events, so touch and pen pan the canvas too. Capture keeps the drag going outside it. Only the
+// pointer that started a drag moves it, or a second finger would make the canvas jump between the two.
 viewport.addEventListener("pointerdown", (e) => {
-  if (e.target instanceof Element && e.target.closest(".node-group, .flow-label, .canvas-bottom, .map-search")) return;
-  panning = true;
+  if (panning !== null || (e.target instanceof Element && e.target.closest(".node-group, .flow-label, .canvas-bottom, .map-search"))) return;
+  panning = e.pointerId;
   startX = e.clientX; startY = e.clientY;
   startTx = camera.tx; startTy = camera.ty;
   viewport.setPointerCapture(e.pointerId);
 });
 viewport.addEventListener("pointermove", (e) => {
-  if (!panning) return;
+  if (e.pointerId !== panning) return;
   camera = { ...camera, tx: startTx + (e.clientX - startX), ty: startTy + (e.clientY - startY) };
   applyTransform();
 });
-const stopPanning = () => { panning = false; };
+const stopPanning = (e: PointerEvent) => {
+  if (e.pointerId === panning) panning = null;
+};
 viewport.addEventListener("pointerup", stopPanning);
 viewport.addEventListener("pointercancel", stopPanning);
 

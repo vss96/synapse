@@ -234,26 +234,30 @@ export type StoredSummary = MindmapListItem | UnreadableMindmap;
 /** Files read at once when listing: the data directory can hold more mindmaps than the process may open files. */
 const MAX_CONCURRENT_READS = 16;
 
-/** Each file's last summary, with the mtime and size it was read at, so a listing only reads the files that changed. */
-const summaries = new Map<string, { mtimeMs: number; size: number; summary: StoredSummary }>();
+/**
+ * Each readable file's last summary, with the mtime, size and mode it was read at, so a listing only reads the
+ * files that changed. Mode because a chmod can make a file unreadable. Files that couldn't be read aren't kept:
+ * the reason may have been passing (too many open files), and only reading again can tell.
+ */
+const summaries = new Map<string, { mtimeMs: number; size: number; mode: number; summary: MindmapListItem }>();
 
 /** A file's summary, reading it only if it changed since last time. Null if it doesn't exist. */
 async function summarizeFile(file: string): Promise<StoredSummary | null> {
   const seen = await stat(file).catch(() => null);
   const cached = summaries.get(file);
-  if (seen && cached && cached.mtimeMs === seen.mtimeMs && cached.size === seen.size) return cached.summary;
+  if (seen && cached && cached.mtimeMs === seen.mtimeMs && cached.size === seen.size && cached.mode === seen.mode) return cached.summary;
 
-  let summary: StoredSummary | null;
+  summaries.delete(file);
   try {
     const doc = await readDocument(file);
-    summary = doc && summarize(doc);
+    if (!doc) return null;
+    const summary = summarize(doc);
+    if (seen) summaries.set(file, { mtimeMs: seen.mtimeMs, size: seen.size, mode: seen.mode, summary });
+    return summary;
   } catch (err) {
     if (!(err instanceof UnreadableMindmapError)) throw err;
-    summary = { id: err.id, error: err.reason };
+    return { id: err.id, error: err.reason };
   }
-  if (seen && summary) summaries.set(file, { mtimeMs: seen.mtimeMs, size: seen.size, summary });
-  else summaries.delete(file);
-  return summary;
 }
 
 /** The summary of the file a mindmap is stored in. `id` is a file name, which an unreadable file may not make a MindmapId. Null if it doesn't exist. */
@@ -290,15 +294,16 @@ export async function list(): Promise<MindmapList> {
   };
 }
 
-/** Delete a mindmap, under its lock so a write already under way can't put it back. */
+/** Delete a mindmap, under its lock so a write already under way can't put it back. Returns false if it doesn't exist. */
 export async function remove(id: MindmapId): Promise<boolean> {
   const file = filePath(id);
   return withLock(file, async () => {
     try {
       await unlink(file);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      if (errorCode(err) === "ENOENT") return false;
+      throw err;
     }
   });
 }

@@ -78,7 +78,7 @@ function filteredRows(rows: readonly FileRow[]): readonly FileRow[] {
  * A file list: logged files, then auto-detected ones behind a count, cut into pages, so the files an
  * agent meant to log stay findable in a session with thousands. A row someone asked for always shows.
  */
-function fileListHtml(rows: readonly FileRow[], findHit?: string): string {
+function fileListHtml(rows: readonly FileRow[], key: string, findHit?: string): string {
   const found = filteredRows(rows);
   const logged = found.filter((r) => !r.autoDetected);
   const auto = found.filter((r) => r.autoDetected);
@@ -89,11 +89,13 @@ function fileListHtml(rows: readonly FileRow[], findHit?: string): string {
 
   const shownLogged = logged.slice(0, limit);
   const shownAuto = autoOpen ? auto.slice(0, Math.max(0, limit - shownLogged.length)) : [];
+  // While filtering, every match shows, so there's nothing to toggle.
+  const filtering = state.fileQuery.trim() !== "";
   const toggle = auto.length
-    ? `<button class="file-group-toggle" data-toggle-auto data-focus="toggle-auto" aria-expanded="${autoOpen}">${autoOpen ? "▾" : "▸"} Auto-detected files (${auto.length})</button>`
+    ? `<button class="file-group-toggle" data-toggle-auto data-focus="toggle-auto" aria-expanded="${autoOpen}" ${filtering ? "disabled" : ""}>${autoOpen ? "▾" : "▸"} Auto-detected files (${auto.length})</button>`
     : "";
   const more = listed.length - shownLogged.length - shownAuto.length;
-  const moreButton = more > 0 ? `<button class="file-more secondary" data-show-more data-focus="show-more">Show ${Math.min(more, FILE_PAGE)} more (${more} left)</button>` : "";
+  const moreButton = more > 0 ? `<button class="file-more secondary" data-show-more data-focus="show-more:${key}">Show ${Math.min(more, FILE_PAGE)} more (${more} left)</button>` : "";
   return `${shownLogged.map((r) => r.html()).join("")}${toggle}${shownAuto.map((r) => r.html()).join("")}${moreButton}`;
 }
 
@@ -159,7 +161,7 @@ function inspectorHtml(doc: MindmapDocument, node: MindmapNode): string {
       ? `<div style="color:var(--muted);font-size:12px;">No files logged on this node yet.</div>`
       : filteredRows(rows).length === 0
         ? noFilesFound()
-        : fileListHtml(rows, findHit);
+        : fileListHtml(rows, "node", findHit);
 
   return `
     ${breadcrumbHtml(doc, node)}
@@ -185,7 +187,7 @@ function inspectorHtml(doc: MindmapDocument, node: MindmapNode): string {
 
     <div class="section-title">Files & Changes on Node (${node.files.length}) ${tallyHtml(nodeChanges(node))}</div>
     ${fileFilterHtml(node.files.length)}
-    ${filesHtml}
+    <div id="file-list">${filesHtml}</div>
   `;
 }
 
@@ -224,15 +226,17 @@ function changesHtml(doc: MindmapDocument): string {
       }),
   }));
   const readRows = readOnly.map((f: AggregatedFile): FileRow => ({ path: f.touch.path, autoDetected: false, html: () => fileItemHtml(f.touch, { compact: true }) }));
-  const changedHtml = filteredRows(changeRows).length ? fileListHtml(changeRows) : `<div style="color:var(--muted);font-size:12px;">No matching changes.</div>`;
+  const changedHtml = filteredRows(changeRows).length ? fileListHtml(changeRows, "changed") : `<div style="color:var(--muted);font-size:12px;">No matching changes.</div>`;
   const showReads = filteredRows(readRows).length > 0 && !state.changeKindFilter;
 
   return `
     ${allChanges.length ? `<div class="kind-filters">${filterChips}</div>` : ""}
     ${fileFilterHtml(all.length)}
-    <div class="section-title">Changed Files (${filteredRows(changeRows).length}) · newest first</div>
-    ${changedHtml}
-    ${showReads ? `<div class="section-title">Read for Context (${filteredRows(readRows).length})</div>${fileListHtml(readRows)}` : ""}
+    <div id="file-list">
+      <div class="section-title">Changed Files (${filteredRows(changeRows).length}) · newest first</div>
+      ${changedHtml}
+      ${showReads ? `<div class="section-title">Read for Context (${filteredRows(readRows).length})</div>${fileListHtml(readRows, "read")}` : ""}
+    </div>
   `;
 }
 
@@ -252,7 +256,7 @@ function activityHtml(doc: MindmapDocument): string {
         <div>${escXml(entry.message)}</div>`;
       const node = entry.nodeId ? nodeById(doc, entry.nodeId) : undefined;
       return node
-        ? `${heading}<button class="activity-item ${node.id === state.selectedNodeId ? "active" : ""}" data-jump-node="${escXml(node.id)}" title="Show “${escXml(node.label)}” on the map">${body}</button>`
+        ? `${heading}<button class="activity-item ${node.id === state.selectedNodeId ? "active" : ""}" data-jump-node="${escXml(node.id)}" data-focus="activity:${escXml(entry.timestamp)}:${escXml(node.id)}" title="Show “${escXml(node.label)}” on the map">${body}</button>`
         : `${heading}<div class="activity-item">${body}</div>`;
     })
     .join("");
@@ -260,19 +264,33 @@ function activityHtml(doc: MindmapDocument): string {
 
 const content = byId("sidebar-content");
 
+function sidebarHtml(doc: MindmapDocument): string {
+  if (state.activeTab === "files") return changesHtml(doc);
+  if (state.activeTab === "activity") return activityHtml(doc);
+  const node = nodeById(doc, state.selectedNodeId) ?? doc.nodes[ROOT];
+  return node ? inspectorHtml(doc, node) : "";
+}
+
+/** What the panel showed last time: the scroll position only means something for the same thing. */
+let shownView = "";
+
 export function renderSidebar(doc: MindmapDocument | null) {
   if (!doc) {
     content.innerHTML = `<div style="color:var(--muted);font-size:13px;">Load or create a mindmap to inspect plan tasks, HLD concepts, and touched code.</div>`;
     return;
   }
-  if (state.activeTab === "inspector") {
-    const node = nodeById(doc, state.selectedNodeId) ?? doc.nodes[ROOT];
-    if (node) setHtml(content, inspectorHtml(doc, node));
-  } else if (state.activeTab === "files") {
-    setHtml(content, changesHtml(doc));
-  } else {
-    setHtml(content, activityHtml(doc));
-  }
+  setHtml(content, sidebarHtml(doc));
+  const view = `${doc.id} ${state.activeTab} ${state.activeTab === "inspector" ? state.selectedNodeId : ""}`;
+  if (view !== shownView) content.scrollTop = 0;
+  shownView = view;
+}
+
+/** Redraw only the list below the path filter. Rebuilding the box being typed in would break IME composition and undo. */
+function updateFileList(doc: MindmapDocument) {
+  const page = document.createElement("template");
+  page.innerHTML = sidebarHtml(doc);
+  const next = page.content.querySelector("#file-list");
+  if (next) content.querySelector("#file-list")?.replaceWith(next);
 }
 
 async function copyId(id: string) {
@@ -290,6 +308,8 @@ content.addEventListener("click", (e) => {
   if (!el) return;
   if (el.dataset.jumpNode !== undefined) {
     showNode(el.dataset.jumpNode);
+    // The row a keyboard user was on may be gone now; don't drop them back at the top of the page.
+    if (e.detail === 0 && !content.contains(document.activeElement)) content.focus({ preventScroll: true });
   } else if (el.dataset.copy !== undefined) {
     void copyId(el.dataset.copy);
   } else if (el.dataset.kind !== undefined) {
@@ -312,12 +332,16 @@ content.addEventListener("click", (e) => {
   }
 });
 
-content.addEventListener("input", (e) => {
+function onFileFilter(e: Event) {
   if (!(e.target instanceof HTMLInputElement) || e.target.id !== "file-filter") return;
+  if (e instanceof InputEvent && e.isComposing) return; // compositionend follows, with the finished text
   state.fileQuery = e.target.value;
   state.fileLimit = FILE_PAGE;
-  renderSidebar(state.currentDoc);
-});
+  if (state.currentDoc) updateFileList(state.currentDoc);
+}
+
+content.addEventListener("input", onFileFilter);
+content.addEventListener("compositionend", onFileFilter);
 
 export function updateTabUI() {
   document.querySelectorAll<HTMLElement>(".sidebar-tab").forEach((btn) => {

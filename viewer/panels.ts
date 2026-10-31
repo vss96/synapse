@@ -85,14 +85,12 @@ document.addEventListener("keydown", (e) => {
   const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable);
   if (e.key === "]" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
     toggleSidebar();
-  } else if (e.key === "Escape" && !typing) {
-    if (document.body.classList.contains("sessions-open")) {
-      closeDrawer();
-      sessionsToggle.focus();
-    } else if (state.highlightedFilePath || state.changeKindFilter) {
-      state.highlightedFilePath = null;
-      state.changeKindFilter = null;
-      render();
-    }
+  } else if (e.key === "Escape" && document.body.classList.contains("sessions-open")) {
+    closeDrawer();
+    sessionsToggle.focus();
+  } else if (e.key === "Escape" && !typing && (state.highlightedFilePath || state.changeKindFilter)) {
+    state.highlightedFilePath = null;
+    state.changeKindFilter = null;
+    render();
   }
 });

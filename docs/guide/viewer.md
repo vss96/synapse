@@ -21,7 +21,7 @@ The viewer is a local web page that draws every mindmap in your data directory. 
 
 Each mindmap is a session. Sessions are grouped by repository, so a repository and all of its git worktrees share one group, named after the main checkout. The group with the most recently updated session comes first, and sessions without a workspace go under **No repository**. Each row shows the title, active task, progress (completed/total tasks), number of files touched, and when it was last updated, plus the name of the worktree if the session ran in one. Hover over a group name to see the full path.
 
-The file count is the files an agent logged, followed by the ones only the workspace watcher picked up, for example `6 files · 240 auto`. Rows also show what needs your attention: a red **blocked** badge counts blocked tasks, and a green **done** badge marks a session with every task completed. An active task that hasn't changed for a day is dimmed, because the session has probably been abandoned.
+The file count is the files an agent logged, followed by the ones found only by the workspace watcher or a git sync, for example `6 files · 240 auto`. Rows also show what needs your attention: a red **blocked** badge counts blocked tasks, and a green **done** badge marks a session with every task completed. An active task that hasn't changed for a day is dimmed, because the session has probably been abandoned.
 
 - **Groups**: click a group name to collapse or expand it. The viewer remembers which groups you collapsed. While you filter, every match is shown.
 - **Archive**: hover over a session and click **Archive** to take it out of the list. A message offers **Undo**. If it was the open session, the next one in the list opens. Archiving hides a finished session without deleting it, and the agent can keep writing to it.
@@ -29,7 +29,7 @@ The file count is the files an agent logged, followed by the ones only the works
 - **Archived**: the button beside the filter shows how many sessions are archived. Click it to list them, with **Restore** and **Delete** on each one, and again to go back.
 
   <img src="../screenshots/archive-sessions.png" alt="Sessions panel with the Archive button on a hovered session and the Archived group expanded" width="260">
-- **Delete**: on an archived or unreadable session, click **Delete**, then **Confirm** within a few seconds. This removes the mindmap file for good and can't be undone. An agent can do the same with [`delete_mindmap`](../reference/tools#delete-mindmap).
+- **Delete**: on an archived or unreadable session, click **Delete**, then **Confirm** within a few seconds. This removes the mindmap file for good and can't be undone. An unreadable file whose name isn't a mindmap ID has no **Delete** button, so remove it from the data directory yourself. An agent can do the same with [`delete_mindmap`](../reference/tools#delete-mindmap).
 - **Live dot**: shown on sessions updated in the last 2 minutes.
 - **Filter**: type in the box to narrow the list. It matches session titles, what's inside a session (node labels and notes, up to about 8,000 characters per session), and repository and worktree names. Archived sessions are included, in a group of their own. The header shows how many match, for example **Sessions (34 of 124)**.
 - **All / Running / Blocked / Finished**: show only sessions with a task in progress, a blocked task, or every task completed.
@@ -132,7 +132,7 @@ The **Changes** tab lists every file in the session:
 - **Changed Files**, newest first. Each file shows its action (`create`, `modify`, `rename`, `delete`), its change rows, and the nodes it was logged on ("via").
 - **Read for Context**: files the agent only read.
 
-The files an agent logged come first. Files that only the [workspace watcher](./how-it-works#git-sync-and-the-workspace-watcher) picked up are collapsed behind **Auto-detected files (N)**, and the tab label counts them separately, for example **Changes (6 +240)**. Lists show 50 files at a time with a button for more, and a list of 10 or more has a box to filter it by path.
+The files an agent logged come first. Files found only by the [workspace watcher](./how-it-works#git-sync-and-the-workspace-watcher) or a git sync are collapsed behind **Auto-detected files (N)**, and the tab label counts them separately, for example **Changes (6 +240)**. Lists show 50 files at a time with a button for more, and a list of 10 or more has a box to filter it by path.
 
 Filter chips at the top (**All**, **+ Added**, **~ Modified**, **✱ Fixed**, **⟲ Refactored**, **↦ Renamed**, **− Removed**, **✓ Tested**) narrow the list to one kind of change. The selected kind is also **highlighted on the canvas**, so you can see at a glance which tasks and components contain, for example, fixes. Click a file to highlight every node that touched it. Click it again to clear the highlight.
 
