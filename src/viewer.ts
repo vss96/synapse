@@ -13,7 +13,7 @@ import { z } from "zod";
 import { errorCode } from "./errors.js";
 import * as store from "./store.js";
 import { fileTouchTarget, upsertFileTouches } from "./model/file-touch.js";
-import { MindmapId, type MindmapList } from "./model/schema.js";
+import { MindmapId, type MindmapList, type MindmapListItem } from "./model/schema.js";
 import { inspectGitChanges, repoRoot } from "./watcher.js";
 
 export const DEFAULT_VIEWER_PORT = 4040;
@@ -70,21 +70,21 @@ function isTrustedRequest(req: IncomingMessage, port: number): boolean {
 const SyncGitRequest = z.object({ mindmapId: MindmapId, workspacePath: z.string().optional() });
 const ArchiveRequest = z.object({ mindmapId: MindmapId, archived: z.boolean() });
 
-/** Remembered per workspace: the list is read after every change, and a workspace stays in its repository. */
-const repoRoots = new Map<string, string | undefined>();
+/** Remembered per workspace, as promises so lookups that overlap share one git process: a workspace stays in its repository. */
+const repoRoots = new Map<string, Promise<string | undefined>>();
 
-/** The session list. Mindmaps saved before `repoPath` existed don't have one, so look it up for them. */
+/** Mindmaps saved before `repoPath` existed don't have one, so look it up for them. */
+async function withRepo(item: MindmapListItem): Promise<MindmapListItem> {
+  const { repoPath, workspacePath } = item;
+  if (repoPath || !workspacePath) return item;
+  const root = repoRoots.get(workspacePath) ?? repoRoot(workspacePath).catch(() => undefined);
+  repoRoots.set(workspacePath, root);
+  return { ...item, repoPath: await root };
+}
+
 async function listWithRepos(): Promise<MindmapList> {
   const list = await store.list();
-  const mindmaps = await Promise.all(
-    list.mindmaps.map(async (m) => {
-      const { repoPath, workspacePath } = m;
-      if (repoPath || !workspacePath) return m;
-      if (!repoRoots.has(workspacePath)) repoRoots.set(workspacePath, await repoRoot(workspacePath));
-      return { ...m, repoPath: repoRoots.get(workspacePath) };
-    }),
-  );
-  return { ...list, mindmaps };
+  return { ...list, mindmaps: await Promise.all(list.mindmaps.map(withRepo)) };
 }
 
 /** Read a JSON request body, or answer the request with an error and return undefined. */
@@ -236,7 +236,18 @@ export async function startViewer(options: ViewerOptions = {}): Promise<RunningV
     const payload = `data: ${JSON.stringify({ ...event, timestamp: new Date().toISOString() })}\n\n`;
     for (const client of sseClients) client.write(payload);
   };
-  const watcher = watchMindmaps(dataDir, (id) => broadcast({ type: "mindmap_updated", id }));
+  // Send what changed, so a page updates one row instead of reading every mindmap again.
+  const announce = async (id: string) => {
+    const summary = await store.summaryOf(id);
+    if (!summary) broadcast({ type: "mindmap_deleted", id });
+    else if (store.isUnreadable(summary)) broadcast({ type: "mindmap_unreadable", id, error: summary.error });
+    else broadcast({ type: "mindmap_updated", id, item: await withRepo(summary) });
+  };
+  // One at a time, so a slow read can't deliver an older summary after a newer one.
+  let announcing = Promise.resolve();
+  const watcher = watchMindmaps(dataDir, (id) => {
+    announcing = announcing.then(() => announce(id)).catch((err) => console.error(`[synapse viewer] Could not read ${id}:`, err));
+  });
 
   const server = createServer(async (req, res) => {
     try {
@@ -260,6 +271,11 @@ export async function startViewer(options: ViewerOptions = {}): Promise<RunningV
         const id = MindmapId.safeParse(decodeURIComponent(pathname.slice("/api/mindmaps/".length)));
         const doc = id.success ? await store.load(id.data) : null;
         return doc ? sendJson(res, 200, doc) : sendJson(res, 404, { error: "Mindmap not found" });
+      }
+      if (pathname.startsWith("/api/mindmaps/") && req.method === "DELETE") {
+        const id = MindmapId.safeParse(decodeURIComponent(pathname.slice("/api/mindmaps/".length)));
+        const removed = id.success && (await store.remove(id.data));
+        return removed ? sendJson(res, 200, { id: id.data, deleted: true }) : sendJson(res, 404, { error: "Mindmap not found" });
       }
       if (pathname === "/api/sync-git" && req.method === "POST") {
         return await handleGitSync(req, res);

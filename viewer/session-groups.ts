@@ -38,6 +38,12 @@ export function groupSessions(items: MindmapListItem[]): SessionGroup[] {
   return archived.items.length ? [...groups.values(), archived] : [...groups.values()];
 }
 
+/** The repository a session belongs to, by name; undefined outside a repository. */
+export function repoName({ repoPath, workspacePath }: MindmapListItem): string | undefined {
+  const dir = repoPath ?? workspacePath;
+  return dir ? lastSegment(dir) : undefined;
+}
+
 /** The worktree a session ran in, which tells it from the others in its group; undefined in the main checkout. */
 export function worktreeName({ workspacePath, repoPath }: MindmapListItem): string | undefined {
   return workspacePath && repoPath && workspacePath !== repoPath ? lastSegment(workspacePath) : undefined;

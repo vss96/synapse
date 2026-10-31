@@ -3,6 +3,7 @@ import { readdir, readFile, writeFile, mkdir, unlink, rename, open, stat } from 
 import os from "node:os";
 import path from "node:path";
 import { errorCode } from "./errors.js";
+import { aggregateFiles } from "./model/file-stats.js";
 import { isTask } from "./model/kinds.js";
 import { MindmapDocument, now, type MindmapId, type MindmapList, type MindmapListItem, type NodeId, type UnreadableMindmap } from "./model/schema.js";
 
@@ -101,12 +102,12 @@ export async function update<T>(id: MindmapId, mutate: (doc: MindmapDocument) =>
   return withLock(file, async () => {
     const doc = await readDocument(file);
     if (!doc) return null;
-    const before = JSON.stringify(doc);
+    // Stamped first, so the text that shows whether anything changed is also the text written.
+    doc.updatedAt = now();
+    const before = serialize(doc);
     const result = mutate(doc);
-    if (JSON.stringify(doc) !== before) {
-      doc.updatedAt = now();
-      await write(doc);
-    }
+    const after = serialize(doc);
+    if (after !== before) await write(doc, after);
     return result;
   });
 }
@@ -180,13 +181,16 @@ async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-async function write(doc: MindmapDocument): Promise<void> {
+const serialize = (doc: MindmapDocument): string => JSON.stringify(doc, null, 2);
+
+/** Check `doc` and write it atomically. `text` is `doc` already serialized, for a caller that has it. */
+async function write(doc: MindmapDocument, text?: string): Promise<void> {
   const valid = MindmapDocument.parse(doc);
   const file = filePath(valid.id);
   // Unique per write: two writers sharing a temp file can leave one's tail after the other's JSON.
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(tmp, JSON.stringify(valid, null, 2), "utf-8");
+    await writeFile(tmp, text ?? serialize(valid), "utf-8");
     await rename(tmp, file);
   } catch (err) {
     await unlink(tmp).catch(() => {});
@@ -194,9 +198,13 @@ async function write(doc: MindmapDocument): Promise<void> {
   }
 }
 
+/** Every page gets this text for every session, so it's bounded. Most maps fit well within it. */
+const MAX_SEARCH_TEXT = 8000;
+
 function summarize(doc: MindmapDocument): MindmapListItem {
   const nodes = Object.values(doc.nodes);
   const tasks = nodes.filter(isTask);
+  const files = [...aggregateFiles(nodes).values()];
   const activeTask = tasks
     .filter((n) => n.status === "in_progress")
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
@@ -211,42 +219,91 @@ function summarize(doc: MindmapDocument): MindmapListItem {
     nodeCount: nodes.length,
     completedTasks: tasks.filter((n) => n.status === "completed").length,
     totalTasks: tasks.length,
+    blockedTasks: tasks.filter((n) => n.status === "blocked").length,
     activeTask: activeTask?.label,
-    fileCount: new Set(nodes.flatMap((n) => n.files.map((f) => f.path))).size,
+    fileCount: files.length,
+    loggedFileCount: files.filter((f) => !f.autoDetected).length,
+    // Labels first: they're short and they're what people remember, so long notes can't crowd them out.
+    searchText: [...nodes.map((n) => n.label), ...nodes.flatMap((n) => n.notes ?? [])].join("\n").slice(0, MAX_SEARCH_TEXT),
   };
 }
+
+/** How a file in the data directory reads: a mindmap's summary, or why it can't be read. */
+export type StoredSummary = MindmapListItem | UnreadableMindmap;
+
+/** Files read at once when listing: the data directory can hold more mindmaps than the process may open files. */
+const MAX_CONCURRENT_READS = 16;
+
+/**
+ * Each readable file's last summary, with the mtime, size and mode it was read at, so a listing only reads the
+ * files that changed. Mode because a chmod can make a file unreadable. Files that couldn't be read aren't kept:
+ * the reason may have been passing (too many open files), and only reading again can tell.
+ */
+const summaries = new Map<string, { mtimeMs: number; size: number; mode: number; summary: MindmapListItem }>();
+
+/** A file's summary, reading it only if it changed since last time. Null if it doesn't exist. */
+async function summarizeFile(file: string): Promise<StoredSummary | null> {
+  const seen = await stat(file).catch(() => null);
+  const cached = summaries.get(file);
+  if (seen && cached && cached.mtimeMs === seen.mtimeMs && cached.size === seen.size && cached.mode === seen.mode) return cached.summary;
+
+  summaries.delete(file);
+  try {
+    const doc = await readDocument(file);
+    if (!doc) return null;
+    const summary = summarize(doc);
+    if (seen) summaries.set(file, { mtimeMs: seen.mtimeMs, size: seen.size, mode: seen.mode, summary });
+    return summary;
+  } catch (err) {
+    if (!(err instanceof UnreadableMindmapError)) throw err;
+    return { id: err.id, error: err.reason };
+  }
+}
+
+/** The summary of the file a mindmap is stored in. `id` is a file name, which an unreadable file may not make a MindmapId. Null if it doesn't exist. */
+export function summaryOf(id: string): Promise<StoredSummary | null> {
+  return summarizeFile(path.join(getDataDir(), `${id}.json`));
+}
+
+export const isUnreadable = (summary: StoredSummary): summary is UnreadableMindmap => "error" in summary;
 
 /** List every stored mindmap, most recently updated first, and the files that couldn't be read. */
 export async function list(): Promise<MindmapList> {
   const dir = await ensureDataDir();
   const entries = await readdir(dir, { withFileTypes: true });
+  const files = entries.filter((e) => e.isFile() && e.name.endsWith(".json")).map((e) => path.join(dir, e.name));
   const mindmaps: MindmapListItem[] = [];
   const unreadable: UnreadableMindmap[] = [];
-  await Promise.all(
-    entries
-      .filter((e) => e.isFile() && e.name.endsWith(".json"))
-      .map(async (e) => {
-        try {
-          const doc = await readDocument(path.join(dir, e.name));
-          if (doc) mindmaps.push(summarize(doc));
-        } catch (err) {
-          if (!(err instanceof UnreadableMindmapError)) throw err;
-          unreadable.push({ id: err.id, error: err.reason });
-        }
-      }),
-  );
+  const queue = [...files];
+  const worker = async () => {
+    for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+      const summary = await summarizeFile(file);
+      if (summary && isUnreadable(summary)) unreadable.push(summary);
+      else if (summary) mindmaps.push(summary);
+    }
+  };
+  await Promise.all(Array.from({ length: MAX_CONCURRENT_READS }, worker));
+
+  const present = new Set(files);
+  for (const file of summaries.keys()) {
+    if (path.dirname(file) === dir && !present.has(file)) summaries.delete(file);
+  }
   return {
     mindmaps: mindmaps.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     unreadable: unreadable.sort((a, b) => a.id.localeCompare(b.id)),
   };
 }
 
-/** Delete a mindmap. */
+/** Delete a mindmap, under its lock so a write already under way can't put it back. Returns false if it doesn't exist. */
 export async function remove(id: MindmapId): Promise<boolean> {
-  try {
-    await unlink(filePath(id));
-    return true;
-  } catch {
-    return false;
-  }
+  const file = filePath(id);
+  return withLock(file, async () => {
+    try {
+      await unlink(file);
+      return true;
+    } catch (err) {
+      if (errorCode(err) === "ENOENT") return false;
+      throw err;
+    }
+  });
 }

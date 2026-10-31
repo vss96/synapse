@@ -6,6 +6,7 @@ import {
   centerCamera,
   fitCamera,
   fitScale,
+  pathCamera,
   revealCamera,
   wheelZoomFactor,
   zoomAt,
@@ -111,6 +112,38 @@ describe("viewer camera", () => {
       const next = revealCamera({ scale: 1, tx: 0, ty: 0 }, group, view);
       expect(next.scale).toBeCloseTo((view.h - 80) / group.h);
       expect(onScreen(next, group)).toBe(true);
+    });
+  });
+
+  describe("opening on a path of cards", () => {
+    const view = { w: 800, h: 600 };
+    const card = (x: number, y: number): Box => ({ x, y, w: 235, h: 60 });
+    const onScreen = (cam: Camera, box: Box) => {
+      const a = toScreen(cam, box.x, box.y);
+      const b = toScreen(cam, box.x + box.w, box.y + box.h);
+      return a.x >= 0 && a.y >= 0 && b.x <= view.w && b.y <= view.h;
+    };
+
+    it("shows the whole path when it fits at a readable scale", () => {
+      const path = [card(0, 0), card(340, 200)];
+      const cam = pathCamera(path, view);
+      expect(cam.scale).toBeGreaterThanOrEqual(READABLE_SCALE);
+      for (const box of path) expect(onScreen(cam, box)).toBe(true);
+    });
+
+    it("never enlarges a short path past full size", () => {
+      expect(pathCamera([card(0, 0), card(10, 70)], view).scale).toBe(1);
+    });
+
+    it("stays readable on a path too long to fit, and keeps its last card in view", () => {
+      const path = [card(0, 0), card(340, 900), card(680, 1800), card(1020, 2700), card(1360, 3600)];
+      const cam = pathCamera(path, view);
+      expect(cam.scale).toBe(READABLE_SCALE);
+      expect(onScreen(cam, card(1360, 3600))).toBe(true);
+    });
+
+    it("has a camera for an empty path", () => {
+      expect(pathCamera([], view).scale).toBe(1);
     });
   });
 });

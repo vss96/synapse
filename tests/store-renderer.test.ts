@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import * as store from "../src/store.js";
 import { render } from "../src/renderer.js";
-import { MindmapDocument, MindmapId, ROOT_ID, now } from "../src/model/schema.js";
+import { LinkId, MindmapDocument, MindmapId, ROOT_ID, now } from "../src/model/schema.js";
 import { addChild, emptyDoc } from "./fixtures.js";
 
 describe("store & renderer", () => {
@@ -282,10 +282,120 @@ describe("store & renderer", () => {
 
     const mermaidOut = render(doc, { format: "mermaid" });
     assert.match(mermaidOut, /^mindmap/);
-    assert.match(mermaidOut, /n_step1\(~ Implement JWT middleware\)/);
-    assert.match(mermaidOut, /\(MODIFY src\/auth\.ts:10-45\)/);
+    assert.match(mermaidOut, /n_step1\("◐ Implement JWT middleware"\)/);
+    assert.match(mermaidOut, /n_step1_f0\("MODIFY src\/auth\.ts:10-45"\)/);
 
     const jsonOut = JSON.parse(render(doc, { format: "json" }));
     assert.equal(jsonOut.id, "mm_render");
+  });
+
+  it("gives every status the viewer's glyph in mermaid, and keeps the text format's badges", () => {
+    const doc = emptyDoc("mm_glyphs", "Glyphs");
+    addChild(doc, { id: "n_planned", type: "task", label: "Planned", status: "planned" });
+    addChild(doc, { id: "n_doing", type: "plan", label: "Doing", status: "in_progress" });
+    addChild(doc, { id: "n_done", type: "code", label: "Done", status: "completed" });
+    addChild(doc, { id: "n_stuck", type: "task", label: "Stuck", status: "blocked" });
+    addChild(doc, { id: "n_concept", type: "component", label: "Concept" });
+
+    assert.deepEqual(render(doc, { format: "mermaid" }).split("\n"), [
+      "mindmap",
+      '  root("Glyphs")',
+      '    n_planned("○ Planned")',
+      '    n_doing("◐ Doing")',
+      '    n_done("✔ Done")',
+      '    n_stuck("✖ Stuck")',
+      '    n_concept("📦 Concept")',
+    ]);
+
+    const textOut = render(doc, { format: "text" });
+    for (const line of [/\[ \] Planned/, /\[~\] Doing/, /\[x\] Done/, /\[!\] Stuck/]) assert.match(textOut, line);
+  });
+
+  it("gives file nodes ids of their own in mermaid, numbered in file order under their node", () => {
+    const doc = emptyDoc("mm_files", "Files");
+    const timestamp = now();
+    doc.nodes[ROOT_ID]!.files.push({ path: "README.md", action: "read", timestamp });
+    addChild(doc, {
+      id: "n_step",
+      type: "note",
+      label: "Step",
+      files: [
+        { path: "src/a.ts", action: "create", changes: [], timestamp },
+        { path: "src/b.ts", action: "delete", lines: "1-2", changes: [], timestamp },
+      ],
+    });
+
+    const expected = [
+      "mindmap",
+      '  root("Files")',
+      '    root_f0("READ README.md")',
+      '    n_step("Step")',
+      '      n_step_f0("CREATE src/a.ts")',
+      '      n_step_f1("DELETE src/b.ts:1-2")',
+    ].join("\n");
+    assert.equal(render(doc, { format: "mermaid" }), expected);
+    assert.equal(render(doc, { format: "mermaid" }), expected, "the ids don't change between renders");
+  });
+
+  it("quotes mermaid labels, escaping only what a quoted string can't hold", () => {
+    const cases = [
+      ["src/a.ts:12 (b) [c] {d}", "src/a.ts:12 (b) [c] {d}"], // quoting keeps colons and brackets as written
+      ['say "hi"', "say #34;hi#34;"], // Mermaid has no \" escape
+      ["`code` first", "#96;code#96; first"], // a leading backtick would start a Markdown string
+      ["%%{init: {}}%%", "#37;#37;{init: {}}#37;#37;"], // read as a directive even inside quotes
+      ["Map<K, V>", "Map#60;K, V#62;"], // would be read as an HTML tag
+      ["#1; #quot;", "#35;1; #35;quot;"], // would be read as an entity
+      ["C:\\new\\table", "C:#92;new#92;table"], // flowcharts would draw \n as a line break
+      ["two\n  lines", "two lines"],
+    ] as const;
+
+    for (const [label, escaped] of cases) {
+      const doc = emptyDoc("mm_quotes", "Quotes");
+      const node = addChild(doc, { id: "n_note", type: "note", label });
+      doc.links.push({ id: LinkId.parse("l_1"), from: node.id, to: ROOT_ID, label, style: "solid" });
+
+      assert.ok(render(doc, { format: "mermaid" }).includes(`n_note("${escaped}")`), label);
+      const flowchart = render(doc, { format: "mermaid-flowchart" });
+      assert.ok(flowchart.includes(`n1["${escaped}"]`), label);
+      assert.ok(flowchart.includes(`n1 -->|"${escaped}"| n0`), label);
+    }
+  });
+
+  it("renders mermaid-flowchart with the tree as lines and links as labeled arrows in their style", () => {
+    const doc = emptyDoc("mm_flow", "Flow");
+    const timestamp = now();
+    const api = addChild(doc, { id: "n_api", type: "component", label: "API", files: [{ path: "src/api.ts", action: "read", lines: "1-9", timestamp }] });
+    // A generated id can contain "--", which would start an edge in a flowchart
+    const store = addChild(doc, { id: "n_ab--c", type: "task", label: "Store", status: "completed", parent: api.id });
+    const bus = addChild(doc, { id: "n_bus", type: "data_flow", label: "Bus" });
+    doc.links.push(
+      { id: LinkId.parse("l_1"), from: api.id, to: store.id, label: "reads: data", style: "solid" },
+      { id: LinkId.parse("l_2"), from: store.id, to: bus.id, label: 'emits "x"', style: "dashed" },
+      { id: LinkId.parse("l_3"), from: bus.id, to: api.id, label: "streams", style: "animated" },
+    );
+
+    assert.deepEqual(render(doc, { format: "mermaid-flowchart" }).split("\n"), [
+      "flowchart LR",
+      '  n0["Flow"]',
+      '  n1["📦 API"]',
+      '  n1_f0("READ src/api.ts:1-9")',
+      '  n2["✔ Store"]',
+      '  n3["⇄ Bus"]',
+      "  n0 --- n1",
+      "  n1 --- n1_f0",
+      "  n1 --- n2",
+      "  n0 --- n3",
+      '  n1 -->|"reads: data"| n2',
+      '  n2 -.->|"emits #34;x#34;"| n3',
+      '  n3 ==>|"streams"| n1',
+    ]);
+  });
+
+  it("renders links only in mermaid-flowchart, not in mermaid mindmaps, which can't draw them", () => {
+    const doc = emptyDoc("mm_nolinks", "No links");
+    const a = addChild(doc, { type: "component", label: "A" });
+    doc.links.push({ id: LinkId.parse("l_1"), from: a.id, to: ROOT_ID, label: "calls", style: "solid" });
+    assert.doesNotMatch(render(doc, { format: "mermaid" }), /calls/);
+    assert.match(render(doc, { format: "mermaid-flowchart" }), /calls/);
   });
 });

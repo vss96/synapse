@@ -1,12 +1,15 @@
+import path from "node:path";
 import { z } from "zod";
 import * as store from "./store.js";
-import { render } from "./renderer.js";
+import { RENDER_FORMATS, render } from "./renderer.js";
 import { ensureWorkspaceWatcher, inspectGitChanges, repoRoot, stopWorkspaceWatcher } from "./watcher.js";
-import { collectsWorkspaceChanges, fileTouchTarget, mergeChanges, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
+import { aggregateFiles } from "./model/file-stats.js";
+import { collectsWorkspaceChanges, fileTouchTarget, upsertFileTouch, upsertFileTouches } from "./model/file-touch.js";
 import { CHANGE_KINDS, FILE_ACTIONS, LINK_STYLES, NODE_TYPES, TASK_STATUSES, isConcept, isTask, isTaskType, type ChildNodeType, type LinkStyle, type TaskStatus } from "./model/kinds.js";
 import { attachChild, createChild, reparent, retype } from "./model/node.js";
 import {
   CodeChange,
+  LinkId,
   MindmapId,
   NodeId,
   ROOT_ID,
@@ -16,6 +19,8 @@ import {
   type ChildNode,
   type FileTouch,
   type MindmapDocument,
+  type MindmapLink,
+  type MindmapListItem,
   type MindmapNode,
 } from "./model/schema.js";
 
@@ -124,6 +129,24 @@ const isDescendant = (doc: MindmapDocument, id: NodeId, ancestor: NodeId): boole
   }
   return false;
 };
+
+/** Move a node under a new parent, unless that would cut it and its subtree off from the root. */
+function nestUnder(doc: MindmapDocument, node: ChildNode, parentId: NodeId): void {
+  if (isDescendant(doc, parentId, node.id)) {
+    throw new ToolError(`Can't nest "${node.label}" under its own descendant "${doc.nodes[parentId]?.label}".`);
+  }
+  reparent(doc, node, parentId);
+}
+
+/** Drop a node's touches of `paths` and return how many went. A path it doesn't have is an error, not a silent skip. */
+function removeFileTouches(node: ChildNode, paths: readonly string[]): number {
+  const unknown = paths.filter((p) => !node.files.some((f) => f.path === p));
+  if (unknown.length > 0) throw new ToolError(`"${node.label}" has no file touch for: ${unknown.join(", ")}.`);
+  const kept = node.files.filter((f) => !paths.includes(f.path));
+  const removed = node.files.length - kept.length;
+  node.files = kept;
+  return removed;
+}
 
 /** "2 add, 1 fix" style tally, in CHANGE_KINDS order. */
 export function describeChanges(changes: readonly CodeChange[]): string {
@@ -262,7 +285,8 @@ const addNode = defineTool({
 
 const updateNode = defineTool({
   name: "update_node",
-  description: "Update a node's label, status, semantic type, notes, or attached files.",
+  description:
+    "Update a node's label, status, semantic type, notes, or attached files (record with `files`, drop with `removeFiles`), or move it and its subtree under another parent with `parentId`.",
   inputSchema: z.object({
     mindmapId,
     nodeId: NodeId.describe("Node ID to update"),
@@ -271,6 +295,13 @@ const updateNode = defineTool({
     status: Status.optional().describe("New status; tasks only"),
     notes: z.string().optional().describe("Updated notes or context"),
     files: z.array(FileTouchInput).optional().describe("File touches to record on this node"),
+    removeFiles: z
+      .array(z.string().trim().min(1))
+      .optional()
+      .describe("Paths to remove from this node's file touches, before `files` is applied. A path the node doesn't have is an error."),
+    parentId: NodeId.optional().describe(
+      "Move the node and its subtree under this parent. Its current parent changes nothing; itself or one of its descendants is an error.",
+    ),
   }),
   run: (input) =>
     updateMindmap(input.mindmapId, (doc) => {
@@ -280,11 +311,18 @@ const updateNode = defineTool({
       if (input.notes !== undefined) node.notes = input.notes;
       const status = statusFor(node.type, input.status, node.label);
       if (status && isTask(node)) node.status = status;
+      const removed = removeFileTouches(node, input.removeFiles ?? []);
       upsertFileTouches(node, input.files?.map(toFileTouch) ?? []);
+
+      const parent = input.parentId ? getNode(doc, input.parentId, "Parent node") : undefined;
+      if (parent?.id === node.id) throw new ToolError(`Can't nest "${node.label}" under itself.`);
+      const moved = parent && parent.id !== node.parent ? parent : undefined;
+      if (parent) nestUnder(doc, node, parent.id);
+
       node.updatedAt = now();
       doc.nodes[node.id] = node;
 
-      const summary = `Updated node "${node.label}"${status ? ` → ${status}` : ""}`;
+      const summary = `Updated node "${node.label}"${status ? ` → ${status}` : ""}${moved ? `, moved under "${moved.label}"` : ""}${removed ? `, removed ${removed} file touch(es)` : ""}`;
       store.recordActivity(doc, summary, { nodeId: node.id });
       return { mindmapId: doc.id, summary, node: ref(node) };
     }),
@@ -319,6 +357,40 @@ const linkNodes = defineTool({
       upsertLink(doc, input);
       const summary = `Linked "${from.label}" ──[${input.label}]──▶ "${to.label}"`;
       store.recordActivity(doc, summary, { nodeId: from.id });
+      return { mindmapId: doc.id, summary };
+    }),
+});
+
+const unlinkNodes = defineTool({
+  name: "unlink_nodes",
+  description:
+    "Remove directed links: one by `linkId` (the `id` of a link in get_mindmap), or by `from` + `to`, which removes every link between those two nodes in that direction unless `label` narrows it to one. It's an error if no link matches. To relabel a link, remove it and call link_nodes again.",
+  inputSchema: z
+    .object({
+      mindmapId,
+      linkId: LinkId.optional().describe("ID of the link to remove; don't combine with from, to or label"),
+      from: NodeId.optional().describe("Source node ID; needs `to`"),
+      to: NodeId.optional().describe("Target node ID; needs `from`"),
+      label: Label.optional().describe("Only remove the link with exactly this label; needs `from` and `to`"),
+    })
+    .superRefine((input, ctx) => {
+      const { linkId, from, to, label } = input;
+      if (linkId ? from || to || label : !from || !to) {
+        ctx.addIssue({ code: "custom", message: "Give either linkId, or from and to with an optional label" });
+      }
+    }),
+  run: (input) =>
+    updateMindmap(input.mindmapId, (doc) => {
+      const { linkId, from, to, label } = input;
+      const matches = (l: MindmapLink) => (linkId ? l.id === linkId : l.from === from && l.to === to && (label === undefined || l.label === label));
+      const removed = doc.links.filter(matches);
+      const [first] = removed;
+      if (!first) throw new ToolError(`No link ${linkId ? `"${linkId}"` : `from "${from}" to "${to}"${label ? ` labeled "${label}"` : ""}`} found.`);
+
+      doc.links = doc.links.filter((l) => !matches(l));
+      const name = (id: NodeId) => doc.nodes[id]?.label ?? id;
+      const summary = `Unlinked "${name(first.from)}" ──[${removed.map((l) => l.label).join(", ")}]──▶ "${name(first.to)}"`;
+      store.recordActivity(doc, summary, { nodeId: first.from });
       return { mindmapId: doc.id, summary };
     }),
 });
@@ -394,7 +466,7 @@ const mapArchitecture = defineTool({
           let node = getChild(doc, existingId);
           if (item.type !== node.type) node = retype(node, item.type);
           node.label = item.label;
-          if (item.notes) node.notes = item.notes;
+          if (item.notes !== undefined) node.notes = item.notes;
           if (status && isTask(node)) node.status = status;
           upsertFileTouches(node, files);
           doc.nodes[node.id] = node;
@@ -412,10 +484,7 @@ const mapArchitecture = defineTool({
         const node = getChild(doc, id);
         const parentId = (item.parentKey && resolve(item.parentKey)) || container.id;
         if (parentId === node.id) continue;
-        if (isDescendant(doc, parentId, node.id)) {
-          throw new ToolError(`Can't nest "${node.label}" under its own descendant "${doc.nodes[parentId]?.label}".`);
-        }
-        reparent(doc, node, parentId);
+        nestUnder(doc, node, parentId);
       }
 
       let linkCount = 0;
@@ -570,17 +639,7 @@ const getPlanSummary = defineTool({
     const byStatus = (status: TaskStatus) => tasks.filter((n) => n.status === status);
     const [planned, inProgress, completed, blocked] = [byStatus("planned"), byStatus("in_progress"), byStatus("completed"), byStatus("blocked")];
 
-    // One entry per path: the latest touch decides the action; changes merge across nodes.
-    const files = new Map<string, { touch: FileTouch; via: string[]; changes: CodeChange[] }>();
-    for (const n of nodes) {
-      for (const f of n.files) {
-        const entry = files.get(f.path) ?? { touch: f, via: [], changes: [] };
-        if (f.timestamp >= entry.touch.timestamp) entry.touch = f;
-        if (!entry.via.includes(n.label)) entry.via.push(n.label);
-        if (f.action !== "read") entry.changes = mergeChanges(entry.changes, f.changes);
-        files.set(f.path, entry);
-      }
-    }
+    const files = aggregateFiles(nodes);
     const allChanges = [...files.values()].flatMap((e) => e.changes);
 
     const pct = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
@@ -601,11 +660,11 @@ const getPlanSummary = defineTool({
 
     lines.push(`## Touched Files (${files.size})`);
     if (files.size === 0) lines.push("_No files logged yet._");
-    for (const [path, { touch, via, changes }] of files) {
+    for (const [filePath, { touch, nodes: via, changes }] of files) {
       const loc = touch.lines ? `:${touch.lines}` : "";
       const sum = touch.summary ? ` — ${touch.summary}` : "";
       const from = touch.action === "rename" ? `${touch.previousPath} → ` : "";
-      lines.push(`- \`[${touch.action.toUpperCase()}]\` **${from}${path}${loc}**${sum} _(via: ${via.join(", ")})_`);
+      lines.push(`- \`[${touch.action.toUpperCase()}]\` **${from}${filePath}${loc}**${sum} _(via: ${via.map((n) => n.label).join(", ")})_`);
       for (const c of changes) {
         const name = c.kind === "rename" ? `${c.previousSymbol} → ${c.symbol}` : c.symbol;
         lines.push(`  - ${c.kind}: \`${name}\`${c.detail ? ` — ${c.detail}` : ""}`);
@@ -643,15 +702,24 @@ const removeNode = defineTool({
 
 const listMindmaps = defineTool({
   name: "list_mindmaps",
-  description: "List all stored mindmaps with their IDs, titles, and last updated timestamps.",
-  inputSchema: z.object({}),
-  async run() {
+  description:
+    "List stored mindmaps with their IDs, titles, and last updated timestamps: all of them, or only those of one workspace or repository, and with or without archived ones. Mindmap files that can't be read are always listed, because nothing shows which workspace they belong to.",
+  inputSchema: z.object({
+    workspacePath: z.string().trim().min(1).optional().describe("Only list mindmaps whose workspacePath or repoPath is this path"),
+    includeArchived: z.boolean().default(true).describe("Whether to list archived mindmaps (default: true)"),
+  }),
+  async run(input) {
+    const { workspacePath, includeArchived } = input;
     const { mindmaps, unreadable } = await store.list();
+    const wanted = workspacePath && path.resolve(workspacePath);
+    const inWorkspace = (m: MindmapListItem) => [m.workspacePath, m.repoPath].some((p) => p !== undefined && path.resolve(p) === wanted);
+    const listed = mindmaps.filter((m) => (includeArchived || !m.archivedAt) && (!wanted || inWorkspace(m)));
     const lines = [
-      ...mindmaps.map((m) => `• ${m.id}  –  "${m.title}" (${m.nodeCount} nodes, updated ${m.updatedAt}${m.archivedAt ? ", archived" : ""})`),
+      ...listed.map((m) => `• ${m.id}  –  "${m.title}" (${m.nodeCount} nodes, updated ${m.updatedAt}${m.archivedAt ? ", archived" : ""})`),
       ...unreadable.map((m) => `• ${m.id}  –  can't be read: ${m.error}`),
     ];
-    return lines.length > 0 ? lines.join("\n") : "No mindmaps yet.";
+    if (lines.length > 0) return lines.join("\n");
+    return mindmaps.length > 0 ? "No mindmaps match." : "No mindmaps yet.";
   },
 });
 
@@ -664,8 +732,9 @@ const getMindmap = defineTool({
 
 const renderMindmap = defineTool({
   name: "render_mindmap",
-  description: "Render a mindmap in a digestible format: mermaid (flow chart syntax), text (indented outline), or json.",
-  inputSchema: z.object({ mindmapId, format: z.enum(["mermaid", "text", "json"]).describe("Output format") }),
+  description:
+    "Render a mindmap in a digestible format: mermaid (Mermaid `mindmap` syntax: the tree and its files, no links), mermaid-flowchart (Mermaid `flowchart LR` syntax: the tree and its files, plus links as labeled arrows), text (indented outline with notes, symbol-level changes and links), or json.",
+  inputSchema: z.object({ mindmapId, format: z.enum(RENDER_FORMATS).describe("Output format") }),
   async run(input) {
     return render(await loadMindmap(input.mindmapId), { format: input.format });
   },
@@ -687,6 +756,7 @@ export const tools: ToolDefinition[] = [
   addNode,
   updateNode,
   linkNodes,
+  unlinkNodes,
   mapArchitecture,
   updatePlanStatus,
   logFileTouch,

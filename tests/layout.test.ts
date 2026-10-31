@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { MindmapDocument, MindmapNode, NodeId } from "../src/model/schema.js";
-import { GRID_MIN, layoutTree, type Layout, type ViewMode } from "../viewer/layout.js";
+import { LinkId, ROOT_ID, type MindmapDocument, type MindmapNode, type NodeId } from "../src/model/schema.js";
+import { GRID_MIN, ancestors, finishedBranches, layoutTree, subtree, type Layout, type ViewMode } from "../viewer/layout.js";
 import { addChild, emptyDoc } from "./fixtures.js";
 
 /** Cards of two heights, so grid rows have to size to their tallest card. */
@@ -106,5 +106,131 @@ describe("viewer layout", () => {
     expect(planView.grids).toEqual([]);
     expect(planView.positions.has(component)).toBe(false);
     expectNoOverlaps(layout(doc));
+  });
+
+  describe("views", () => {
+    it("shows a concept recorded under a task in the HLD view, with the path that leads to it", () => {
+      const doc = emptyDoc();
+      const phase = addChild(doc, { type: "plan", label: "Phase" });
+      const done = addChild(doc, { type: "task", label: "Sibling task", parent: phase.id });
+      const hypothesis = addChild(doc, { type: "hypothesis", label: "TTL drift", parent: phase.id });
+
+      const hld = layout(doc, "hld");
+      expect(hld.positions.has(hypothesis.id)).toBe(true);
+      expect(hld.positions.has(phase.id)).toBe(true);
+      expect(hld.positions.has(done.id)).toBe(false);
+      expect([...hld.context]).toEqual([phase.id]);
+
+      const plan = layout(doc, "plan");
+      expect(plan.positions.has(hypothesis.id)).toBe(false);
+      expect(plan.context.size).toBe(0);
+    });
+
+    it("keeps a task nested in a component in the plan, and in the HLD branch it sits on", () => {
+      const doc = emptyDoc();
+      const component = addChild(doc, { type: "component", label: "Gateway" });
+      const task = addChild(doc, { type: "task", label: "Audit it", parent: component.id });
+      const risk = addChild(doc, { type: "risk", label: "Skew", parent: component.id });
+
+      const plan = layout(doc, "plan");
+      expect(plan.positions.has(task.id)).toBe(true);
+      expect(plan.positions.has(risk.id)).toBe(false);
+      expect([...plan.context]).toEqual([component.id]);
+      expect(layout(doc, "hld").positions.has(task.id)).toBe(true);
+    });
+
+    it("keeps notes and files with what they annotate", () => {
+      const doc = emptyDoc();
+      const component = addChild(doc, { type: "component", label: "Gateway" });
+      const note = addChild(doc, { type: "note", label: "About it", parent: component.id });
+      const task = addChild(doc, { type: "task", label: "Task" });
+      const file = addChild(doc, { type: "file", label: "a.ts", parent: task.id });
+
+      expect(layout(doc, "plan").positions.has(note.id)).toBe(false);
+      expect(layout(doc, "hld").positions.has(note.id)).toBe(true);
+      expect(layout(doc, "plan").positions.has(file.id)).toBe(true);
+      expect(layout(doc, "hld").positions.has(file.id)).toBe(false);
+    });
+
+    it("draws every node in at least one of the two views", () => {
+      const doc = emptyDoc();
+      const a = addChild(doc, { type: "plan", label: "A" });
+      const b = addChild(doc, { type: "decision", label: "B", parent: a.id });
+      const c = addChild(doc, { type: "task", label: "C", parent: b.id });
+      const d = addChild(doc, { type: "note", label: "D", parent: c.id });
+      const shown = new Set([...layout(doc, "plan").positions.keys(), ...layout(doc, "hld").positions.keys()]);
+      for (const n of [a, b, c, d]) expect(shown.has(n.id)).toBe(true);
+    });
+  });
+
+  describe("folding", () => {
+    const folded = (doc: MindmapDocument, ids: string[], mode: ViewMode = "all") => {
+      const result = layoutTree(doc, mode, sizeOf, new Set(ids));
+      if (!result) throw new Error("no root");
+      return result;
+    };
+
+    it("hides a folded branch and says how many cards it holds", () => {
+      const doc = emptyDoc();
+      const phase = addChild(doc, { type: "plan", label: "Phase" });
+      const [first] = tasks(doc, 2, phase.id);
+      tasks(doc, 1, first);
+
+      const open = layout(doc);
+      expect(open.branches.get(phase.id)).toBe(0);
+      expect(open.positions.size).toBe(5);
+
+      const closed = folded(doc, [phase.id]);
+      expect(closed.positions.size).toBe(2);
+      expect(closed.branches.get(phase.id)).toBe(3);
+      expectNoOverlaps(closed);
+    });
+
+    it("offers no fold on a leaf or on the root, and a folded root stays open", () => {
+      const doc = emptyDoc();
+      const leaf = addChild(doc, { type: "task", label: "Leaf" });
+      const l = folded(doc, ["root"]);
+      expect(l.positions.has(leaf.id)).toBe(true);
+      expect(l.branches.size).toBe(0);
+    });
+
+    it("only offers a fold for children the view draws", () => {
+      const doc = emptyDoc();
+      const task = addChild(doc, { type: "task", label: "Task" });
+      addChild(doc, { type: "decision", label: "Why", parent: task.id });
+      expect(layout(doc, "plan").branches.has(task.id)).toBe(false);
+      expect(layout(doc, "hld").branches.get(task.id)).toBe(0);
+    });
+
+    it("finds the topmost finished branches, skipping those with open work and those with no tasks", () => {
+      const doc = emptyDoc();
+      const done = addChild(doc, { type: "plan", label: "Done", status: "completed" });
+      addChild(doc, { type: "task", label: "Finished", status: "completed", parent: done.id });
+      const mixed = addChild(doc, { type: "plan", label: "Mixed", status: "in_progress" });
+      addChild(doc, { type: "task", label: "Open", parent: mixed.id });
+      const inner = addChild(doc, { type: "plan", label: "Inner", status: "completed", parent: mixed.id });
+      addChild(doc, { type: "task", label: "Also finished", status: "completed", parent: inner.id });
+      const component = addChild(doc, { type: "component", label: "No tasks here" });
+      addChild(doc, { type: "risk", label: "Skew", parent: component.id });
+      addChild(doc, { type: "task", label: "A finished leaf", status: "completed" });
+
+      expect(finishedBranches(doc)).toEqual([done.id, inner.id]);
+    });
+  });
+
+  it("walks up to the root and down a branch", () => {
+    const doc = emptyDoc();
+    const a = addChild(doc, { type: "plan", label: "A" });
+    const b = addChild(doc, { type: "task", label: "B", parent: a.id });
+    expect(ancestors(doc, b).map((n): string => n.id)).toEqual(["root", a.id]);
+    expect(subtree(doc, a).map((n) => n.id)).toEqual([a.id, b.id]);
+  });
+
+  it("widens the gaps between columns when they have to carry flow link labels", () => {
+    const doc = emptyDoc();
+    const a = addChild(doc, { type: "component", label: "A" });
+    const gapWithoutLinks = box(layout(doc), a.id).left - box(layout(doc), ROOT_ID).right;
+    doc.links.push({ id: LinkId.parse("l_1"), from: a.id, to: a.id, label: "x", style: "solid" });
+    expect(box(layout(doc), a.id).left - box(layout(doc), ROOT_ID).right).toBeGreaterThan(gapWithoutLinks);
   });
 });

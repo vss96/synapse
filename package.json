@@ -57,6 +57,7 @@
     "@types/bun": "^1.2.0",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",
+    "happy-dom": "^21.0.4",
     "typescript": "^5.7.0",
     "vitepress": "^1.6.4"
   }

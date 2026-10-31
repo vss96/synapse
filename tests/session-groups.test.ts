@@ -4,7 +4,7 @@ import { ARCHIVED_GROUP, groupSessions, worktreeName } from "../viewer/session-g
 
 function session(id: string, paths: Partial<MindmapListItem>): MindmapListItem {
   const updatedAt = "2026-10-30T12:00:00.000Z";
-  const counts = { nodeCount: 1, completedTasks: 0, totalTasks: 0, fileCount: 0 };
+  const counts = { nodeCount: 1, completedTasks: 0, totalTasks: 0, blockedTasks: 0, fileCount: 0, loggedFileCount: 0, searchText: "" };
   return { id: MindmapId.parse(id), title: id, updatedAt, createdAt: updatedAt, ...counts, ...paths };
 }
 

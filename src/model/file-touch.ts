@@ -1,51 +1,13 @@
+import { combineTouches } from "./file-stats.js";
 import { isTask } from "./kinds.js";
 import { attachChild, createChild } from "./node.js";
-import { ROOT_ID, type CodeChange, type EditTouch, type FileTouch, type MindmapDocument, type MindmapNode, type NodeId } from "./schema.js";
+import { ROOT_ID, type FileTouch, type MindmapDocument, type MindmapNode, type NodeId } from "./schema.js";
 
-/** Merge symbol-level changes; a later change with the same kind + symbol replaces the earlier one. */
-export function mergeChanges(prev: readonly CodeChange[], next: readonly CodeChange[]): CodeChange[] {
-  const merged = [...prev];
-  for (const change of next) {
-    const i = merged.findIndex((c) => c.kind === change.kind && c.symbol === change.symbol);
-    const earlier = merged[i];
-    if (earlier) merged[i] = { ...change, detail: change.detail ?? earlier.detail };
-    else merged.push(change);
-  }
-  return merged;
-}
+export { combineTouches, mergeChanges } from "./file-stats.js";
 
 /** Every path that a node in the mindmap has a file touch for. */
 export function recordedPaths(doc: MindmapDocument): Set<string> {
   return new Set(Object.values(doc.nodes).flatMap((n) => n.files.map((f) => f.path)));
-}
-
-/** The action a file ends up with after an earlier and a later edit; a rename keeps its previous path. */
-function combinedAction(
-  prev: EditTouch,
-  next: EditTouch,
-): { action: "rename"; previousPath: string } | { action: "create" | "modify" | "delete" } {
-  if (next.action === "delete") return { action: "delete" };
-  if (next.action === "modify" && prev.action === "create") return { action: "create" };
-  if (next.action === "modify" && prev.action === "rename") return { action: "rename", previousPath: prev.previousPath };
-  return next.action === "rename" ? { action: "rename", previousPath: next.previousPath } : { action: next.action };
-}
-
-/**
- * Fold a later touch of the same file into an earlier one. Reading a file never downgrades an
- * edit, creating then modifying stays a create, and renaming then modifying stays a rename.
- */
-export function combineTouches(prev: FileTouch, next: FileTouch): FileTouch {
-  const common = {
-    path: next.path,
-    lines: next.lines ?? prev.lines,
-    symbols: next.symbols ?? prev.symbols,
-    summary: next.summary ?? prev.summary,
-    timestamp: next.timestamp,
-  };
-  if (next.action === "read") return prev.action === "read" ? { ...common, action: "read" } : prev;
-  if (prev.action === "read") return { ...common, ...next, ...common };
-
-  return { ...common, ...combinedAction(prev, next), changes: mergeChanges(prev.changes, next.changes) };
 }
 
 /**

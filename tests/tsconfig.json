@@ -5,5 +5,5 @@
     "noEmit": true,
     "rootDir": ".."
   },
-  "include": ["./**/*.ts", "../src/**/*.ts", "../viewer/camera.ts", "../viewer/layout.ts", "../viewer/time.ts", "../viewer/search.ts"]
+  "include": ["./**/*.ts", "../src/**/*.ts", "../viewer/camera.ts", "../viewer/layout.ts", "../viewer/time.ts", "../viewer/search.ts", "../viewer/session-filter.ts", "../viewer/session-groups.ts", "../viewer/link-routing.ts", "../viewer/text-fit.ts", "../viewer/local-file.ts"]
 }

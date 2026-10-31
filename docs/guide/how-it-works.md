@@ -30,13 +30,14 @@
 | `GET /` | The viewer page (`viewer/index.html`) |
 | `GET /app.js` | The bundled viewer script |
 | `GET /logo.png`, `GET /favicon.png` | Images |
-| `GET /api/mindmaps` | `{ mindmaps, unreadable }`. `mindmaps` is the session list, newest first: `id`, `title`, `workspacePath`, `repoPath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `activeTask`, `fileCount`, and `archivedAt` when the session is archived. `unreadable` lists files that can't be read, as `{ id, error }` |
+| `GET /api/mindmaps` | `{ mindmaps, unreadable }`. `mindmaps` is the session list, newest first: `id`, `title`, `workspacePath`, `repoPath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `blockedTasks`, `activeTask`, `fileCount`, `loggedFileCount` (the files an agent logged), `searchText` (node labels and notes, cut to about 8,000 characters), and `archivedAt` when the session is archived. `unreadable` lists files that can't be read, as `{ id, error }` |
 | `GET /api/mindmaps/:id` | One full mindmap document, or `500` if it can't be read |
+| `DELETE /api/mindmaps/:id` | Deletes a mindmap and returns `{ id, deleted: true }`, or `404` if the ID is invalid or there's no such mindmap |
 | `POST /api/sync-git` | Body `{ "mindmapId": "…", "workspacePath"?: "…" }`. Runs [git sync](#git-sync) and returns `{ synced, mindmap }` |
 | `POST /api/archive` | Body `{ "mindmapId": "…", "archived": true \| false }`. Archives or restores a session without changing its `updatedAt`, and returns `{ id, archivedAt }` (`null` once restored) |
-| `GET /events` | SSE stream of `{ type: "connected" \| "mindmap_updated", id?, timestamp }` |
+| `GET /events` | SSE stream of events with a `type` and a `timestamp`: `connected`, `mindmap_updated` with `id` and `item` (the session's entry in the list), `mindmap_unreadable` with `id` and `error`, and `mindmap_deleted` with `id` |
 
-All routes return `403` unless the `Host` header is `localhost`, `127.0.0.1`, or `[::1]` on the viewer's port. This protects against DNS rebinding. Both `POST` routes also require `Content-Type: application/json`, reject a cross-origin `Origin` with `403`, and validate `mindmapId`. `POST /api/sync-git` also needs a `workspacePath`, either from the mindmap or from the request body.
+All routes return `403` unless the `Host` header is `localhost`, `127.0.0.1`, or `[::1]` on the viewer's port. This protects against DNS rebinding. The `POST` and `DELETE` routes reject a cross-origin `Origin` with `403`. Both `POST` routes also require `Content-Type: application/json` and validate `mindmapId`. `POST /api/sync-git` also needs a `workspacePath`, either from the mindmap or from the request body.
 
 ## Git sync and the workspace watcher
 
@@ -61,17 +62,18 @@ Git only reports a rename when it's **staged** (`git mv`, or `git add` on both p
 
 ### Workspace watcher
 
-When a mindmap has a `workspacePath`, the MCP server watches that directory recursively. It starts watching when `create_mindmap` is called with `workspacePath`, and whenever a tool changes a mindmap that has one, unless every task in that mindmap is completed. Each directory has one watcher, which records into the mindmap that a tool changed most recently for that directory. So when an agent starts a new mindmap in the same repo, the earlier one stops collecting its edits. File events are batched every 600 ms and attached to the active task as `create`, `modify`, or `delete`, with the summary `Auto-detected file <action>`. The watcher:
+When a mindmap has a `workspacePath`, the MCP server watches that directory recursively. It starts watching when `create_mindmap` is called with `workspacePath`, and whenever a tool changes a mindmap that has one, unless every task in that mindmap is completed. Each directory has one watcher, which records into the mindmap that a tool changed most recently for that directory. So when an agent starts a new mindmap in the same repo, the earlier one stops collecting its edits. File events are batched until they pause for 600 ms, or for at most about 3 seconds when they don't pause, and attached to the active task as `create`, `modify`, or `delete`, with the summary `Auto-detected file <action>` and `source: "watcher"`, which tells them from what an agent logged. A git sync marks its touches `source: "git"` in the same way. If an agent logs or reads the same file, the agent's touch wins. The watcher:
 
 - Classifies a file by its state before the batch, not by the kind of file event: a file git tracks or that the mindmap already lists is a `modify`, even when an editor or git saved it by renaming a temp file over it. A file that appears and disappears within one batch is skipped.
 - In a git repo, skips whatever the repo ignores: its `.gitignore` files, `.git/info/exclude` and global excludes.
 - Skips git worktrees inside the watched directory, such as `.claude/worktrees/*`, even when the repo doesn't ignore them. Their files belong to the sessions working there.
-- Leaves out changes made by git itself. After a checkout, reset, merge or pull, files that now match `HEAD` exactly are recorded as one activity entry, such as `Git checkout: moving from main to fix: 277 file change(s) not attributed to a task`; files that differ from `HEAD` are still recorded. While a rebase is in progress, no changes are recorded.
+- Leaves out changes made by git itself. After a checkout, reset, merge or pull, files that now match `HEAD` exactly are recorded as one activity entry, such as `Git checkout: moving from main to fix: 277 file change(s) not attributed to a task`; files that differ from `HEAD` are still recorded. While a rebase is in progress, no changes are recorded. A batch waits while git holds the index lock, for up to 30 seconds, so a slow checkout isn't recorded before it finishes.
+- Summarizes a batch of more than 100 files. Instead of attaching them to the task, it records one activity entry, such as `Bulk workspace change: 842 files changed (not attached individually)`, so that codegen or a bulk delete doesn't bloat the mindmap. Changes left out as git's own don't count towards the 100.
 
 - Runs inside the MCP server process, so it stops when the client stops the server. After a restart it starts again the next time a tool changes the mindmap.
 - Stops when its mindmap is deleted or moves to another `workspacePath`, or once it has changes to record into a mindmap that was archived in the viewer, can't be read, or has all its tasks completed. Changes it hadn't recorded yet are dropped, including an edit still waiting in the 600 ms batch when the last task is completed.
 - Starts again for a finished mindmap when a tool gives it an open task. Until then, `log_file_touch` and git sync still record into it. A mindmap with no tasks at all isn't finished, so it keeps collecting.
-- Skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv` and `__pycache__`, inside a repo or not, unless git tracks the file. So an `npm install` is left out even in a repo with no `node_modules` rule, while a committed `dist/bundle.js` is still recorded. In a repo, deleting a file the mindmap already lists is recorded too, even once `git rm` has untracked it.
+- Skips `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.DS_Store`, `.gradle`, `.idea`, `.kotlin`, `.venv`, `__pycache__`, `target`, `.turbo`, `.svelte-kit`, `.nuxt`, `.astro`, `.output`, `.parcel-cache`, `out`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `DerivedData` and `Pods`, inside a repo or not, unless git tracks the file. So an `npm install` is left out even in a repo with no `node_modules` rule, while a committed `dist/bundle.js` is still recorded. These events are dropped as they arrive, so an install or a watch build can't hold back a real edit. The same goes for a new source file in a folder with one of these names, such as `src/target/`, until git tracks it. The watcher checks what git tracks in these folders when it starts and about a second after any file event, so a file committed later counts from then on. In a repo, deleting a file the mindmap already lists is recorded too, even once `git rm` has untracked it.
 - Always skips `.git`, `data/*.json`, directories, and editor and atomic-write temp files (`*~`, `*.swp`, `*.tmp`, `*.tmp.<pid>.<hex>`, `.!<pid>!*`).
 - Doesn't detect renames.
 - Fails silently where recursive file watching isn't supported.
@@ -164,6 +166,7 @@ A file attached to a node:
 | `symbols` | Names of the functions, classes, or types touched |
 | `changes` | Symbol-level `CodeChange` entries |
 | `summary` | A short description |
+| `source` | `watcher` or `git` when the workspace watcher or a git sync found the touch. Absent when an agent logged it |
 | `timestamp` | When the touch was recorded (set automatically) |
 
 Logging the same path on the same node again updates the existing entry instead of adding another. New fields replace old ones, and `changes` are merged.

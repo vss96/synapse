@@ -142,6 +142,18 @@
 
   .session-name:empty { display: none; }
 
+  .local-badge {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .local-badge[hidden] { display: none; }
+
   .live-pill {
     --c: var(--c-live);
     display: inline-flex;
@@ -253,6 +265,8 @@
   }
 
   button:hover { background: var(--blue-hover); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
   button.secondary {
     background: var(--control);
     color: var(--text);
@@ -281,6 +295,10 @@
   }
 
   body.sessions-collapsed #sessions { display: none; }
+  body.sidebar-collapsed #sidebar { display: none; }
+
+  /* Only the narrow layout's drawer has a backdrop. */
+  .drawer-backdrop { display: none; }
 
   .sessions-head {
     padding: 10px 12px;
@@ -308,8 +326,29 @@
     letter-spacing: 0;
   }
 
+  .sessions-search-row { display: flex; gap: 6px; }
+  #archived-toggle { flex-shrink: 0; padding: 3px 7px; font-size: 11px; }
+  #archived-toggle[hidden] { display: none; }
+  #archived-toggle[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
+
+  .session-status { display: flex; gap: 2px; }
+
+  .session-status button {
+    flex: 1;
+    justify-content: center;
+    padding: 2px 4px;
+    background: none;
+    color: var(--muted);
+    font-size: 11px;
+    border-radius: 5px;
+  }
+
+  .session-status button:hover { background: var(--control); color: var(--text); }
+  .session-status button.active { background: var(--control-hover); color: var(--text); font-weight: 600; }
+
   #session-search {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 5px 8px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -339,6 +378,7 @@
   #sessions-unreadable[hidden] { display: none; }
   .sessions-unreadable-head { font-weight: 600; color: var(--text); }
   .sessions-unreadable-item { margin-top: 4px; }
+  .sessions-unreadable-item .session-action { position: static; opacity: 1; }
 
   .session-item {
     padding: 8px 10px;
@@ -390,6 +430,20 @@
     text-overflow: ellipsis;
   }
 
+  /* An active task nothing has touched for a while: probably abandoned. */
+  .session-task.idle { color: var(--muted); opacity: 0.75; }
+
+  .session-badge {
+    flex-shrink: 0;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    background: color-mix(in srgb, var(--c) var(--tint-strong), var(--panel));
+    color: color-mix(in srgb, var(--c) var(--tone-text), var(--text));
+  }
+
   .session-progress {
     display: flex;
     align-items: center;
@@ -420,6 +474,28 @@
   }
 
   .session-group-head:hover { background: var(--control); }
+
+  .session-group-row { position: relative; }
+
+  /* Sits over the end of the group's header, shown like a row's Archive button. */
+  .session-group-action {
+    position: absolute;
+    top: 2px;
+    right: 24px;
+    opacity: 0;
+    padding: 1px 6px;
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 10.5px;
+    font-weight: 500;
+  }
+
+  .session-group-row:hover .session-group-action,
+  .session-group-action:focus-visible { opacity: 1; }
+  @media (hover: none) { .session-group-action { opacity: 1; } }
+  .session-group-action:hover { background: var(--control-hover); color: var(--text); }
   .session-group-chevron { width: 10px; flex-shrink: 0; }
   .session-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .session-group-count { font-weight: 500; }
@@ -438,10 +514,15 @@
 
   /* Hidden until hover or keyboard focus, but still focusable; always shown without hover (touch).
      It takes no room in the row: it sits over the free end of the line with the (short) time. */
-  .session-action {
+  .session-actions {
     position: absolute;
     top: -2px;
     right: 0;
+    display: flex;
+    gap: 4px;
+  }
+
+  .session-action {
     opacity: 0;
     padding: 1px 6px;
     background: var(--panel);
@@ -456,12 +537,14 @@
   .session-action:focus-visible { opacity: 1; }
   @media (hover: none) { .session-action { opacity: 1; } }
   .session-action:hover { background: var(--control-hover); color: var(--text); }
+  .session-action.danger:hover { color: var(--c-blocked); border-color: var(--c-blocked); }
 
   #viewport {
     flex: 1;
     overflow: hidden;
     position: relative;
     cursor: grab;
+    touch-action: none;
     background: radial-gradient(var(--grid) 1px, transparent 1px);
     background-size: 20px 20px;
   }
@@ -511,6 +594,20 @@
     font-weight: 700;
   }
 
+  /* The root card's fill is inverted, so everything on it is too. */
+  .node-group.root .node-meta-text,
+  .node-group.root .node-status-pill,
+  .node-group.root .node-file-text,
+  .node-group.root .svg-tone {
+    fill: color-mix(in srgb, var(--panel) 80%, var(--muted));
+  }
+
+  /* Drawn only to connect a view's cards to the root. */
+  .node-group.context { opacity: 0.55; }
+  .node-group:focus { outline: none; }
+  .node-group:focus-visible .node-rect { stroke: var(--blue); stroke-width: 3; }
+  .node-group.traced .node-rect { stroke: var(--c-flow); stroke-width: 3; }
+
   /* The selection ring sits outside the card, so it shows whatever color the card is. */
   .node-select-ring {
     fill: color-mix(in srgb, var(--blue) 10%, transparent);
@@ -526,6 +623,25 @@
     stroke-width: 3 !important;
     fill: color-mix(in srgb, var(--purple) var(--tint-strong), var(--panel)) !important;
   }
+
+  .fold-pill rect {
+    fill: var(--panel);
+    stroke: var(--edge);
+    stroke-width: 1.25;
+  }
+
+  .fold-pill text {
+    fill: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+
+  .fold-pill.folded rect { stroke: var(--blue); }
+  .fold-pill.folded text { fill: var(--blue); }
+  .fold-pill:hover rect { stroke: var(--blue); fill: var(--control); }
 
   .node-title {
     fill: var(--text);
@@ -599,7 +715,10 @@
     opacity: 0.88;
   }
 
+  .flow-link.traced { stroke-width: 3; opacity: 1; }
   .flow-arrow-head { fill: var(--c-flow); }
+  .flow-label { cursor: pointer; }
+  .flow-label.traced .flow-label-bg { stroke: var(--c-flow); stroke-width: 2; }
 
   .flow-link.dashed {
     stroke-dasharray: 6 4;
@@ -678,6 +797,8 @@
     padding: 16px;
   }
 
+  .sidebar-content:focus { outline: none; }
+
   .section-title {
     font-size: 11px;
     font-weight: 700;
@@ -702,7 +823,30 @@
     font-size: 15px;
     font-weight: 600;
     margin-bottom: 6px;
+    overflow-wrap: anywhere;
   }
+
+  .breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 4px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .crumb, .copy-id {
+    background: none;
+    color: var(--muted);
+    padding: 0 2px;
+    font-size: 11px;
+    font-weight: 400;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+
+  .crumb:hover, .copy-id:hover { background: none; color: var(--blue); }
 
   /* Badges: tinted background and readable text from the element's tone. */
   .status-tag, .type-tag, .action-badge, .kind-badge {
@@ -734,7 +878,13 @@
   }
 
   .link-item {
+    display: block;
+    width: 100%;
     font-size: 12px;
+    font-weight: 400;
+    color: var(--text);
+    text-align: left;
+    overflow-wrap: anywhere;
     background: var(--panel-2);
     border: 1px solid var(--border-soft);
     border-radius: 6px;
@@ -742,7 +892,10 @@
     margin-bottom: 6px;
     cursor: pointer;
   }
-  .link-item:hover { border-color: var(--blue); }
+  .link-item:hover { background: var(--panel-2); border-color: var(--blue); }
+  .link-item-line { display: block; }
+  .link-item-notes { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .child-item { padding: 6px 10px; }
 
   .file-item {
     border: 1px solid var(--border-soft);
@@ -771,8 +924,49 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
     font-weight: 600;
-    word-break: break-all;
   }
+
+  /* A real button so the keyboard can reach it; the whole card is clickable with the mouse. */
+  .file-path {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .file-path:hover { background: none; }
+
+  .file-filter {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    background: var(--panel);
+    color: var(--text);
+  }
+
+  .file-filter:focus { outline: none; border-color: var(--blue); }
+
+  .file-group-toggle {
+    display: block;
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 4px 6px;
+    background: none;
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .file-group-toggle:hover { background: var(--control); color: var(--text); }
+  .file-more { width: 100%; justify-content: center; margin-bottom: 8px; }
 
   .action-badge {
     --c: var(--c-modify);
@@ -814,10 +1008,11 @@
     line-height: 1.35;
   }
 
+  .change-row > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+
   .change-row code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11px;
-    word-break: break-all;
   }
 
   .change-detail { color: var(--muted); }
@@ -982,6 +1177,35 @@
 
   #legend-kinds { flex-wrap: wrap; }
 
+  /* Says why a view has nothing but its root card. */
+  .view-empty {
+    position: absolute;
+    top: 64px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: calc(100% - 32px);
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12.5px;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  .view-empty[hidden] { display: none; }
+
+  /* Nothing to find, fit or explain until a session is open. Hidden, not removed, so that #svg can
+     keep measuring against .canvas-bottom. */
+  body.no-session .map-search,
+  body.no-session .canvas-bottom { visibility: hidden; }
+
+  /* The legend only explains what this view can show. */
+  .legend[data-view="plan"] .legend-concept,
+  .legend[data-view="hld"] .legend-status { display: none; }
+  body.legend-closed .legend { display: none; }
+
   .empty-state {
     position: absolute;
     inset: 0;
@@ -996,6 +1220,40 @@
 
   .empty-state h2 { font-size: 18px; font-weight: 600; color: var(--text); }
   .empty-state p { font-size: 13px; max-width: 360px; text-align: center; line-height: 1.5; }
+
+  /* Above the panels, centered over the window's lower edge. */
+  .toasts {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: max-content;
+    max-width: min(480px, calc(100vw - 32px));
+    z-index: 50;
+    pointer-events: none;
+  }
+
+  .toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 12.5px;
+    overflow-wrap: anywhere;
+    box-shadow: 0 6px 24px var(--shadow);
+    pointer-events: auto;
+  }
+
+  .toast.error { border-color: var(--c-blocked); }
+  .toast button { flex-shrink: 0; }
 
   /* ── Tones: after the rules above so a tone class overrides their default --c ── */
   .tone-planned { --c: var(--c-planned); }
@@ -1015,6 +1273,8 @@
   .tone-remove, .tone-delete { --c: var(--c-remove); }
   .tone-test { --c: var(--c-test); }
   .tone-read { --c: var(--c-read); }
+  /* Neutral, so the concept colors only ever mean a concept. */
+  .tone-root, .tone-plan, .tone-task, .tone-code, .tone-note, .tone-file { --c: var(--muted); }
 
   /* ── Narrower screens ── */
   /* The header shortens its labels so the session name stays readable. */
@@ -1046,6 +1306,13 @@
       z-index: 30;
       box-shadow: 0 8px 30px var(--shadow);
     }
+    body.sessions-open .drawer-backdrop {
+      display: block;
+      position: absolute;
+      inset: 0;
+      z-index: 25;
+      background: color-mix(in srgb, #000 35%, transparent);
+    }
     #viewport { min-height: 200px; }
     #sidebar {
       width: auto;
@@ -1054,25 +1321,26 @@
       border-left: none;
       border-top: 1px solid var(--border);
     }
-    .legend { display: none; }
+    .legend { flex-basis: 100%; max-width: none; }
     .canvas-bottom { left: 10px; right: 10px; bottom: 10px; }
   }
 </style>
 </head>
-<body>
+<body class="no-session">
 <header>
-  <button id="sessions-toggle" class="secondary" title="Show/hide sessions">☰</button>
+  <button id="sessions-toggle" class="secondary" title="Show/hide sessions" aria-label="Show or hide sessions" aria-controls="sessions">☰</button>
   <h1>Synapse</h1>
   <span id="session-name" class="session-name"></span>
+  <span id="local-badge" class="local-badge" hidden>Local file</span>
   <span id="live-indicator" class="live-pill">
     <span class="live-dot"></span>
     <span id="live-text">Live</span>
   </span>
 
   <div class="view-switcher" id="view-switcher">
-    <button data-mode="all" class="active" title="Split View (Plan + HLD)"><span class="label-long">Split View (Plan + HLD)</span><span class="label-short">Split</span></button>
-    <button data-mode="plan" title="Plan & Tasks"><span class="label-long">Plan & Tasks</span><span class="label-short">Plan</span></button>
-    <button data-mode="hld" title="Code Mental Model (HLD)"><span class="label-long">Code Mental Model (HLD)</span><span class="label-short">HLD</span></button>
+    <button data-mode="all" class="active" aria-pressed="true" title="Split View (Plan + HLD)"><span class="label-long">Split View (Plan + HLD)</span><span class="label-short">Split</span></button>
+    <button data-mode="plan" aria-pressed="false" title="Plan & Tasks"><span class="label-long">Plan & Tasks</span><span class="label-short">Plan</span></button>
+    <button data-mode="hld" aria-pressed="false" title="Code Mental Model (HLD)"><span class="label-long">Code Mental Model (HLD)</span><span class="label-short">HLD</span></button>
   </div>
 
   <div class="progress-summary" id="progress-summary" style="display:none;">
@@ -1083,28 +1351,40 @@
   </div>
 
   <div id="toolbar">
-    <button id="sync-git-btn" class="secondary" title="Sync uncommitted git status & diff into current mindmap">⎇<span class="btn-label"> Sync Git</span></button>
+    <button id="sync-git-btn" class="secondary" disabled title="Sync uncommitted git status & diff into current mindmap">⎇<span class="btn-label"> Sync Git</span></button>
     <button id="refresh-btn" class="secondary" title="Refresh">↻<span class="btn-label"> Refresh</span></button>
     <button id="upload-btn" class="secondary" title="Open a mindmap JSON file">📁<span class="btn-label"> Open</span></button>
     <input type="file" id="file-upload" accept=".json">
+    <button id="sidebar-toggle" class="secondary" title="Show/hide the side panel ( ] )" aria-label="Show or hide the side panel" aria-controls="sidebar" aria-expanded="true">◨</button>
   </div>
 </header>
 
 <div class="workspace">
+  <div id="drawer-backdrop" class="drawer-backdrop"></div>
   <aside id="sessions">
     <div class="sessions-head">
       <div class="sessions-head-row">
         <span id="sessions-count">Sessions</span>
         <kbd title="Switch session">⌥↑ / ⌥↓</kbd>
       </div>
-      <input id="session-search" type="search" placeholder="Filter sessions…">
+      <div class="sessions-search-row">
+        <input id="session-search" type="search" placeholder="Filter sessions…" aria-label="Filter sessions">
+        <button id="archived-toggle" class="secondary" aria-pressed="false" title="Show archived sessions" hidden>Archived</button>
+      </div>
+      <div id="session-status" class="session-status" role="group" aria-label="Show sessions that are">
+        <button data-status="all" class="active" aria-pressed="true">All</button>
+        <button data-status="running" aria-pressed="false" title="Sessions with a task in progress">Running</button>
+        <button data-status="blocked" aria-pressed="false" title="Sessions with a blocked task">Blocked</button>
+        <button data-status="finished" aria-pressed="false" title="Sessions with every task completed">Finished</button>
+      </div>
     </div>
     <div id="session-list"></div>
     <div id="sessions-unreadable" hidden></div>
   </aside>
 
   <div id="viewport">
-    <svg id="svg"></svg>
+    <svg id="svg" role="tree" aria-label="Mindmap cards"></svg>
+    <div id="view-empty" class="view-empty" hidden></div>
     <div class="map-search" role="search">
       <input id="map-search" type="search" placeholder="Find a card, file or symbol" aria-label="Find on the map" autocomplete="off" spellcheck="false">
       <kbd title="Press / to find">/</kbd>
@@ -1115,16 +1395,16 @@
       <p>When your agent calls <code>create_mindmap</code>, <code>map_architecture</code>, or <code>log_file_touch</code>, the plan and code mental model will update here live.</p>
     </div>
     <div class="canvas-bottom">
-      <div class="legend">
-        <div class="legend-item"><span class="legend-swatch tone-planned"></span> Planned</div>
-        <div class="legend-item"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
-        <div class="legend-item"><span class="legend-swatch tone-completed"></span> Completed</div>
-        <div class="legend-item"><span class="legend-swatch tone-blocked"></span> Blocked</div>
-        <div class="legend-item"><span class="legend-swatch tone-component"></span> 📦 Component</div>
-        <div class="legend-item"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
-        <div class="legend-item"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
-        <div class="legend-item"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
-        <div class="legend-item"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
+      <div class="legend" id="legend">
+        <div class="legend-item legend-status"><span class="legend-swatch tone-planned"></span> Planned</div>
+        <div class="legend-item legend-status"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
+        <div class="legend-item legend-status"><span class="legend-swatch tone-completed"></span> Completed</div>
+        <div class="legend-item legend-status"><span class="legend-swatch tone-blocked"></span> Blocked</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-component"></span> 📦 Component</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
         <div class="legend-item" id="legend-kinds"></div>
       </div>
       <div class="controls">
@@ -1132,19 +1412,23 @@
         <button id="zoom-fit" class="secondary" title="Show the whole map">Fit</button>
         <button id="zoom-focus" class="secondary" title="Center the task the agent is working on at full size">◎ Focus</button>
         <button id="zoom-in" class="secondary" title="Zoom in">+</button>
+        <button id="fold-btn" class="secondary">Fold done</button>
+        <button id="legend-toggle" class="secondary" title="Show/hide the legend" aria-label="Show or hide the legend" aria-controls="legend">?</button>
       </div>
     </div>
   </div>
 
   <aside id="sidebar">
-    <div class="sidebar-tabs">
-      <button class="sidebar-tab active" data-tab="inspector">Inspector</button>
-      <button class="sidebar-tab" data-tab="files" id="tab-files-btn">Changes (0)</button>
-      <button class="sidebar-tab" data-tab="activity">Activity</button>
+    <div class="sidebar-tabs" role="tablist" aria-label="Details">
+      <button class="sidebar-tab active" data-tab="inspector" role="tab" aria-selected="true" aria-controls="sidebar-content">Inspector</button>
+      <button class="sidebar-tab" data-tab="files" id="tab-files-btn" role="tab" aria-selected="false" aria-controls="sidebar-content">Changes (0)</button>
+      <button class="sidebar-tab" data-tab="activity" role="tab" aria-selected="false" aria-controls="sidebar-content">Activity</button>
     </div>
-    <div class="sidebar-content" id="sidebar-content"></div>
+    <div class="sidebar-content" id="sidebar-content" role="tabpanel" tabindex="-1"></div>
   </aside>
 </div>
+
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
 <script type="module" src="/app.js"></script>
 </body>

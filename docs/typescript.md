@@ -4,7 +4,7 @@ How to write TypeScript in this repository so that the compiler can check it. [D
 
 ## Compiler settings
 
-There are three projects: `tsconfig.json` (`src/`, Node), `viewer/tsconfig.json` (`viewer/app.ts`, browser) and `tests/tsconfig.json` (extends the root and adds Bun's types). `bun run typecheck` checks all three.
+There are three projects: `tsconfig.json` (`src/`, Node), `viewer/tsconfig.json` (`viewer/app.ts` and everything it imports, browser) and `tests/tsconfig.json` (extends the root and adds Bun's types). `bun run typecheck` checks all three.
 
 The root and viewer configs turn on the same checks. Keep the two lists in sync:
 
@@ -56,9 +56,9 @@ export const isChangeKind = member(CHANGE_KINDS);
 
 The zod schemas use `z.enum(CHANGE_KINDS)`. Tables keyed by a kind are typed `Record<ChangeKind, …>` (the viewer's glyphs and labels, `CHANGE_GLYPH` in `renderer.ts`), so adding a kind doesn't compile until every table has an entry for it.
 
-### `kinds.ts` has no runtime dependencies
+### `kinds.ts` and `file-stats.ts` have no runtime dependencies
 
-The viewer bundle imports `kinds.ts`, so it must not import any values. Its imports from `schema.ts` are `import type`, which are erased. The viewer imports from `schema.ts` with `import type` too: importing a value from it would bundle zod. That is why `viewer/app.ts` defines its own `ROOT` instead of importing `ROOT_ID`.
+The viewer bundle imports both, so they must not import any values. Its imports from `schema.ts` are `import type`, which are erased. The viewer imports from `schema.ts` with `import type` too: importing a value from it would bundle zod. That is why `viewer/layout.ts` defines its own `ROOT` instead of importing `ROOT_ID`.
 
 ## Rules
 
@@ -75,7 +75,7 @@ if (isJsonObject(parsed)) return parsed;
 
 - **In `src/`**, parse with the zod schema: `MindmapDocument.safeParse(JSON.parse(raw))`.
 - **Without a schema**, narrow by hand, or write a type guard when you need the check more than once (`isJsonObject` in `installer.ts`).
-- **In the viewer**, which can't use zod, narrow what the user or the browser controls: `localStorage` (the collapsed groups), the URL hash and `data-*` attributes (`nodeById`, `isChangeKind`, `SIDEBAR_TABS.find(...)`). JSON from the Synapse server goes through `serverJson<T>()`, the one place where the viewer trusts the server's types. Uploaded files are not validated yet; see the comment where they are loaded.
+- **In the viewer**, which can't use zod, narrow what the user or the browser controls: `localStorage` (the collapsed groups), the URL hash and `data-*` attributes (`nodeById`, `isChangeKind`, `SIDEBAR_TABS.find(...)`). JSON from the Synapse server goes through `serverJson<T>()`, the one place where the viewer trusts the server's types. Files opened from disk go through `isMindmapDocument` in `local-file.ts`, a type guard written by hand.
 - **In `catch`**, `err` is `unknown`. Use `err instanceof Error ? err.message : String(err)`. Check Node error codes with `errorCode(err) === "EADDRINUSE"` (from `src/errors.ts`) instead of casting to `NodeJS.ErrnoException`.
 
 ### Avoid `as` and `!`
@@ -86,7 +86,7 @@ A cast or a non-null `!` tells the compiler to stop checking. There is usually a
 |---|---|
 | `merged[i]!.detail` | `const earlier = merged[i]; if (earlier) …` |
 | `options.clients!` inside a callback | `const { clients } = options;` before the callback, so the narrowing holds inside it |
-| an optional field plus `previousPath!` | a return type that is a union, where the rename variant always has `previousPath` (`combinedAction` in `file-touch.ts`) |
+| an optional field plus `previousPath!` | a return type that is a union, where the rename variant always has `previousPath` (`combinedAction` in `file-stats.ts`) |
 | `values as ClientId[]` | `values.filter(isClientId)` |
 | `btn.dataset.tab as SidebarTab` | `SIDEBAR_TABS.find((t) => t === btn.dataset.tab)`, then handle `undefined` |
 | `getElementById(id) as HTMLInputElement` | `byId(id, HTMLInputElement)`, which checks with `instanceof` |

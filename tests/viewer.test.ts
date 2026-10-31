@@ -79,6 +79,18 @@ describe("viewer server", () => {
     }
   });
 
+  it("deletes an unreadable file, which a page can't open but can still clear away", async () => {
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await writeFile(path.join(tmpDir, "mm_junk.json"), "{ junk");
+      expect(JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body).unreadable).toMatchObject([{ id: "mm_junk" }]);
+      expect((await call(viewer.port, { method: "DELETE", path: "/api/mindmaps/mm_junk" })).status).toBe(200);
+      expect(JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body).unreadable).toEqual([]);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("serves the session list and single mindmaps", async () => {
     const list = await call(viewer.port, { path: "/api/mindmaps" });
     expect(list.status).toBe(200);
@@ -151,6 +163,58 @@ describe("viewer server", () => {
     const crossSite = { "content-type": "application/json", origin: "https://attacker.example" };
     expect((await archive({ mindmapId: "mm_test", archived: true }, crossSite)).status).toBe(403);
     expect((await store.load(MindmapId.parse("mm_test")))?.archivedAt).toBeUndefined();
+  });
+
+  it("announces what changed, so a page doesn't have to read every mindmap again", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const { body } = await fetch(`http://localhost:${viewer.port}/events`);
+    if (!body) throw new Error("The event stream has no body");
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    const nextEvent = async () => {
+      const { value } = await reader.read();
+      for (const line of decoder.decode(value).split("\n")) {
+        if (line.startsWith("data: ")) events.push(JSON.parse(line.slice(6)));
+      }
+    };
+    /** Reads the stream until an event of this type arrives for the mindmap. */
+    const announced = async (type: string, id: string) => {
+      for (;;) {
+        const event = events.find((e) => e.type === type && e.id === id);
+        if (event) return event;
+        await nextEvent();
+      }
+    };
+
+    try {
+      const doc = emptyDoc("mm_live", "Live");
+      addChild(doc, { type: "task", label: "Now", status: "in_progress" });
+      await store.save(doc);
+      expect(await announced("mindmap_updated", "mm_live")).toMatchObject({ item: { title: "Live", activeTask: "Now" } });
+
+      const logged = spyOn(console, "error").mockImplementation(() => {});
+      await writeFile(path.join(tmpDir, "mm_live.json"), "{ damaged");
+      expect((await announced("mindmap_unreadable", "mm_live")).error).toBeString();
+      logged.mockRestore();
+
+      await rm(path.join(tmpDir, "mm_live.json"));
+      await announced("mindmap_deleted", "mm_live");
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  it("deletes sessions, refusing cross-site and invalid requests", async () => {
+    await store.save(emptyDoc("mm_doomed", "Doomed"));
+    const del = (id: string, headers: Record<string, string> = {}) => call(viewer.port, { method: "DELETE", path: `/api/mindmaps/${id}`, headers });
+
+    expect((await del("mm_doomed", { origin: "https://attacker.example" })).status).toBe(403);
+    expect(await store.load(MindmapId.parse("mm_doomed"))).not.toBeNull();
+    expect((await del("..%2F..%2Fsecret")).status).toBe(404);
+    expect((await del("mm_nope")).status).toBe(404);
+
+    expect((await del("mm_doomed", { origin: `http://localhost:${viewer.port}` })).status).toBe(200);
+    expect(await store.load(MindmapId.parse("mm_doomed"))).toBeNull();
   });
 
   it("logs requests that fail with a 500", async () => {

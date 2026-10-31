@@ -63,6 +63,8 @@ const TouchFields = {
   symbols: z.array(z.string()).optional(),
   summary: z.string().optional(),
   timestamp: Timestamp,
+  /** What found this touch, when it wasn't an agent logging it. See `isAutoDetected` for older mindmaps. */
+  source: z.enum(["watcher", "git"]).optional(),
 };
 
 /** A file the agent touched. Reads carry no changes; renames always know the previous path. */
@@ -214,9 +216,14 @@ export interface MindmapListItem {
   nodeCount: number;
   completedTasks: number;
   totalTasks: number;
+  blockedTasks: number;
   /** Label of the most recently updated in-progress task. */
   activeTask?: string;
   fileCount: number;
+  /** How many of those files an agent logged, rather than the workspace watcher picking them up. */
+  loggedFileCount: number;
+  /** Node labels and notes, cut to a bounded length, for finding a session by what's in it. */
+  searchText: string;
 }
 
 /** A mindmap file that exists but can't be loaded. `id` comes from the file name; the contents can't be trusted. */

@@ -5,11 +5,14 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
+import * as store from "../src/store.js";
+import { RENDER_FORMATS } from "../src/renderer.js";
 import { tools, type ToolResult } from "../src/tools.js";
 import { stopWorkspaceWatcher, watchedMindmap } from "../src/watcher.js";
 import { isTask } from "../src/model/kinds.js";
 import { z } from "zod";
 import { MindmapDocument, MindmapId, NodeId, ROOT_ID, type FileTouch, type MindmapNode, type TaskNode } from "../src/model/schema.js";
+import { emptyDoc } from "./fixtures.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -425,5 +428,166 @@ describe("MCP tools integration", () => {
     assert.match(rendered, /📦 API Gateway/);
     assert.match(rendered, /⚖️ Keep TypeScript over Rust/);
     assert.match(rendered, /──\[emits events to\]──▶/);
+
+    const flowchart = await ok("render_mindmap", { mindmapId: doc.id, format: "mermaid-flowchart" });
+    assert.match(flowchart, /^flowchart LR/);
+    assert.match(flowchart, /==>\|"emits events to"\|/);
+    assert.match(await fails("render_mindmap", { mindmapId: doc.id, format: "svg" }), /Invalid input/);
+  });
+
+  it("names every render format in render_mindmap's description, which is all an agent sees", () => {
+    const description = tools.find((t) => t.name === "render_mindmap")?.description ?? "";
+    for (const format of RENDER_FORMATS) assert.ok(description.includes(`${format} (`) || description.includes(`or ${format}`), format);
+  });
+
+  it("clears an existing node's notes with an empty string in map_architecture, and keeps them when omitted", async () => {
+    const doc = await docFrom("create_mindmap", { title: "Notes" });
+    const mapped = await ackFrom("map_architecture", { mindmapId: doc.id, nodes: [{ key: "api", label: "API", notes: "Handles requests" }] });
+    const apiId = mapped.nodes?.find((n) => n.label === "API")?.id;
+    assert.ok(apiId);
+
+    const kept = await docFrom("map_architecture", { mindmapId: doc.id, nodes: [{ key: apiId, label: "API v2" }] });
+    assert.equal(nodeOf(kept, apiId).notes, "Handles requests");
+    const cleared = await docFrom("map_architecture", { mindmapId: doc.id, nodes: [{ key: apiId, label: "API v2", notes: "" }] });
+    assert.equal(nodeOf(cleared, apiId).notes, "");
+  });
+
+  it("removes links by id, or by from and to with an optional label, via unlink_nodes", async () => {
+    const created = await ackFrom("create_mindmap", { title: "Links", initialPlan: [{ label: "A" }, { label: "B" }, { label: "C" }] });
+    const { mindmapId } = created;
+    const [a, b, c] = created.nodes ?? [];
+    assert.ok(a && b && c);
+    for (const [from, to, label] of [[a, b, "calls?"], [a, b, "streams SSE to"], [a, b, "reads"], [b, a, "calls?"], [a, c, "calls?"]] as const) {
+      await ok("link_nodes", { mindmapId, from: from.id, to: to.id, label });
+    }
+    const labels = (doc: MindmapDocument) => doc.links.map((l) => `${nodeOf(doc, l.from).label}→${nodeOf(doc, l.to).label} ${l.label}`);
+
+    // With a label, only that link goes: not its siblings, not the one going the other way, and not one to another node
+    const byLabel = await docFrom("unlink_nodes", { mindmapId, from: a.id, to: b.id, label: "calls?" });
+    assert.deepEqual(labels(byLabel), ["A→B streams SSE to", "A→B reads", "B→A calls?", "A→C calls?"]);
+    assert.equal(byLabel.activityLog[0]?.message, 'Unlinked "A" ──[calls?]──▶ "B"');
+    assert.equal(byLabel.activityLog[0]?.nodeId, a.id);
+
+    const byId = await docFrom("unlink_nodes", { mindmapId, linkId: byLabel.links[0]?.id });
+    assert.deepEqual(labels(byId), ["A→B reads", "B→A calls?", "A→C calls?"]);
+
+    await ok("link_nodes", { mindmapId, from: a.id, to: b.id, label: "writes" });
+    const all = await docFrom("unlink_nodes", { mindmapId, from: a.id, to: b.id });
+    assert.deepEqual(labels(all), ["B→A calls?", "A→C calls?"], "without a label, every link in that direction goes");
+    assert.equal(all.activityLog[0]?.message, 'Unlinked "A" ──[reads, writes]──▶ "B"');
+
+    // Nothing matched: an error that says what was looked for, and nothing changes
+    assert.match(await fails("unlink_nodes", { mindmapId, linkId: "l_missing" }), /No link "l_missing" found/);
+    assert.match(await fails("unlink_nodes", { mindmapId, from: a.id, to: b.id }), new RegExp(`No link from "${a.id}" to "${b.id}" found`));
+    assert.match(await fails("unlink_nodes", { mindmapId, from: b.id, to: a.id, label: "nope" }), /labeled "nope"/);
+    assert.deepEqual(labels(await docFrom("get_mindmap", { mindmapId })), ["B→A calls?", "A→C calls?"]);
+
+    // Exactly one way of saying which links
+    for (const args of [{}, { from: a.id }, { to: b.id }, { label: "calls?" }, { from: a.id, label: "calls?" }, { linkId: "l_x", from: a.id, to: b.id }, { linkId: "l_x", label: "x" }]) {
+      assert.match(await fails("unlink_nodes", { mindmapId, ...args }), /Give either linkId, or from and to/, JSON.stringify(args));
+    }
+  });
+
+  it("removes file touches from a node with removeFiles on update_node", async () => {
+    const created = await ackFrom("create_mindmap", { title: "Files", initialPlan: [{ label: "Step", status: "in_progress" }] });
+    const { mindmapId } = created;
+    const nodeId = created.nodes?.[0]?.id;
+    await ok("log_file_touch", { mindmapId, nodeId, path: "src/wrong.ts" });
+    await ok("log_file_touch", { mindmapId, nodeId, path: "src/right.ts", changes: [{ kind: "fix", symbol: "f" }] });
+    await ok("log_file_touch", { mindmapId, nodeId, path: "src/other.ts" });
+    const paths = (doc: MindmapDocument) => nodeOf(doc, nodeId).files.map((f) => f.path);
+
+    const removed = await docFrom("update_node", { mindmapId, nodeId, removeFiles: ["src/wrong.ts", "src/other.ts"] });
+    assert.deepEqual(paths(removed), ["src/right.ts"]);
+    assert.match(removed.activityLog[0]?.message ?? "", /removed 2 file touch/);
+    assert.equal(nodeOf(removed, nodeId).id, nodeId, "the node itself stays");
+
+    // A path the node doesn't have is an error, and the whole call changes nothing
+    assert.match(
+      await fails("update_node", { mindmapId, nodeId, label: "Renamed", removeFiles: ["src/right.ts", "src/nope.ts"] }),
+      /no file touch for: src\/nope\.ts/,
+    );
+    const unchanged = await docFrom("get_mindmap", { mindmapId });
+    assert.deepEqual(paths(unchanged), ["src/right.ts"]);
+    assert.equal(nodeOf(unchanged, nodeId).label, "Step");
+
+    // Removal runs first, so a path in both starts afresh (merged, a read wouldn't replace an edit)
+    const replaced = await docFrom("update_node", { mindmapId, nodeId, removeFiles: ["src/right.ts"], files: [{ path: "src/right.ts", action: "read" }] });
+    assert.equal(nodeOf(replaced, nodeId).files[0]?.action, "read");
+  });
+
+  it("moves a node and its subtree with parentId on update_node", async () => {
+    const created = await ackFrom("create_mindmap", {
+      title: "Move",
+      initialPlan: [{ label: "A", children: [{ label: "A1" }] }, { label: "B" }],
+    });
+    const { mindmapId } = created;
+    const byLabel = (label: string) => created.nodes?.find((n) => n.label === label)?.id;
+    const [a, a1, b] = [byLabel("A"), byLabel("A1"), byLabel("B")];
+    assert.ok(a && a1 && b);
+
+    // Under the current parent: not an error, and it doesn't change the order of the siblings
+    const stayed = await ackFrom("update_node", { mindmapId, nodeId: a, parentId: "root" });
+    assert.doesNotMatch(stayed.summary, /moved/);
+    assert.deepEqual(childrenOf(await docFrom("get_mindmap", { mindmapId })), [a, b]);
+
+    // Moves that would cut a subtree off from the root
+    assert.match(await fails("update_node", { mindmapId, nodeId: a, parentId: a }), /under itself/);
+    assert.match(await fails("update_node", { mindmapId, nodeId: a, parentId: a1 }), /own descendant "A1"/);
+    assert.match(await fails("update_node", { mindmapId, nodeId: a, parentId: "n_nope" }), /Parent node "n_nope" not found/);
+    assert.match(await fails("update_node", { mindmapId, nodeId: "root", parentId: b }), /root node can't be changed/);
+    assert.match(await fails("update_node", { mindmapId, nodeId: a, label: "Half done", parentId: a1 }), /own descendant/);
+    assert.equal(nodeOf(await docFrom("get_mindmap", { mindmapId }), a).label, "A", "a failed move changes nothing");
+
+    const movedAck = await ackFrom("update_node", { mindmapId, nodeId: a, parentId: b });
+    assert.equal(movedAck.node?.parent, b);
+    assert.match(movedAck.summary, /moved under "B"/);
+    const moved = await docFrom("get_mindmap", { mindmapId });
+    assert.equal(nodeOf(moved, a).parent, b);
+    assert.deepEqual(childrenOf(moved), [b]);
+    assert.deepEqual(childrenOf(moved, b), [a]);
+    assert.deepEqual(childrenOf(moved, a), [a1], "the subtree moves with it");
+
+    // A retype replaces the node object; the move has to land on the new one
+    const retyped = await docFrom("update_node", { mindmapId, nodeId: a1, type: "risk", parentId: "root" });
+    assert.deepEqual([nodeOf(retyped, a1).type, nodeOf(retyped, a1).parent], ["risk", ROOT_ID]);
+    assert.deepEqual(childrenOf(retyped), [b, a1]);
+    assert.deepEqual(childrenOf(retyped, a), []);
+  });
+
+  it("filters list_mindmaps by workspace and repository, and can leave out archived mindmaps", async () => {
+    const mine = { workspacePath: "/code/app", repoPath: "/code/app" };
+    const main = { ...emptyDoc("mm_list_main", "Main checkout"), ...mine };
+    const tree = { ...emptyDoc("mm_list_tree", "Worktree"), workspacePath: "/code/app/.claude/worktrees/x", repoPath: "/code/app" };
+    const old = { ...emptyDoc("mm_list_old", "Archived"), ...mine };
+    const other = { ...emptyDoc("mm_list_other", "Other repo"), workspacePath: "/code/other" };
+    const docs = [main, tree, old, other];
+    for (const doc of docs) await store.save(doc);
+    await store.setArchived(old.id, true);
+    const listed = async (args: Record<string, unknown> = {}) => [...(await ok("list_mindmaps", args)).matchAll(/mm_list_\w+/g)].map(([id]) => id).sort();
+
+    try {
+      assert.deepEqual(await listed(), [old.id, main.id, other.id, tree.id].sort(), "no filters: everything, as before");
+      assert.match(await ok("list_mindmaps"), /mm_list_old .*, archived\)/);
+      assert.deepEqual(await listed({ includeArchived: true }), await listed());
+      assert.deepEqual(await listed({ includeArchived: false }), [main.id, other.id, tree.id].sort());
+
+      assert.deepEqual(await listed({ workspacePath: "/code/app" }), [old.id, main.id, tree.id].sort(), "repoPath matches its worktrees too");
+      assert.deepEqual(await listed({ workspacePath: "/code/app/.claude/worktrees/x" }), [tree.id], "workspacePath matches on its own");
+      assert.deepEqual(await listed({ workspacePath: "/code/other" }), [other.id], "a mindmap without a repoPath still matches");
+      assert.deepEqual(await listed({ workspacePath: "/code/app/" }), await listed({ workspacePath: "/code/app" }), "a trailing slash is the same path");
+      assert.deepEqual(await listed({ workspacePath: "/code/app", includeArchived: false }), [main.id, tree.id].sort());
+
+      assert.equal(await ok("list_mindmaps", { workspacePath: "/code/app/x" }), "No mindmaps match.");
+      assert.match(await fails("list_mindmaps", { workspacePath: "" }), /Invalid input/);
+
+      // Nothing says which workspace a damaged file belongs to, so a filter can't rule it out
+      const damaged = path.join(tmpDir, "mm_list_damaged.json");
+      await writeFile(damaged, "{ not json");
+      assert.match(await ok("list_mindmaps", { workspacePath: "/code/other", includeArchived: false }), /mm_list_damaged {2}– {2}can't be read/);
+      await rm(damaged);
+    } finally {
+      await Promise.all(docs.map((d) => store.remove(d.id)));
+    }
   });
 });
