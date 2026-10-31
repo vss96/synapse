@@ -30,13 +30,14 @@
 | `GET /` | The viewer page (`viewer/index.html`) |
 | `GET /app.js` | The bundled viewer script |
 | `GET /logo.png`, `GET /favicon.png` | Images |
-| `GET /api/mindmaps` | `{ mindmaps, unreadable }`. `mindmaps` is the session list, newest first: `id`, `title`, `workspacePath`, `repoPath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `activeTask`, `fileCount`, and `archivedAt` when the session is archived. `unreadable` lists files that can't be read, as `{ id, error }` |
+| `GET /api/mindmaps` | `{ mindmaps, unreadable }`. `mindmaps` is the session list, newest first: `id`, `title`, `workspacePath`, `repoPath`, `updatedAt`, `createdAt`, `nodeCount`, `completedTasks`, `totalTasks`, `blockedTasks`, `activeTask`, `fileCount`, `loggedFileCount` (the files an agent logged), `searchText` (node labels and notes, cut to about 8,000 characters), and `archivedAt` when the session is archived. `unreadable` lists files that can't be read, as `{ id, error }` |
 | `GET /api/mindmaps/:id` | One full mindmap document, or `500` if it can't be read |
+| `DELETE /api/mindmaps/:id` | Deletes a mindmap and returns `{ id, deleted: true }`, or `404` if the ID is invalid or there's no such mindmap |
 | `POST /api/sync-git` | Body `{ "mindmapId": "…", "workspacePath"?: "…" }`. Runs [git sync](#git-sync) and returns `{ synced, mindmap }` |
 | `POST /api/archive` | Body `{ "mindmapId": "…", "archived": true \| false }`. Archives or restores a session without changing its `updatedAt`, and returns `{ id, archivedAt }` (`null` once restored) |
-| `GET /events` | SSE stream of `{ type: "connected" \| "mindmap_updated", id?, timestamp }` |
+| `GET /events` | SSE stream of events with a `type` and a `timestamp`: `connected`, `mindmap_updated` with `id` and `item` (the session's entry in the list), `mindmap_unreadable` with `id` and `error`, and `mindmap_deleted` with `id` |
 
-All routes return `403` unless the `Host` header is `localhost`, `127.0.0.1`, or `[::1]` on the viewer's port. This protects against DNS rebinding. Both `POST` routes also require `Content-Type: application/json`, reject a cross-origin `Origin` with `403`, and validate `mindmapId`. `POST /api/sync-git` also needs a `workspacePath`, either from the mindmap or from the request body.
+All routes return `403` unless the `Host` header is `localhost`, `127.0.0.1`, or `[::1]` on the viewer's port. This protects against DNS rebinding. The `POST` and `DELETE` routes reject a cross-origin `Origin` with `403`. Both `POST` routes also require `Content-Type: application/json` and validate `mindmapId`. `POST /api/sync-git` also needs a `workspacePath`, either from the mindmap or from the request body.
 
 ## Git sync and the workspace watcher
 
@@ -165,6 +166,7 @@ A file attached to a node:
 | `symbols` | Names of the functions, classes, or types touched |
 | `changes` | Symbol-level `CodeChange` entries |
 | `summary` | A short description |
+| `source` | `watcher` or `git` when the workspace watcher or a git sync found the touch. Absent when an agent logged it |
 | `timestamp` | When the touch was recorded (set automatically) |
 
 Logging the same path on the same node again updates the existing entry instead of adding another. New fields replace old ones, and `changes` are merged.

@@ -86,7 +86,7 @@ A cast or a non-null `!` tells the compiler to stop checking. There is usually a
 |---|---|
 | `merged[i]!.detail` | `const earlier = merged[i]; if (earlier) …` |
 | `options.clients!` inside a callback | `const { clients } = options;` before the callback, so the narrowing holds inside it |
-| an optional field plus `previousPath!` | a return type that is a union, where the rename variant always has `previousPath` (`combinedAction` in `file-touch.ts`) |
+| an optional field plus `previousPath!` | a return type that is a union, where the rename variant always has `previousPath` (`combinedAction` in `file-stats.ts`) |
 | `values as ClientId[]` | `values.filter(isClientId)` |
 | `btn.dataset.tab as SidebarTab` | `SIDEBAR_TABS.find((t) => t === btn.dataset.tab)`, then handle `undefined` |
 | `getElementById(id) as HTMLInputElement` | `byId(id, HTMLInputElement)`, which checks with `instanceof` |

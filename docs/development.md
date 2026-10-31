@@ -39,8 +39,8 @@ src/
     kinds.ts       Enums (node types, statuses, change kinds, ...) and guards; no deps, used by the browser
     schema.ts      zod schemas: the source of the data model's types and boundary checks
     node.ts        Creating and attaching nodes
-    file-touch.ts  Merging file touches and symbol-level changes
-    file-stats.ts  Reading file touches: aggregation across nodes, auto-detection; no deps, used by the browser
+    file-touch.ts  Recording file touches on nodes, and which node they attach to
+    file-stats.ts  Merging and aggregating file touches, and auto-detection; no deps, used by the browser
   version.ts       Package version
 viewer/
   index.html       Viewer markup and CSS
