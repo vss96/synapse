@@ -745,8 +745,8 @@ const deleteMindmap = defineTool({
   description: "Delete an entire mindmap and all its nodes.",
   inputSchema: z.object({ mindmapId }),
   async run(input) {
-    if (!(await store.remove(input.mindmapId))) throw new ToolError(`Mindmap "${input.mindmapId}" not found.`);
     stopWorkspaceWatcher(input.mindmapId);
+    if (!(await store.remove(input.mindmapId))) throw new ToolError(`Mindmap "${input.mindmapId}" not found.`);
     return { mindmapId: input.mindmapId, summary: `Mindmap "${input.mindmapId}" deleted.` };
   },
 });

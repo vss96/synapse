@@ -133,6 +133,10 @@ function plan(id: string) {
   return doc;
 }
 
+/** The sessions listed, top to bottom. */
+const order = (page: ReturnType<typeof openViewer>) => [...page.document.querySelectorAll(".session-item")].map((el) => el.getAttribute("data-session-id"));
+const inRepo = (name: string) => ({ repoPath: `/code/${name}`, workspacePath: `/code/${name}` });
+
 describe("viewer page", () => {
   it("opens the first session and marks its cards up for the keyboard", async () => {
     const page = openViewer({ docs: [plan("mm_one")] });
@@ -244,6 +248,253 @@ describe("viewer page", () => {
     page.type("#session-search", "shedlock");
     expect(page.document.querySelector("#sessions-count")?.textContent).toBe("Sessions (1 of 2)");
     expect(page.row("mm_two")).toBeNull();
+  });
+
+  describe("opening a session with the keyboard", () => {
+    const titleLink = (page: ReturnType<typeof openViewer>, id: string) => {
+      const link = page.row(id)?.querySelector("a.session-title-text");
+      if (!(link instanceof page.window.HTMLElement)) throw new Error(`No title link on ${id}`);
+      return link;
+    };
+
+    it("makes each title a link to the session, and keeps focus on it after opening", async () => {
+      const page = openViewer({ docs: [plan("mm_one"), plan("mm_two")] });
+      await page.settle();
+      expect(titleLink(page, "mm_two").getAttribute("href")).toBe("#mm_two");
+      expect(titleLink(page, "mm_one").getAttribute("aria-current")).toBe("true");
+      expect(titleLink(page, "mm_two").hasAttribute("aria-current")).toBe(false);
+
+      titleLink(page, "mm_two").focus();
+      titleLink(page, "mm_two").click(); // what Enter does on a link
+      await page.settle();
+      expect(page.window.location.hash).toBe("#mm_two");
+      expect(page.document.querySelector("#session-name")?.textContent).toBe("Session mm_two");
+      expect(page.document.activeElement?.getAttribute("data-focus")).toBe("open:mm_two");
+      expect(titleLink(page, "mm_two").getAttribute("aria-current")).toBe("true");
+    });
+
+    it("leaves a new-tab click on a title to the browser", async () => {
+      const page = openViewer({ docs: [plan("mm_one"), plan("mm_two")] });
+      await page.settle();
+      const opened: string[] = [];
+      // happy-dom follows an unhandled link click with window.open, where a browser would open the tab.
+      Reflect.set(page.window, "open", (url: string) => opened.push(url));
+      const event = new page.window.MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true });
+      titleLink(page, "mm_two").dispatchEvent(event);
+      await page.settle();
+      expect(opened).toEqual(["http://localhost:4040/#mm_two"]);
+      expect(page.document.querySelector("#session-name")?.textContent).toBe("Session mm_one");
+    });
+
+    it("hands focus to the sessions button when a keyboard pick closes the drawer", async () => {
+      const page = openViewer({ docs: [plan("mm_one"), plan("mm_two")] });
+      await page.settle();
+      page.document.body.classList.add("sessions-open");
+      titleLink(page, "mm_two").focus();
+      titleLink(page, "mm_two").click();
+      await page.settle();
+      expect(page.document.body.classList.contains("sessions-open")).toBe(false);
+      expect(page.document.activeElement?.id).toBe("sessions-toggle");
+    });
+  });
+
+  describe("flat session lists", () => {
+
+    /** Newest first across two repositories, so grouping pulls mm_c up beside mm_a, above the newer mm_b. */
+    function twoRepos() {
+      const [a, b, c] = [plan("mm_a"), plan("mm_b"), plan("mm_c")];
+      return openViewer({ docs: [a, b, c], items: [listItem(a, inRepo("one")), listItem(b, { ...inRepo("two"), blockedTasks: 1 }), listItem(c, { ...inRepo("one"), blockedTasks: 1 })] });
+    }
+
+    it("shows every session newest first in the Recent view, says which repository each is from, and remembers the choice", async () => {
+      const page = twoRepos();
+      await page.settle();
+      expect(order(page)).toEqual(["mm_a", "mm_c", "mm_b"]);
+
+      page.click("#recent-toggle");
+      expect(order(page)).toEqual(["mm_a", "mm_b", "mm_c"]);
+      expect(page.document.querySelector(".session-group")).toBeNull();
+      expect(page.row("mm_b")?.querySelector(".session-sub")?.textContent).toContain("two");
+      expect(page.document.querySelector("#recent-toggle")?.getAttribute("aria-pressed")).toBe("true");
+      expect(page.window.localStorage.getItem("synapse.sessionsRecent")).toBe("1");
+
+      page.click("#recent-toggle");
+      expect(order(page)).toEqual(["mm_a", "mm_c", "mm_b"]);
+      expect(page.window.localStorage.getItem("synapse.sessionsRecent")).toBe("0");
+    });
+
+    it("lists text matches flat, newest first", async () => {
+      const page = twoRepos();
+      await page.settle();
+      page.type("#session-search", "session");
+      expect(order(page)).toEqual(["mm_a", "mm_b", "mm_c"]);
+      expect(page.document.querySelector(".session-group")).toBeNull();
+      page.type("#session-search", "");
+      expect(page.document.querySelectorAll(".session-group").length).toBe(2);
+    });
+
+    it("lists status matches flat, newest first", async () => {
+      const page = twoRepos();
+      await page.settle();
+      page.click('#session-status [data-status="blocked"]');
+      expect(order(page)).toEqual(["mm_b", "mm_c"]);
+      expect(page.document.querySelector(".session-group")).toBeNull();
+    });
+
+    it("says so when a flat list includes an archived session", async () => {
+      const [one, two] = [plan("mm_one"), plan("mm_two")];
+      const page = openViewer({ docs: [one, two], items: [listItem(one), listItem(two, { archivedAt: two.updatedAt })] });
+      await page.settle();
+      page.type("#session-search", "mm_two");
+      expect(page.row("mm_two")?.classList.contains("archived")).toBe(true);
+      expect(page.row("mm_two")?.querySelector(".session-sub")?.textContent).toContain("archived");
+      expect(page.row("mm_two")?.querySelector('[data-action="restore"]')).not.toBeNull();
+    });
+  });
+
+  describe("holding the list still", () => {
+    const list = (page: ReturnType<typeof openViewer>) => {
+      const el = page.document.querySelector("#session-list");
+      if (!el) throw new Error("No list");
+      return el;
+    };
+    const point = (page: ReturnType<typeof openViewer>, type: "pointerenter" | "pointerleave") => list(page).dispatchEvent(new page.window.Event(type));
+    /** An update that makes `id` the newest session, under a new title. */
+    const touch = (page: ReturnType<typeof openViewer>, doc: MindmapDocument) =>
+      page.emit({ type: "mindmap_updated", id: doc.id, item: listItem(doc, { title: "Touched", updatedAt: new Date(Date.now() + 60_000).toISOString() }) });
+
+    it("keeps rows where they are while the pointer is over the list, then applies the order", async () => {
+      const [one, two, three] = [plan("mm_one"), plan("mm_two"), plan("mm_three")];
+      const page = openViewer({ docs: [one, two, three] });
+      await page.settle();
+      point(page, "pointerenter");
+      touch(page, three);
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two", "mm_three"]);
+      expect(page.row("mm_three")?.textContent).toContain("Touched");
+
+      point(page, "pointerleave");
+      expect(order(page)).toEqual(["mm_three", "mm_one", "mm_two"]);
+    });
+
+    it("keeps groups in place too", async () => {
+      const [one, two] = [plan("mm_one"), plan("mm_two")];
+      const page = openViewer({ docs: [one, two], items: [listItem(one, inRepo("a")), listItem(two, inRepo("b"))] });
+      await page.settle();
+      point(page, "pointerenter");
+      page.emit({ type: "mindmap_updated", id: "mm_two", item: listItem(two, { ...inRepo("b"), updatedAt: new Date(Date.now() + 60_000).toISOString() }) });
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two"]);
+      point(page, "pointerleave");
+      expect(order(page)).toEqual(["mm_two", "mm_one"]);
+    });
+
+    it("holds the Recent view and adds a new session at the end", async () => {
+      const [one, two] = [plan("mm_one"), plan("mm_two")];
+      const page = openViewer({ docs: [one, two] });
+      await page.settle();
+      page.click("#recent-toggle");
+      point(page, "pointerenter");
+      const added = plan("mm_new");
+      page.server.docs.push(added);
+      touch(page, two);
+      page.emit({ type: "mindmap_updated", id: "mm_new", item: listItem(added, { updatedAt: new Date(Date.now() + 120_000).toISOString() }) });
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two", "mm_new"]);
+
+      point(page, "pointerleave");
+      expect(order(page)).toEqual(["mm_new", "mm_two", "mm_one"]);
+    });
+
+    it("keeps holding after the sessions are read again, as they are after archiving a row", async () => {
+      const [one, two, three] = [plan("mm_one"), plan("mm_two"), plan("mm_three")];
+      const page = openViewer({ docs: [one, two, three] });
+      await page.settle();
+      point(page, "pointerenter");
+      page.server.items = [listItem(three), listItem(one), listItem(two)];
+      page.click("#refresh-btn");
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two", "mm_three"]);
+    });
+
+    it("holds while a row has keyboard focus, through redraws, until focus leaves the list", async () => {
+      const [one, two, three] = [plan("mm_one"), plan("mm_two"), plan("mm_three")];
+      const page = openViewer({ docs: [one, two, three] });
+      await page.settle();
+      const link = page.row("mm_two")?.querySelector("a");
+      if (!(link instanceof page.window.HTMLElement)) throw new Error("No link");
+      link.focus();
+      touch(page, three);
+      await page.settle();
+      touch(page, three);
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two", "mm_three"]);
+
+      const search = page.document.querySelector("#session-search");
+      if (!(search instanceof page.window.HTMLElement)) throw new Error("No search box");
+      search.focus();
+      await page.settle();
+      expect(order(page)).toEqual(["mm_three", "mm_one", "mm_two"]);
+    });
+  });
+
+  describe("the Activity tab", () => {
+    const entries = (page: ReturnType<typeof openViewer>) => [...page.document.querySelectorAll(".activity-item")].map((el) => el.textContent ?? "");
+    const toggle = "[data-toggle-file-events]";
+
+    function busyDoc() {
+      const doc = plan("mm_one");
+      const timestamp = now();
+      doc.activityLog = [
+        { timestamp, message: "File modify: src/a.ts", nodeId: NodeId.parse("mm_one_first"), file: "src/a.ts" },
+        { timestamp, message: 'Task "First" marked completed', nodeId: NodeId.parse("mm_one_first") },
+        { timestamp, message: "[MODIFY] src/b.ts — logged by the agent", nodeId: NodeId.parse("mm_one_second"), file: "src/b.ts" },
+        { timestamp, message: "File delete: src/c.ts", nodeId: NodeId.parse("mm_one_second"), file: "src/c.ts" },
+      ];
+      return doc;
+    }
+
+    it("shows task history first, and what the agent logged, with file events a click away", async () => {
+      const page = openViewer({ docs: [busyDoc()] });
+      await page.settle();
+      page.click('.sidebar-tab[data-tab="activity"]');
+      expect(entries(page).some((e) => e.includes("File "))).toBe(false);
+      expect(entries(page).some((e) => e.includes("marked completed"))).toBe(true);
+      expect(entries(page).some((e) => e.includes("logged by the agent"))).toBe(true);
+      expect(page.document.querySelector(toggle)?.textContent).toContain("(2)");
+      expect(page.document.querySelector(toggle)?.getAttribute("aria-expanded")).toBe("false");
+
+      page.click(toggle);
+      expect(entries(page).length).toBe(4);
+      expect(page.document.querySelector(toggle)?.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("keeps file events showing while stepping through them", async () => {
+      const page = openViewer({ docs: [busyDoc()] });
+      await page.settle();
+      page.click('.sidebar-tab[data-tab="activity"]');
+      page.click(toggle);
+      page.click(".activity-item");
+      expect(page.document.querySelector(".node-group.selected")?.getAttribute("data-node-id")).toBe("mm_one_first");
+      expect(entries(page).length).toBe(4);
+    });
+
+    it("explains a log that holds only file events", async () => {
+      const doc = plan("mm_one");
+      doc.activityLog = [{ timestamp: now(), message: "File create: src/a.ts", file: "src/a.ts" }];
+      const page = openViewer({ docs: [doc] });
+      await page.settle();
+      page.click('.sidebar-tab[data-tab="activity"]');
+      expect(entries(page)).toEqual([]);
+      expect(page.document.querySelector("#sidebar-content")?.textContent).toContain("Only auto-detected file changes so far");
+    });
+
+    it("has no toggle without file events", async () => {
+      const page = openViewer({ docs: [plan("mm_one")] });
+      await page.settle();
+      page.click('.sidebar-tab[data-tab="activity"]');
+      expect(page.document.querySelector(toggle)).toBeNull();
+    });
   });
 
   it("clears a file highlight when another card is picked", async () => {

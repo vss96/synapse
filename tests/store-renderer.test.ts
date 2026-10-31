@@ -1,4 +1,4 @@
-import { describe, it, beforeAll, afterAll, spyOn } from "bun:test";
+import { describe, it, beforeAll, afterAll, setSystemTime, spyOn } from "bun:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readdir, rm, unlink, utimes, writeFile } from "node:fs/promises";
@@ -179,6 +179,54 @@ describe("store & renderer", () => {
     await store.remove(doc.id);
   });
 
+  it("lets one caller at a time take over a stale lock", async () => {
+    const doc = emptyDoc("mm_race", "Race");
+    await store.save(doc);
+    const lock = path.join(tmpDir, "mm_race.json.lock");
+    const old = new Date(Date.now() - 60_000);
+    for (let round = 0; round < 5; round++) {
+      await writeFile(lock, "");
+      await utimes(lock, old, old);
+      // Each update reads the file and writes it back, so two inside the lock at once lose one of them.
+      await Promise.all(Array.from({ length: 20 }, () => store.update(doc.id, (d) => store.recordActivity(d, "Update"))));
+    }
+    assert.equal((await store.load(doc.id))?.activityLog.length, 100);
+    await store.remove(doc.id);
+  });
+
+  it("isn't stopped by a process that died while taking over a lock", async () => {
+    const doc = emptyDoc("mm_guard", "Guard");
+    await store.save(doc);
+    const lock = path.join(tmpDir, "mm_guard.json.lock");
+    await writeFile(lock, "");
+    await writeFile(`${lock}.break`, "");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+    await utimes(`${lock}.break`, old, old);
+    await store.update(doc.id, (d) => void (d.title = "Changed"));
+    assert.equal((await store.load(doc.id))?.title, "Changed");
+    assert.ok(!(await readdir(tmpDir)).some((f) => f.endsWith(".break")), "nothing is left behind");
+    await store.remove(doc.id);
+  });
+
+  it("gives up on a lock its owner won't let go of, and says who holds it", async () => {
+    const doc = emptyDoc("mm_stuck", "Stuck");
+    await store.save(doc);
+    const lock = path.join(tmpDir, "mm_stuck.json.lock");
+    await writeFile(lock, String(process.pid));
+    const update = store.update(doc.id, (d) => void (d.title = "Changed"));
+    await new Promise((r) => setTimeout(r, 50));
+    setSystemTime(new Date(Date.now() + 60_000));
+    try {
+      await assert.rejects(update, new RegExp(`waiting for process ${process.pid} to finish with mm_stuck\\.json.*delete ${lock}`));
+    } finally {
+      setSystemTime();
+      await unlink(lock);
+    }
+    assert.equal((await store.load(doc.id))?.title, "Stuck");
+    await store.remove(doc.id);
+  });
+
   it("takes over a fresh lock whose owner has exited", async () => {
     const doc = emptyDoc("mm_gone", "Gone");
     const { pid } = spawnSync("git", ["--version"]);
@@ -241,6 +289,43 @@ describe("store & renderer", () => {
       errors.mockRestore();
     }
     await store.remove(doc.id);
+  });
+
+  describe("a full activity log", () => {
+    const fileEvent = (doc: MindmapDocument, i: number) => store.recordActivity(doc, `File modify: src/file-${i}.ts`, { nodeId: ROOT_ID, file: `src/file-${i}.ts` });
+    const messages = (doc: MindmapDocument) => doc.activityLog.map((e) => e.message);
+
+    it("keeps task history however many file events arrive", () => {
+      const doc = emptyDoc("mm_busy_log");
+      for (let i = 1; i <= 5; i++) store.recordActivity(doc, `Task ${i} marked completed`);
+      for (let i = 1; i <= 300; i++) fileEvent(doc, i);
+      assert.equal(doc.activityLog.length, 100);
+      assert.equal(messages(doc).filter((m) => m.startsWith("Task ")).length, 5);
+      assert.equal(messages(doc)[0], "File modify: src/file-300.ts");
+    });
+
+    it("gives up the oldest file event, not the oldest entry, for something newer", () => {
+      const doc = emptyDoc("mm_mixed_log");
+      store.recordActivity(doc, "Created mindmap");
+      for (let i = 1; i <= 99; i++) fileEvent(doc, i);
+      store.recordActivity(doc, "Task marked completed");
+      assert.equal(doc.activityLog.length, 100);
+      assert.equal(messages(doc)[0], "Task marked completed");
+      assert.equal(messages(doc).at(-1), "Created mindmap");
+      assert.ok(!messages(doc).includes("File modify: src/file-1.ts"));
+      assert.ok(messages(doc).includes("File modify: src/file-2.ts"));
+    });
+
+    it("has no room for a file event once it holds nothing else, and drops its oldest entry for anything more", () => {
+      const doc = emptyDoc("mm_task_log");
+      for (let i = 1; i <= 100; i++) store.recordActivity(doc, `Event ${i}`);
+      fileEvent(doc, 1);
+      assert.equal(doc.activityLog.length, 100);
+      assert.equal(messages(doc)[0], "Event 100");
+      store.recordActivity(doc, "Event 101");
+      assert.equal(messages(doc)[0], "Event 101");
+      assert.equal(messages(doc).at(-1), "Event 2");
+    });
   });
 
   it("caps activityLog at 100 entries with newest first", () => {

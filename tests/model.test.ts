@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { aggregateFiles, isAutoDetected } from "../src/model/file-stats.js";
+import { aggregateFiles, isAutoDetected, isFileEvent } from "../src/model/file-stats.js";
 import { combineTouches, fileTouchTarget, isFinished, mergeChanges, upsertFileTouch, upsertFileTouches } from "../src/model/file-touch.js";
 import { isTask } from "../src/model/kinds.js";
 import { reparent, retype } from "../src/model/node.js";
@@ -171,6 +171,14 @@ describe("model: file touches", () => {
     expect(isAutoDetected({ ...touch("modify"), source: "watcher" })).toBe(true);
     expect(isAutoDetected({ ...touch("modify"), summary: "Auto-detected a race by hand" })).toBe(false);
     expect(isAutoDetected(touch("modify"))).toBe(false);
+  });
+
+  it("tells the watcher's activity entries from everything else", () => {
+    const entry = (message: string) => ({ timestamp: now(), message });
+    for (const action of ["create", "modify", "delete"]) expect(isFileEvent(entry(`File ${action}: src/a.ts`))).toBe(true);
+    expect(isFileEvent(entry("[MODIFY] src/a.ts (on \"Task\")"))).toBe(false);
+    expect(isFileEvent(entry("File modified by hand"))).toBe(false);
+    expect(isFileEvent(entry('Task "File create: a" marked completed'))).toBe(false);
   });
 
   it("aggregates a file across nodes, counting it as logged if any agent logged it", () => {

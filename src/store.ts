@@ -1,11 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { readdir, readFile, writeFile, mkdir, unlink, rename, open, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { errorCode } from "./errors.js";
-import { aggregateFiles } from "./model/file-stats.js";
+import { aggregateFiles, isFileEvent } from "./model/file-stats.js";
 import { isTask } from "./model/kinds.js";
-import { MindmapDocument, now, type MindmapId, type MindmapList, type MindmapListItem, type NodeId, type UnreadableMindmap } from "./model/schema.js";
+import { MindmapDocument, MindmapId, now, type MindmapList, type MindmapListItem, type NodeId, type UnreadableMindmap } from "./model/schema.js";
 
 /** Where mindmaps are stored: $SYNAPSE_DATA_DIR, or ~/.synapse/data (shared by the MCP server and the viewer). */
 export function getDataDir(): string {
@@ -21,10 +22,19 @@ export async function ensureDataDir(): Promise<string> {
 // MindmapId only admits [A-Za-z0-9_-], so the file name can't escape the data directory.
 const filePath = (id: MindmapId): string => path.join(getDataDir(), `${id}.json`);
 
-/** Append an activity entry to a mindmap document (keeps the latest 100 entries). */
+/** The most entries a mindmap's activity log holds; `MindmapDocument` refuses more. */
+const MAX_ACTIVITY = 100;
+
+/**
+ * Append an activity entry to a mindmap document. A full log gives up its oldest file event, and only
+ * if it has none its oldest entry: the watcher can write hundreds in minutes, which would push out the
+ * session's history.
+ */
 export function recordActivity(doc: MindmapDocument, message: string, extra?: { nodeId?: NodeId; file?: string }): void {
   doc.activityLog.unshift({ timestamp: now(), message, ...extra });
-  if (doc.activityLog.length > 100) doc.activityLog.length = 100;
+  if (doc.activityLog.length <= MAX_ACTIVITY) return;
+  const oldestFileEvent = doc.activityLog.map(isFileEvent).lastIndexOf(true);
+  doc.activityLog.splice(oldestFileEvent === -1 ? MAX_ACTIVITY : oldestFileEvent, 1);
 }
 
 /** A mindmap file exists but can't be loaded: it can't be opened, its JSON is damaged, or it isn't a valid mindmap. */
@@ -133,6 +143,8 @@ export async function setArchived(id: MindmapId, archived: boolean): Promise<Min
 const STALE_LOCK_MS = 5000;
 /** No live holder takes this long: its owner died and another process now has its pid. */
 const MAX_LOCK_MS = 5 * 60_000;
+/** How long to wait for a lock before giving up, well inside what MCP clients allow a tool call. */
+const LOCK_WAIT_MS = 15_000;
 
 function isRunning(pid: number): boolean {
   try {
@@ -143,6 +155,9 @@ function isRunning(pid: number): boolean {
   }
 }
 
+/** The pid in a lock file; 0 if there isn't one. */
+const lockOwner = async (lock: string): Promise<number> => Number(await readFile(lock, "utf-8").catch(() => ""));
+
 /**
  * Whether `lock` can be taken over. A big mindmap can hold its lock for several seconds and block the
  * event loop while it does, so age alone can't tell a busy holder from a dead one: the holder's pid does.
@@ -151,8 +166,31 @@ async function isStaleLock(lock: string): Promise<boolean> {
   const held = await stat(lock).catch(() => null);
   if (!held) return false;
   const age = Date.now() - held.mtimeMs;
-  const pid = Number(await readFile(lock, "utf-8").catch(() => ""));
+  const pid = await lockOwner(lock);
   return pid ? age > MAX_LOCK_MS || !isRunning(pid) : age > STALE_LOCK_MS;
+}
+
+/**
+ * Remove a stale lock. Two waiters can both find it stale, and by the time the second removes it the first
+ * may have replaced it with a live lock. So only the holder of `<lock>.break` removes one, after looking
+ * again: nobody else can touch a stale lock, so the lock it looks at is the lock it removes.
+ */
+async function breakLock(lock: string): Promise<void> {
+  const guard = `${lock}.break`;
+  try {
+    await (await open(guard, "wx")).close();
+  } catch (err) {
+    if (errorCode(err) !== "EEXIST") throw err;
+    // Another waiter is on it, unless it died in these few lines.
+    const held = await stat(guard).catch(() => null);
+    if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) await unlink(guard).catch(() => {});
+    return;
+  }
+  try {
+    if (await isStaleLock(lock)) await unlink(lock).catch(() => {});
+  } finally {
+    await unlink(guard).catch(() => {});
+  }
 }
 
 /**
@@ -162,6 +200,7 @@ async function isStaleLock(lock: string): Promise<boolean> {
 async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
   await ensureDataDir();
   const lock = `${file}.lock`;
+  const giveUpAt = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
       const handle = await open(lock, "wx");
@@ -170,8 +209,12 @@ async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
       break;
     } catch (err) {
       if (errorCode(err) !== "EEXIST") throw err;
-      if (await isStaleLock(lock)) await unlink(lock).catch(() => {});
-      else await new Promise((resolve) => setTimeout(resolve, 10));
+      if (await isStaleLock(lock)) await breakLock(lock);
+      if (Date.now() >= giveUpAt) {
+        const pid = await lockOwner(lock);
+        throw new Error(`Gave up after ${LOCK_WAIT_MS / 1000}s waiting for ${pid ? `process ${pid}` : "another process"} to finish with ${path.basename(file)}. If it's stuck, stop it or delete ${lock}.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
   try {
@@ -196,6 +239,28 @@ async function write(doc: MindmapDocument, text?: string): Promise<void> {
     await unlink(tmp).catch(() => {});
     throw err;
   }
+}
+
+/** One small file per workspace, so a claim needs no lock. Not `.json`, which would make it a mindmap to the listing and the viewer. */
+const claimFile = (workspacePath: string): string => path.join(getDataDir(), `${createHash("sha256").update(workspacePath).digest("hex").slice(0, 32)}.claim`);
+
+/**
+ * Send file changes in `workspacePath` to `id` from now on, in every process watching it. Each MCP client
+ * runs its own server, so this is what tells them which one's watcher records a change. Synchronous, so that
+ * the last tool call wins. If it fails, watchers carry on as they would with nobody claiming the workspace.
+ */
+export function claimWorkspace(workspacePath: string, id: MindmapId): void {
+  try {
+    writeFileSync(claimFile(workspacePath), id);
+  } catch (err) {
+    console.error(`[synapse] can't claim ${workspacePath}: ${err}`);
+  }
+}
+
+/** The mindmap that claimed `workspacePath` last, if any. */
+export async function workspaceClaim(workspacePath: string): Promise<MindmapId | undefined> {
+  const id = MindmapId.safeParse(await readFile(claimFile(workspacePath), "utf-8").catch(() => ""));
+  return id.success ? id.data : undefined;
 }
 
 /** Every page gets this text for every session, so it's bounded. Most maps fit well within it. */

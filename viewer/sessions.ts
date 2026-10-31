@@ -6,9 +6,9 @@ import { loadCollapsed } from "./collapse.js";
 import { fileCountText } from "./display.js";
 import { byId, errorMessage, escXml, serverJson, setHtml } from "./dom.js";
 import { ROOT } from "./layout.js";
-import { closeDrawer } from "./panels.js";
-import { STATUS_FILTERS, isFinished, isIdle, sessionsInView, visibleSessions, type SessionView } from "./session-filter.js";
-import { ARCHIVED_GROUP, groupSessions, worktreeName } from "./session-groups.js";
+import { closeDrawer, remember, remembered } from "./panels.js";
+import { STATUS_FILTERS, inOrder, isFinished, isIdle, sessionsInView, visibleSessions, type SessionView } from "./session-filter.js";
+import { ARCHIVED_GROUP, groupSessions, repoName, worktreeName } from "./session-groups.js";
 import { sessionHash, sessionIdFromHash } from "./session-link.js";
 import { nodeById, render, resetSelection, state } from "./state.js";
 import { toast } from "./toast.js";
@@ -56,6 +56,7 @@ const DELETABLE_ID = /^[A-Za-z0-9_-]+$/;
 
 const sessionList = byId("session-list");
 const archivedToggle = byId("archived-toggle");
+const recentToggle = byId("recent-toggle");
 const statusButtons = document.querySelectorAll<HTMLElement>("#session-status button");
 
 function timeAgo(iso: string) {
@@ -68,6 +69,9 @@ function timeAgo(iso: string) {
 }
 
 const COLLAPSED_GROUPS_KEY = "synapse.collapsedGroups";
+const RECENT_KEY = "synapse.sessionsRecent";
+
+state.recentSessions = remembered(RECENT_KEY) === "1";
 
 /** Group keys the user collapsed; the archived group starts collapsed. */
 const collapsedGroups = new Set<string>(
@@ -107,19 +111,25 @@ function deleteButton(id: string) {
   return `<button class="session-action danger" data-action="delete" data-focus="delete:${escXml(id)}" title="Delete this session for good">${armed ? "Confirm" : "Delete"}</button>`;
 }
 
-function sessionItemHtml(s: MindmapListItem) {
+/** Where a session ran, beside its time. A flat list has no group headings to say the rest. */
+function placeHtml(s: MindmapListItem, flat: boolean) {
+  const place = [flat ? repoName(s) : undefined, worktreeName(s), flat && s.archivedAt ? "archived" : undefined].filter(Boolean);
+  return place.length ? `<span class="session-worktree">· ${escXml(place.join(" · "))}</span>` : "";
+}
+
+function sessionItemHtml(s: MindmapListItem, flat: boolean) {
   const pct = s.totalTasks > 0 ? Math.round((s.completedTasks / s.totalTasks) * 100) : 0;
+  const open = s.id === state.currentId;
   const nowMs = Date.now();
   const live = nowMs - new Date(s.updatedAt).getTime() < LIVE_WINDOW_MS;
-  const worktree = worktreeName(s);
   const idle = isIdle(s, nowMs);
   const actions = s.archivedAt
     ? `<button class="session-action" data-action="restore" data-focus="restore:${escXml(s.id)}" title="Restore this session">Restore</button>${deleteButton(s.id)}`
     : `<button class="session-action" data-action="archive" data-focus="archive:${escXml(s.id)}" title="Archive this session">Archive</button>`;
   return `
-    <div class="session-item ${s.id === state.currentId ? "active" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
-      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<span class="session-title-text">${escXml(s.title)}</span>${stateBadge(s)}</div>
-      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}${worktree ? `<span class="session-worktree">· ${escXml(worktree)}</span>` : ""}
+    <div class="session-item ${open ? "active" : ""} ${s.archivedAt ? "archived" : ""}" data-session-id="${escXml(s.id)}" title="${escXml(s.title)}${s.workspacePath ? `\n${escXml(s.workspacePath)}` : ""}">
+      <div class="session-title">${live ? `<span class="session-live-dot" title="Updated in the last 2 minutes"></span>` : ""}<a class="session-title-text" href="${escXml(sessionHash(s.id))}" data-focus="open:${escXml(s.id)}" ${open ? `aria-current="true"` : ""}>${escXml(s.title)}</a>${stateBadge(s)}</div>
+      <div class="session-sub">${escXml(timeAgo(s.updatedAt))}${placeHtml(s, flat)}
         <span class="session-actions">${actions}</span>
       </div>
       ${s.activeTask && !s.archivedAt ? `<div class="session-task ${idle ? "idle" : ""}" ${idle ? `title="Idle: no update for ${escXml(timeAgo(s.updatedAt).replace(" ago", ""))}"` : ""}>◐ ${escXml(s.activeTask)}</div>` : ""}
@@ -217,16 +227,19 @@ function clickDelete(id: string) {
 
 const sessionView = (): SessionView => ({ query: state.sessionQuery, status: state.sessionStatus, archived: state.showArchived });
 
+/** Whether the filter box or a status is narrowing the list. */
+const narrowed = () => state.sessionQuery.trim() !== "" || state.sessionStatus !== "all";
+
 function renderSessionControls(visible: number) {
   const view = sessionView();
   const total = sessionsInView(state.sessions, { ...view, status: "all" }).length;
-  const narrowed = view.query.trim() !== "" || view.status !== "all";
-  byId("sessions-count").textContent = narrowed ? `Sessions (${visible} of ${total})` : `Sessions (${total})`;
+  byId("sessions-count").textContent = narrowed() ? `Sessions (${visible} of ${total})` : `Sessions (${total})`;
 
   const archivedCount = state.sessions.filter((s) => s.archivedAt).length;
   archivedToggle.hidden = archivedCount === 0 && !state.showArchived;
   archivedToggle.textContent = `Archived ${archivedCount}`;
   archivedToggle.setAttribute("aria-pressed", String(state.showArchived));
+  recentToggle.setAttribute("aria-pressed", String(state.recentSessions));
   statusButtons.forEach((el) => {
     const on = el.dataset.status === state.sessionStatus;
     el.classList.toggle("active", on);
@@ -234,9 +247,29 @@ function renderSessionControls(visible: number) {
   });
 }
 
+/** The order the rows had when someone started aiming at one, kept until they stop. */
+let heldOrder: string[] | null = null;
+let pointerOverList = false;
+
+/**
+ * Whether someone is aiming at a row, which a re-sort could swap for another under them. A mouse click
+ * can leave focus on a row for as long as the session stays open, so only keyboard focus counts.
+ */
+const aiming = () => pointerOverList || sessionList.querySelector(":focus-visible") !== null;
+
+function holdOrder() {
+  heldOrder ??= state.sessions.map((s) => s.id);
+}
+
+function releaseOrder() {
+  if (!heldOrder || aiming()) return;
+  heldOrder = null;
+  renderSessions();
+}
+
 export function renderSessions(): void {
   const list = sessionList;
-  const visible = visibleSessions(state.sessions, sessionView());
+  const visible = visibleSessions(heldOrder ? inOrder(state.sessions, heldOrder) : state.sessions, sessionView());
   renderSessionControls(visible.length);
 
   const unreadable = byId("sessions-unreadable");
@@ -254,16 +287,21 @@ export function renderSessions(): void {
     return;
   }
 
-  // While narrowing the list, show every match rather than hiding some in collapsed groups.
-  const expanded = state.sessionQuery.trim() !== "" || state.sessionStatus !== "all" || state.showArchived;
+  // Filter results are for picking one session, so groups would only hide the most recent ones.
+  if (state.recentSessions || narrowed()) {
+    setHtml(list, visible.map((s) => sessionItemHtml(s, true)).join(""));
+    return;
+  }
+
   setHtml(
     list,
     groupSessions(visible)
       .map((g) => {
-        const collapsed = !expanded && collapsedGroups.has(g.key);
+        // The archive starts collapsed, but it's all that's listed once someone asks for it.
+        const collapsed = !state.showArchived && collapsedGroups.has(g.key);
         const finished = g.key === ARCHIVED_GROUP ? 0 : g.items.filter(isFinished).length;
         return `
-        <div class="session-group ${g.key === ARCHIVED_GROUP ? "archived" : ""}">
+        <div class="session-group">
           <div class="session-group-row">
             <button class="session-group-head" data-group="${escXml(g.key)}" data-focus="group:${escXml(g.key)}" title="${escXml(g.hint)}" aria-expanded="${!collapsed}">
               <span class="session-group-chevron">${collapsed ? "▸" : "▾"}</span>
@@ -272,7 +310,7 @@ export function renderSessions(): void {
             </button>
             ${finished ? `<button class="session-group-action" data-archive-finished="${escXml(g.key)}" data-focus="finished:${escXml(g.key)}" title="Archive the finished sessions in this group">Archive ${finished} done</button>` : ""}
           </div>
-          ${collapsed ? "" : g.items.map(sessionItemHtml).join("")}
+          ${collapsed ? "" : g.items.map((s) => sessionItemHtml(s, false)).join("")}
         </div>`;
       })
       .join(""),
@@ -298,14 +336,43 @@ function onSessionClick(e: MouseEvent) {
     return;
   }
   const head = e.target.closest<HTMLElement>(".session-group-head");
-  if (head) toggleGroup(head.dataset.group ?? "");
-  else if (e.target.closest(".session-item")) void selectSession(id);
+  if (head) {
+    toggleGroup(head.dataset.group ?? "");
+  } else if (e.target.closest(".session-item")) {
+    // Opening a title in a new tab or window is the browser's job.
+    if (e.target.closest("a") && (e.metaKey || e.ctrlKey || e.shiftKey)) return;
+    e.preventDefault();
+    void selectSession(id);
+  }
 }
 
 byId("sessions").addEventListener("click", onSessionClick);
 
+sessionList.addEventListener("pointerenter", () => {
+  pointerOverList = true;
+  holdOrder();
+});
+
+sessionList.addEventListener("pointerleave", () => {
+  pointerOverList = false;
+  releaseOrder();
+});
+
+sessionList.addEventListener("focusin", () => {
+  if (aiming()) holdOrder();
+});
+
+// Not straight away: Tab moves focus from row to row, and a redraw takes it away and gives it back.
+sessionList.addEventListener("focusout", () => setTimeout(releaseOrder));
+
 archivedToggle.addEventListener("click", () => {
   state.showArchived = !state.showArchived;
+  renderSessions();
+});
+
+recentToggle.addEventListener("click", () => {
+  state.recentSessions = !state.recentSessions;
+  remember(RECENT_KEY, state.recentSessions);
   renderSessions();
 });
 

@@ -198,7 +198,7 @@ export const MindmapDocument = z
     archivedAt: Timestamp.optional(),
     nodes: z.record(NodeId, MindmapNode),
     links: z.array(MindmapLink),
-    /** Newest first, capped at 100 entries. */
+    /** Newest first, capped at 100 entries (see `recordActivity`). */
     activityLog: z.array(ActivityEntry).max(100),
   })
   .superRefine(checkTree);

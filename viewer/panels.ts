@@ -7,19 +7,19 @@ const SESSIONS_KEY = "synapse.sessionsCollapsed";
 const SIDEBAR_KEY = "synapse.sidebarCollapsed";
 const LEGEND_KEY = "synapse.legendClosed";
 
-function remembered(key: string): string | null {
+export function remembered(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
-    return null; // storage blocked: every panel starts in its default state
+    return null; // storage blocked: everything starts in its default state
   }
 }
 
-function remember(key: string, on: boolean): void {
+export function remember(key: string, on: boolean): void {
   try {
     localStorage.setItem(key, on ? "1" : "0");
   } catch {
-    // Storage blocked or full: the panel still toggles, it just isn't remembered.
+    // Storage blocked or full: it still toggles, it just isn't remembered.
   }
 }
 
@@ -35,6 +35,8 @@ function syncSessionsToggle() {
 }
 
 export function closeDrawer(): void {
+  // Its rows are about to disappear: don't drop keyboard focus at the top of the page.
+  if (document.body.classList.contains("sessions-open") && byId("sessions").contains(document.activeElement)) sessionsToggle.focus();
   document.body.classList.remove("sessions-open");
   syncSessionsToggle();
 }
