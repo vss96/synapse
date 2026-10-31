@@ -179,6 +179,36 @@ describe("store & renderer", () => {
     await store.remove(doc.id);
   });
 
+  it("lets one caller at a time take over a stale lock", async () => {
+    const doc = emptyDoc("mm_race", "Race");
+    await store.save(doc);
+    const lock = path.join(tmpDir, "mm_race.json.lock");
+    const old = new Date(Date.now() - 60_000);
+    for (let round = 0; round < 5; round++) {
+      await writeFile(lock, "");
+      await utimes(lock, old, old);
+      // Each update reads the file and writes it back, so two inside the lock at once lose one of them.
+      await Promise.all(Array.from({ length: 20 }, () => store.update(doc.id, (d) => store.recordActivity(d, "Update"))));
+    }
+    assert.equal((await store.load(doc.id))?.activityLog.length, 100);
+    await store.remove(doc.id);
+  });
+
+  it("isn't stopped by a process that died while taking over a lock", async () => {
+    const doc = emptyDoc("mm_guard", "Guard");
+    await store.save(doc);
+    const lock = path.join(tmpDir, "mm_guard.json.lock");
+    await writeFile(lock, "");
+    await writeFile(`${lock}.break`, "");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+    await utimes(`${lock}.break`, old, old);
+    await store.update(doc.id, (d) => void (d.title = "Changed"));
+    assert.equal((await store.load(doc.id))?.title, "Changed");
+    assert.ok(!(await readdir(tmpDir)).some((f) => f.endsWith(".break")), "nothing is left behind");
+    await store.remove(doc.id);
+  });
+
   it("takes over a fresh lock whose owner has exited", async () => {
     const doc = emptyDoc("mm_gone", "Gone");
     const { pid } = spawnSync("git", ["--version"]);

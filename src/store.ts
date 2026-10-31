@@ -165,6 +165,29 @@ async function isStaleLock(lock: string): Promise<boolean> {
 }
 
 /**
+ * Remove a stale lock. Two waiters can both find it stale, and by the time the second removes it the first
+ * may have replaced it with a live lock. So only the holder of `<lock>.break` removes one, after looking
+ * again: nobody else can touch a stale lock, so the lock it looks at is the lock it removes.
+ */
+async function breakLock(lock: string): Promise<void> {
+  const guard = `${lock}.break`;
+  try {
+    await (await open(guard, "wx")).close();
+  } catch (err) {
+    if (errorCode(err) !== "EEXIST") throw err;
+    // Another waiter is on it, unless it died in these few lines.
+    const held = await stat(guard).catch(() => null);
+    if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) await unlink(guard).catch(() => {});
+    return;
+  }
+  try {
+    if (await isStaleLock(lock)) await unlink(lock).catch(() => {});
+  } finally {
+    await unlink(guard).catch(() => {});
+  }
+}
+
+/**
  * Run `fn` while holding `<file>.lock`, which holds the owner's pid. The MCP server and the viewer are
  * separate processes, so the lock is a file created with O_EXCL rather than anything in memory.
  */
@@ -179,8 +202,8 @@ async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
       break;
     } catch (err) {
       if (errorCode(err) !== "EEXIST") throw err;
-      if (await isStaleLock(lock)) await unlink(lock).catch(() => {});
-      else await new Promise((resolve) => setTimeout(resolve, 10));
+      if (await isStaleLock(lock)) await breakLock(lock);
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
   try {
