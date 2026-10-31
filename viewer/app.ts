@@ -4,14 +4,17 @@ import { isTask, CHANGE_KINDS as KIND_ORDER } from "../src/model/kinds.js";
 import { aggregateFiles } from "../src/model/file-stats.js";
 import type { MindmapDocument } from "../src/model/schema.js";
 import { setViewMode } from "./canvas.js";
+import { saveCollapsed } from "./collapse.js";
 import { CHANGE_KINDS, fileCountText, toneClass } from "./display.js";
 import { byId, errorMessage, serverJson } from "./dom.js";
 import { updateMapSearchCount } from "./find.js";
-import { VIEW_MODES } from "./layout.js";
-import { applyToSessions, fetchMindmapById, init, leaveDeletedSession, loadMindmap, refreshSessions, renderSessions, selectSession, type ViewerEvent } from "./sessions.js";
+import { VIEW_MODES, finishedBranches } from "./layout.js";
+import { isMindmapDocument } from "./local-file.js";
+import { applyToSessions, fetchMindmapById, init, leaveDeletedSession, loadMindmap, openLocalFile, refreshSessions, renderSessions, selectSession, type ViewerEvent } from "./sessions.js";
 import { renderSidebar } from "./sidebar.js";
-import { onRender, state } from "./state.js";
+import { onRender, render, state } from "./state.js";
 import { renderMap } from "./svg-render.js";
+import { toast } from "./toast.js";
 
 interface SyncGitResponse {
   synced?: number;
@@ -27,6 +30,9 @@ function updateSessionName(doc: MindmapDocument | null) {
   name.textContent = doc?.title ?? "";
   name.title = doc?.title ?? "";
   document.title = doc ? `${doc.title} – Synapse` : APP_TITLE;
+  const badge = byId("local-badge");
+  badge.hidden = !state.localFile;
+  badge.title = state.localFile ? `${state.localFile}, opened from disk. It isn't live and isn't in the session list.` : "";
 }
 
 function updateHeaderProgress(doc: MindmapDocument | null) {
@@ -55,8 +61,31 @@ function updateHeaderProgress(doc: MindmapDocument | null) {
   filesTabBtn.title = `${changed.length - changedAuto} logged by an agent, ${changedAuto} auto-detected`;
 }
 
+const syncGitBtn = byId("sync-git-btn", HTMLButtonElement);
+const legend = byId("legend");
+const foldBtn = byId("fold-btn");
+
+function updateFoldButton(doc: MindmapDocument | null) {
+  const anyFolded = state.collapsed.size > 0;
+  foldBtn.textContent = anyFolded ? "Unfold" : "Fold done";
+  foldBtn.title = anyFolded ? "Unfold every branch" : "Fold the branches whose tasks are all completed";
+  foldBtn.toggleAttribute("disabled", !doc || (!anyFolded && finishedBranches(doc).length === 0));
+}
+
+foldBtn.onclick = () => {
+  const doc = state.currentDoc;
+  if (!doc) return;
+  state.collapsed = new Set(state.collapsed.size > 0 ? [] : finishedBranches(doc));
+  saveCollapsed();
+  render();
+};
+
 onRender(() => {
   const doc = state.currentDoc;
+  document.body.classList.toggle("no-session", !doc);
+  syncGitBtn.disabled = !state.currentId;
+  legend.dataset.view = state.viewMode;
+  updateFoldButton(doc);
   updateSessionName(doc);
   updateHeaderProgress(doc);
   renderSidebar(doc);
@@ -80,11 +109,8 @@ byId("refresh-btn").onclick = async () => {
   await fetchMindmapById(state.currentId);
 };
 
-byId("sync-git-btn").onclick = async () => {
-  if (!state.currentId) {
-    alert("Select or create a mindmap first.");
-    return;
-  }
+syncGitBtn.onclick = async () => {
+  syncGitBtn.disabled = true;
   try {
     const res = await fetch("/api/sync-git", {
       method: "POST",
@@ -94,9 +120,12 @@ byId("sync-git-btn").onclick = async () => {
     const data = serverJson<SyncGitResponse>(await res.text());
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
     if (data.mindmap) loadMindmap(data.mindmap);
+    const synced = data.synced ?? 0;
+    toast(synced > 0 ? `Synced ${synced} changed file${synced === 1 ? "" : "s"} from git` : "Working tree clean (0 uncommitted changes)");
   } catch (err) {
-    alert("Git sync failed: " + errorMessage(err));
+    toast(`Git sync failed: ${errorMessage(err)}`, { error: true });
   }
+  syncGitBtn.disabled = !state.currentId;
 };
 
 // File upload
@@ -107,14 +136,12 @@ byId("upload-btn").onclick = () => {
 fileUpload.onchange = async () => {
   const file = fileUpload.files?.[0];
   if (!file) return;
-  const text = await file.text();
   try {
-    // Not validated (that would bundle zod): rendering tolerates unknown change kinds (kindOf), and
-    // this catch reports files it can't render.
-    loadMindmap(JSON.parse(text) as MindmapDocument);
-    renderSessions();
+    const parsed: unknown = JSON.parse(await file.text());
+    if (isMindmapDocument(parsed)) openLocalFile(parsed, file.name);
+    else toast(`${file.name} isn't a Synapse mindmap`, { error: true });
   } catch (err) {
-    alert("Invalid JSON: " + errorMessage(err));
+    toast(`Invalid JSON: ${errorMessage(err)}`, { error: true });
   }
   fileUpload.value = "";
 };
@@ -148,7 +175,7 @@ function connectSSE() {
       if (payload.type === "mindmap_deleted" && payload.id === state.currentId) await leaveDeletedSession();
       // Only reload the canvas for the session being viewed; a file that can't be read isn't opened.
       if (payload.type !== "mindmap_updated") return;
-      if (!state.currentId) await selectSession(payload.id, { replace: true });
+      if (!state.currentId && !state.localFile) await selectSession(payload.id, { replace: true });
       else if (payload.id === state.currentId) await fetchMindmapById(state.currentId);
     } catch {
       // ignore malformed event

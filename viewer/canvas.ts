@@ -7,6 +7,7 @@ import {
   centerCamera,
   fitCamera,
   fitScale,
+  pathCamera,
   revealCamera,
   wheelZoomFactor,
   zoomAt,
@@ -14,16 +15,18 @@ import {
   type Camera,
   type Size,
 } from "./camera.js";
+import { expandTo } from "./collapse.js";
 import { byId, query } from "./dom.js";
-import { ROOT, type ViewMode } from "./layout.js";
-import { isHighlighted, render, selectNode, state } from "./state.js";
+import { ROOT, ancestors, type ViewMode } from "./layout.js";
+import { isHighlighted, nodeById, render, selectNode, state } from "./state.js";
 
 // View Mode Switcher (Split / Plan / HLD)
 export function setViewMode(mode: ViewMode) {
   state.viewMode = mode;
-  document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((b) =>
-    b.classList.toggle("active", b.dataset.mode === state.viewMode)
-  );
+  document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mode === state.viewMode);
+    b.setAttribute("aria-pressed", String(b.dataset.mode === state.viewMode));
+  });
   requestFreshView();
   render();
 }
@@ -31,8 +34,10 @@ export function setViewMode(mode: ViewMode) {
 /** Select a node picked in the sidebar and bring it into view, switching to the split view if this view hides it. */
 export function showNode(id: string) {
   selectNode(id);
-  if (nodeBoxes.has(id) || state.viewMode === "all") render();
-  else setViewMode("all");
+  const node = state.currentDoc && nodeById(state.currentDoc, id);
+  if (state.currentDoc && node) expandTo(state.currentDoc, node);
+  render();
+  if (!nodeBoxes.has(id) && state.viewMode !== "all") setViewMode("all");
   revealNodes([id]);
 }
 
@@ -102,10 +107,14 @@ function fitView() {
   applyTransform();
 }
 
-/** Fit the whole map when it is readable that way, otherwise show the active task at full size. */
+/** Fit the whole map when it is readable that way, otherwise frame the way from the root to the active task. */
 function initialView() {
-  if (fitScale(sceneSize, viewSize()) >= READABLE_SCALE) fitView();
-  else focusActive();
+  const doc = state.currentDoc;
+  if (fitScale(sceneSize, viewSize()) >= READABLE_SCALE) return fitView();
+  const active = doc && nodeById(doc, activeNodeId(doc));
+  if (!doc || !active || active.type === "root") return focusActive();
+  camera = pathCamera([...ancestors(doc, active), active].flatMap((n) => nodeBoxes.get(n.id) ?? []), viewSize());
+  applyTransform();
 }
 
 /** Move the camera, if needed, to show these cards (the ones drawn in the current view). */
@@ -145,18 +154,22 @@ fitAboveOverlays(); // now, not only when observed: the first view is measured a
 const overlayObserver = new ResizeObserver(fitAboveOverlays);
 [viewport, bottomOverlays].forEach((el) => overlayObserver.observe(el));
 
-viewport.addEventListener("mousedown", (e) => {
-  if (e.target instanceof Element && (e.target.closest(".node-group") || e.target.closest(".controls") || e.target.closest(".map-search"))) return;
+// Pointer events, so touch and pen pan the canvas too. Capture keeps the drag going outside it.
+viewport.addEventListener("pointerdown", (e) => {
+  if (e.target instanceof Element && e.target.closest(".node-group, .flow-label, .canvas-bottom, .map-search")) return;
   panning = true;
   startX = e.clientX; startY = e.clientY;
   startTx = camera.tx; startTy = camera.ty;
+  viewport.setPointerCapture(e.pointerId);
 });
-window.addEventListener("mousemove", (e) => {
+viewport.addEventListener("pointermove", (e) => {
   if (!panning) return;
   camera = { ...camera, tx: startTx + (e.clientX - startX), ty: startTy + (e.clientY - startY) };
   applyTransform();
 });
-window.addEventListener("mouseup", () => { panning = false; });
+const stopPanning = () => { panning = false; };
+viewport.addEventListener("pointerup", stopPanning);
+viewport.addEventListener("pointercancel", stopPanning);
 
 // Zoom around the cursor, so whatever is under it stays put.
 viewport.addEventListener("wheel", (e) => {

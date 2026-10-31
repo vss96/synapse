@@ -3,7 +3,7 @@
  * card size comes from the caller), so it is unit-tested without a DOM.
  */
 
-import { isConceptType } from "../src/model/kinds.js";
+import { isAnnotationType, isConceptType, isTask } from "../src/model/kinds.js";
 import type { MindmapDocument, MindmapNode, NodeId } from "../src/model/schema.js";
 import type { Box, Size } from "./camera.js";
 
@@ -32,9 +32,15 @@ export interface Grid extends Box {
 export interface Layout {
   positions: Map<NodeId, NodeBox>;
   grids: Grid[];
+  /** Cards drawn only to connect the view's own cards to the root. */
+  context: Set<NodeId>;
+  /** Cards that can fold, and how many cards each one is hiding (0 while it's unfolded). */
+  branches: Map<NodeId, number>;
 }
 
 const LEVEL_GAP = 105;
+/** With flow links the gaps between columns carry their label pills, which are up to this wide. */
+const LINKED_LEVEL_GAP = 170;
 const SIBLING_GAP = 34;
 /** A run of at least this many leaf siblings wraps into a grid instead of one tall column. */
 export const GRID_MIN = 7;
@@ -70,19 +76,61 @@ function isHldBranchNode(doc: MindmapDocument, node: MindmapNode) {
   return false;
 }
 
-function shouldShowNodeInView(doc: MindmapDocument, node: MindmapNode, mode: ViewMode) {
-  if (node.type === "root" || mode === "all") return true;
-  const isHld = isHldBranchNode(doc, node);
-  return mode === "hld" ? isHld : !isHld;
+/** Whether a node is plan work: tasks are, and notes and files go with whatever they annotate. */
+function isPlanNode(doc: MindmapDocument, node: MindmapNode) {
+  let cur: MindmapNode | undefined = node;
+  while (cur && isAnnotationType(cur.type)) cur = cur.parent === null ? undefined : doc.nodes[cur.parent];
+  return !cur || !isConceptType(cur.type);
 }
 
-/** The children shown in this view, plan before HLD so the mental model doesn't split the plan. */
-function visibleChildren(doc: MindmapDocument, node: MindmapNode, mode: ViewMode): MindmapNode[] {
+function belongsToView(doc: MindmapDocument, node: MindmapNode, mode: ViewMode) {
+  if (node.type === "root" || mode === "all") return true;
+  return mode === "hld" ? isHldBranchNode(doc, node) : isPlanNode(doc, node);
+}
+
+/**
+ * What a view draws: the nodes that belong to it, plus the ancestors that connect them to the root. So
+ * a decision recorded under a task shows in the HLD view, and a task nested in a component in the plan.
+ */
+function nodesInView(doc: MindmapDocument, mode: ViewMode): { drawn: Set<NodeId>; context: Set<NodeId> } {
+  const own = Object.values(doc.nodes).filter((n) => belongsToView(doc, n, mode));
+  const drawn = new Set(own.map((n) => n.id));
+  const context = new Set<NodeId>();
+  for (const node of own) {
+    for (const parent of ancestors(doc, node)) {
+      if (!drawn.has(parent.id)) context.add(parent.id);
+    }
+  }
+  for (const id of context) drawn.add(id);
+  return { drawn, context };
+}
+
+/** The children drawn under a node, plan before HLD so the mental model doesn't split the plan. */
+function drawnChildren(doc: MindmapDocument, node: MindmapNode, drawn: ReadonlySet<NodeId>): MindmapNode[] {
   const shown = node.children.flatMap((cid) => {
     const child = doc.nodes[cid];
-    return child && shouldShowNodeInView(doc, child, mode) ? [child] : [];
+    return child && drawn.has(cid) ? [child] : [];
   });
   return [...shown.filter((c) => !isHldBranchNode(doc, c)), ...shown.filter((c) => isHldBranchNode(doc, c))];
+}
+
+/** The topmost branches with nothing left to do: they have tasks, all completed. Node ids, for folding them away. */
+export function finishedBranches(doc: MindmapDocument): NodeId[] {
+  const finished: NodeId[] = [];
+  const visit = (node: MindmapNode) => {
+    const tasks = subtree(doc, node).filter(isTask);
+    if (node.type !== "root" && node.children.length > 0 && tasks.length > 0 && tasks.every((t) => t.status === "completed")) {
+      finished.push(node.id);
+      return;
+    }
+    for (const id of node.children) {
+      const child = doc.nodes[id];
+      if (child) visit(child);
+    }
+  };
+  const root = doc.nodes[ROOT];
+  if (root) visit(root);
+  return finished;
 }
 
 type Block =
@@ -103,17 +151,29 @@ function gridBlock(members: MindmapNode[], sizes: Map<NodeId, Size>): Block {
   return { kind: "grid", members, cols, colW, rowH, w, h };
 }
 
-export function layoutTree(doc: MindmapDocument, mode: ViewMode, sizeOf: (node: MindmapNode) => Size): Layout | null {
+export function layoutTree(
+  doc: MindmapDocument,
+  mode: ViewMode,
+  sizeOf: (node: MindmapNode) => Size,
+  collapsed: ReadonlySet<string> = new Set(),
+): Layout | null {
   const root = doc.nodes[ROOT];
   if (!root) return null;
 
+  const { drawn, context } = nodesInView(doc, mode);
+  const branches = new Map<NodeId, number>();
   const sizes = new Map<NodeId, Size>();
   const measured = new Map<NodeId, { size: Size; subtreeH: number; blocks: Block[] }>();
 
   function measure(node: MindmapNode): number {
     const size = sizeOf(node);
     sizes.set(node.id, size);
-    const children = visibleChildren(doc, node, mode);
+    const inView = drawnChildren(doc, node, drawn);
+    const folded = collapsed.has(node.id) && node.type !== "root";
+    const children = folded ? [] : inView;
+    if (inView.length > 0 && node.type !== "root") {
+      branches.set(node.id, folded ? subtree(doc, node).filter((n) => n.id !== node.id && drawn.has(n.id)).length : 0);
+    }
     const subtreeHs = new Map(children.map((child) => [child.id, measure(child)]));
     const isLeaf = (child: MindmapNode) => measured.get(child.id)?.blocks.length === 0;
 
@@ -141,6 +201,7 @@ export function layoutTree(doc: MindmapDocument, mode: ViewMode, sizeOf: (node: 
 
   const rootH = measure(root);
 
+  const levelGap = doc.links.length > 0 ? LINKED_LEVEL_GAP : LEVEL_GAP;
   const positions = new Map<NodeId, NodeBox>();
   const grids: Grid[] = [];
   function assign(node: MindmapNode, x: number, centerY: number, depth: number) {
@@ -150,7 +211,7 @@ export function layoutTree(doc: MindmapDocument, mode: ViewMode, sizeOf: (node: 
     positions.set(node.id, { x, y: centerY, w: size.w, h: size.h, depth });
     if (blocks.length === 0) return;
 
-    const childX = x + size.w + LEVEL_GAP;
+    const childX = x + size.w + levelGap;
     const totalH = blocks.reduce((sum, b) => sum + b.h, 0) + SIBLING_GAP * (blocks.length - 1);
     let cursorY = centerY - totalH / 2;
     for (const block of blocks) {
@@ -173,5 +234,5 @@ export function layoutTree(doc: MindmapDocument, mode: ViewMode, sizeOf: (node: 
   }
 
   assign(root, 60, Math.max(300, rootH / 2 + 40), 0);
-  return { positions, grids };
+  return { positions, grids, context, branches };
 }

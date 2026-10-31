@@ -322,6 +322,7 @@ content.addEventListener("input", (e) => {
 export function updateTabUI() {
   document.querySelectorAll<HTMLElement>(".sidebar-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.tab === state.activeTab);
+    btn.setAttribute("aria-selected", String(btn.dataset.tab === state.activeTab));
   });
 }
 

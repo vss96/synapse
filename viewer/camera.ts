@@ -76,6 +76,39 @@ export interface Box {
   h: number;
 }
 
+/** The last card of a path stays this far inside the viewport. Less than a margin: moving it further would push the rest of the path out. */
+const PATH_END_MARGIN = 12;
+
+/**
+ * The camera that opens on a path of cards, ending at the one that matters most: as much of the path
+ * as fits at a readable scale, with its last card always in view. So the first view shows where a
+ * session started and what it's doing now, whenever both fit.
+ */
+export function pathCamera(path: readonly Box[], view: Size, margin = 40): Camera {
+  const target = path[path.length - 1];
+  if (!target) return { scale: 1, tx: 0, ty: 0 };
+  const x = Math.min(...path.map((b) => b.x));
+  const y = Math.min(...path.map((b) => b.y));
+  const w = Math.max(...path.map((b) => b.x + b.w)) - x;
+  const h = Math.max(...path.map((b) => b.y + b.h)) - y;
+  const fits = Math.min(1, (view.w - 2 * margin) / w, (view.h - 2 * margin) / h);
+  const scale = clampScale(Math.max(READABLE_SCALE, fits));
+  const centered = centerCamera(x + w / 2, y + h / 2, view, scale);
+
+  // How far to move along one axis, from centered, to bring the card [start, end] on screen.
+  const nudge = (start: number, end: number, size: number) => {
+    if (start < PATH_END_MARGIN || end - start > size - 2 * PATH_END_MARGIN) return PATH_END_MARGIN - start;
+    return end > size - PATH_END_MARGIN ? size - PATH_END_MARGIN - end : 0;
+  };
+  const left = target.x * scale + centered.tx;
+  const top = target.y * scale + centered.ty;
+  return {
+    scale,
+    tx: centered.tx + nudge(left, left + target.w * scale, view.w),
+    ty: centered.ty + nudge(top, top + target.h * scale, view.h),
+  };
+}
+
 /**
  * The camera that shows `box` (e.g. the selected or highlighted cards) at least `margin` pixels
  * inside the viewport. It zooms out only as far as the box needs, zooms in only up to a readable

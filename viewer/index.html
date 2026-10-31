@@ -142,6 +142,18 @@
 
   .session-name:empty { display: none; }
 
+  .local-badge {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .local-badge[hidden] { display: none; }
+
   .live-pill {
     --c: var(--c-live);
     display: inline-flex;
@@ -253,6 +265,7 @@
   }
 
   button:hover { background: var(--blue-hover); }
+  button:disabled { opacity: 0.45; cursor: default; }
   :focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
   button.secondary {
     background: var(--control);
@@ -282,6 +295,10 @@
   }
 
   body.sessions-collapsed #sessions { display: none; }
+  body.sidebar-collapsed #sidebar { display: none; }
+
+  /* Only the narrow layout's drawer has a backdrop. */
+  .drawer-backdrop { display: none; }
 
   .sessions-head {
     padding: 10px 12px;
@@ -527,6 +544,7 @@
     overflow: hidden;
     position: relative;
     cursor: grab;
+    touch-action: none;
     background: radial-gradient(var(--grid) 1px, transparent 1px);
     background-size: 20px 20px;
   }
@@ -576,6 +594,20 @@
     font-weight: 700;
   }
 
+  /* The root card's fill is inverted, so everything on it is too. */
+  .node-group.root .node-meta-text,
+  .node-group.root .node-status-pill,
+  .node-group.root .node-file-text,
+  .node-group.root .svg-tone {
+    fill: color-mix(in srgb, var(--panel) 80%, var(--muted));
+  }
+
+  /* Drawn only to connect a view's cards to the root. */
+  .node-group.context { opacity: 0.55; }
+  .node-group:focus { outline: none; }
+  .node-group:focus-visible .node-rect { stroke: var(--blue); stroke-width: 3; }
+  .node-group.traced .node-rect { stroke: var(--c-flow); stroke-width: 3; }
+
   /* The selection ring sits outside the card, so it shows whatever color the card is. */
   .node-select-ring {
     fill: color-mix(in srgb, var(--blue) 10%, transparent);
@@ -591,6 +623,25 @@
     stroke-width: 3 !important;
     fill: color-mix(in srgb, var(--purple) var(--tint-strong), var(--panel)) !important;
   }
+
+  .fold-pill rect {
+    fill: var(--panel);
+    stroke: var(--edge);
+    stroke-width: 1.25;
+  }
+
+  .fold-pill text {
+    fill: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+
+  .fold-pill.folded rect { stroke: var(--blue); }
+  .fold-pill.folded text { fill: var(--blue); }
+  .fold-pill:hover rect { stroke: var(--blue); fill: var(--control); }
 
   .node-title {
     fill: var(--text);
@@ -664,7 +715,10 @@
     opacity: 0.88;
   }
 
+  .flow-link.traced { stroke-width: 3; opacity: 1; }
   .flow-arrow-head { fill: var(--c-flow); }
+  .flow-label { cursor: pointer; }
+  .flow-label.traced .flow-label-bg { stroke: var(--c-flow); stroke-width: 2; }
 
   .flow-link.dashed {
     stroke-dasharray: 6 4;
@@ -1121,6 +1175,35 @@
 
   #legend-kinds { flex-wrap: wrap; }
 
+  /* Says why a view has nothing but its root card. */
+  .view-empty {
+    position: absolute;
+    top: 64px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: calc(100% - 32px);
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12.5px;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  .view-empty[hidden] { display: none; }
+
+  /* Nothing to find, fit or explain until a session is open. Hidden, not removed, so that #svg can
+     keep measuring against .canvas-bottom. */
+  body.no-session .map-search,
+  body.no-session .canvas-bottom { visibility: hidden; }
+
+  /* The legend only explains what this view can show. */
+  .legend[data-view="plan"] .legend-concept,
+  .legend[data-view="hld"] .legend-status { display: none; }
+  body.legend-closed .legend { display: none; }
+
   .empty-state {
     position: absolute;
     inset: 0;
@@ -1221,6 +1304,13 @@
       z-index: 30;
       box-shadow: 0 8px 30px var(--shadow);
     }
+    body.sessions-open .drawer-backdrop {
+      display: block;
+      position: absolute;
+      inset: 0;
+      z-index: 25;
+      background: color-mix(in srgb, #000 35%, transparent);
+    }
     #viewport { min-height: 200px; }
     #sidebar {
       width: auto;
@@ -1229,25 +1319,26 @@
       border-left: none;
       border-top: 1px solid var(--border);
     }
-    .legend { display: none; }
+    .legend { flex-basis: 100%; max-width: none; }
     .canvas-bottom { left: 10px; right: 10px; bottom: 10px; }
   }
 </style>
 </head>
 <body>
 <header>
-  <button id="sessions-toggle" class="secondary" title="Show/hide sessions">☰</button>
+  <button id="sessions-toggle" class="secondary" title="Show/hide sessions" aria-label="Show or hide sessions" aria-controls="sessions">☰</button>
   <h1>Synapse</h1>
   <span id="session-name" class="session-name"></span>
+  <span id="local-badge" class="local-badge" hidden>Local file</span>
   <span id="live-indicator" class="live-pill">
     <span class="live-dot"></span>
     <span id="live-text">Live</span>
   </span>
 
   <div class="view-switcher" id="view-switcher">
-    <button data-mode="all" class="active" title="Split View (Plan + HLD)"><span class="label-long">Split View (Plan + HLD)</span><span class="label-short">Split</span></button>
-    <button data-mode="plan" title="Plan & Tasks"><span class="label-long">Plan & Tasks</span><span class="label-short">Plan</span></button>
-    <button data-mode="hld" title="Code Mental Model (HLD)"><span class="label-long">Code Mental Model (HLD)</span><span class="label-short">HLD</span></button>
+    <button data-mode="all" class="active" aria-pressed="true" title="Split View (Plan + HLD)"><span class="label-long">Split View (Plan + HLD)</span><span class="label-short">Split</span></button>
+    <button data-mode="plan" aria-pressed="false" title="Plan & Tasks"><span class="label-long">Plan & Tasks</span><span class="label-short">Plan</span></button>
+    <button data-mode="hld" aria-pressed="false" title="Code Mental Model (HLD)"><span class="label-long">Code Mental Model (HLD)</span><span class="label-short">HLD</span></button>
   </div>
 
   <div class="progress-summary" id="progress-summary" style="display:none;">
@@ -1262,10 +1353,12 @@
     <button id="refresh-btn" class="secondary" title="Refresh">↻<span class="btn-label"> Refresh</span></button>
     <button id="upload-btn" class="secondary" title="Open a mindmap JSON file">📁<span class="btn-label"> Open</span></button>
     <input type="file" id="file-upload" accept=".json">
+    <button id="sidebar-toggle" class="secondary" title="Show/hide the side panel ( ] )" aria-label="Show or hide the side panel" aria-controls="sidebar" aria-expanded="true">◨</button>
   </div>
 </header>
 
 <div class="workspace">
+  <div id="drawer-backdrop" class="drawer-backdrop"></div>
   <aside id="sessions">
     <div class="sessions-head">
       <div class="sessions-head-row">
@@ -1288,7 +1381,8 @@
   </aside>
 
   <div id="viewport">
-    <svg id="svg"></svg>
+    <svg id="svg" role="tree" aria-label="Mindmap cards"></svg>
+    <div id="view-empty" class="view-empty" hidden></div>
     <div class="map-search" role="search">
       <input id="map-search" type="search" placeholder="Find a card, file or symbol" aria-label="Find on the map" autocomplete="off" spellcheck="false">
       <kbd title="Press / to find">/</kbd>
@@ -1299,16 +1393,16 @@
       <p>When your agent calls <code>create_mindmap</code>, <code>map_architecture</code>, or <code>log_file_touch</code>, the plan and code mental model will update here live.</p>
     </div>
     <div class="canvas-bottom">
-      <div class="legend">
-        <div class="legend-item"><span class="legend-swatch tone-planned"></span> Planned</div>
-        <div class="legend-item"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
-        <div class="legend-item"><span class="legend-swatch tone-completed"></span> Completed</div>
-        <div class="legend-item"><span class="legend-swatch tone-blocked"></span> Blocked</div>
-        <div class="legend-item"><span class="legend-swatch tone-component"></span> 📦 Component</div>
-        <div class="legend-item"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
-        <div class="legend-item"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
-        <div class="legend-item"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
-        <div class="legend-item"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
+      <div class="legend" id="legend">
+        <div class="legend-item legend-status"><span class="legend-swatch tone-planned"></span> Planned</div>
+        <div class="legend-item legend-status"><span class="legend-swatch tone-in_progress"></span> In Progress</div>
+        <div class="legend-item legend-status"><span class="legend-swatch tone-completed"></span> Completed</div>
+        <div class="legend-item legend-status"><span class="legend-swatch tone-blocked"></span> Blocked</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-component"></span> 📦 Component</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-data_flow"></span> ⇄ Data Flow</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-decision"></span> ⚖️ Decision</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-hypothesis"></span> 💡 Hypothesis</div>
+        <div class="legend-item legend-concept"><span class="legend-swatch tone-risk"></span> ⚠️ Risk</div>
         <div class="legend-item" id="legend-kinds"></div>
       </div>
       <div class="controls">
@@ -1316,17 +1410,19 @@
         <button id="zoom-fit" class="secondary" title="Show the whole map">Fit</button>
         <button id="zoom-focus" class="secondary" title="Center the task the agent is working on at full size">◎ Focus</button>
         <button id="zoom-in" class="secondary" title="Zoom in">+</button>
+        <button id="fold-btn" class="secondary">Fold done</button>
+        <button id="legend-toggle" class="secondary" title="Show/hide the legend" aria-label="Show or hide the legend" aria-controls="legend">?</button>
       </div>
     </div>
   </div>
 
   <aside id="sidebar">
-    <div class="sidebar-tabs">
-      <button class="sidebar-tab active" data-tab="inspector">Inspector</button>
-      <button class="sidebar-tab" data-tab="files" id="tab-files-btn">Changes (0)</button>
-      <button class="sidebar-tab" data-tab="activity">Activity</button>
+    <div class="sidebar-tabs" role="tablist" aria-label="Details">
+      <button class="sidebar-tab active" data-tab="inspector" role="tab" aria-selected="true" aria-controls="sidebar-content">Inspector</button>
+      <button class="sidebar-tab" data-tab="files" id="tab-files-btn" role="tab" aria-selected="false" aria-controls="sidebar-content">Changes (0)</button>
+      <button class="sidebar-tab" data-tab="activity" role="tab" aria-selected="false" aria-controls="sidebar-content">Activity</button>
     </div>
-    <div class="sidebar-content" id="sidebar-content"></div>
+    <div class="sidebar-content" id="sidebar-content" role="tabpanel"></div>
   </aside>
 </div>
 

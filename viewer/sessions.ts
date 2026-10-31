@@ -2,13 +2,15 @@
 
 import type { MindmapDocument, MindmapList, MindmapListItem } from "../src/model/schema.js";
 import { requestFreshView } from "./canvas.js";
+import { loadCollapsed } from "./collapse.js";
 import { fileCountText } from "./display.js";
 import { byId, errorMessage, escXml, serverJson, setHtml } from "./dom.js";
 import { ROOT } from "./layout.js";
+import { closeDrawer } from "./panels.js";
 import { STATUS_FILTERS, isFinished, isIdle, sessionsInView, visibleSessions, type SessionView } from "./session-filter.js";
 import { ARCHIVED_GROUP, groupSessions, worktreeName } from "./session-groups.js";
 import { sessionHash, sessionIdFromHash } from "./session-link.js";
-import { nodeById, render, resetFileList, state } from "./state.js";
+import { nodeById, render, resetFileList, selectNode, state } from "./state.js";
 import { toast } from "./toast.js";
 
 /** A change the server pushes to every open page. */
@@ -19,7 +21,10 @@ export type ViewerEvent =
   | { type: "mindmap_unreadable"; id: string; error: string };
 
 export function loadMindmap(doc: MindmapDocument) {
-  if (doc.id !== state.currentDoc?.id) requestFreshView();
+  if (doc.id !== state.currentDoc?.id) {
+    requestFreshView();
+    state.collapsed = loadCollapsed(doc.id);
+  }
   state.currentDoc = doc;
   state.currentId = doc.id;
   if (!nodeById(doc, state.selectedNodeId)) state.selectedNodeId = ROOT;
@@ -297,11 +302,12 @@ statusButtons.forEach((el) => {
 /** Switch to a session, leaving the URL as it is. */
 async function showSession(id: string) {
   state.currentId = id;
+  state.localFile = null;
   state.selectedNodeId = ROOT;
   state.highlightedFilePath = null;
   state.changeKindFilter = null;
   resetFileList();
-  document.body.classList.remove("sessions-open");
+  closeDrawer();
   renderSessions();
   document.querySelector(".session-item.active")?.scrollIntoView({ block: "nearest" });
   await fetchMindmapById(id);
@@ -360,6 +366,22 @@ export async function leaveDeletedSession() {
   else history.replaceState(null, "", sessionHash(""));
 }
 
+/**
+ * View a mindmap file from disk. It isn't one of the server's sessions, so nothing about it goes to
+ * the server: the URL names no session, and Sync Git has nothing to act on.
+ */
+export function openLocalFile(doc: MindmapDocument, fileName: string) {
+  requestFreshView();
+  state.localFile = fileName;
+  state.currentDoc = doc;
+  state.currentId = "";
+  state.collapsed = new Set();
+  selectNode(ROOT);
+  history.replaceState(null, "", location.pathname);
+  renderSessions();
+  render();
+}
+
 /** Apply a live event to the session list; the list stays newest first, like the server sends it. */
 export function applyToSessions(event: Exclude<ViewerEvent, { type: "connected" }>) {
   state.sessions = state.sessions.filter((s) => s.id !== event.id);
@@ -402,17 +424,5 @@ document.addEventListener("keydown", (e) => {
   const next = e.key === "ArrowDown" ? Math.min(visible.length - 1, idx + 1) : Math.max(0, idx - 1);
   selectSession(visible[next]);
 });
-
-// Wide screens dock the sessions list (remembered); narrow ones show it as a drawer over the canvas.
-const narrowScreen = matchMedia("(max-width: 900px)");
-if (localStorage.getItem("synapse.sessionsCollapsed") === "1") document.body.classList.add("sessions-collapsed");
-byId("sessions-toggle").onclick = () => {
-  if (narrowScreen.matches) {
-    document.body.classList.toggle("sessions-open");
-    return;
-  }
-  const collapsed = document.body.classList.toggle("sessions-collapsed");
-  localStorage.setItem("synapse.sessionsCollapsed", collapsed ? "1" : "0");
-};
 
 setInterval(renderSessions, 30000); // keep "x m ago" and live dots fresh

@@ -12,8 +12,11 @@ export const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
 export type SidebarTab = (typeof SIDEBAR_TABS)[number];
 
 export interface ViewerState {
+  /** The server session that's open; "" when none is. */
   currentId: string;
   currentDoc: MindmapDocument | null;
+  /** The name of the file on screen, when it came from disk rather than the server. */
+  localFile: string | null;
   /** Plain string: it also comes from DOM data attributes; resolve it with nodeById. */
   selectedNodeId: string;
   highlightedFilePath: string | null;
@@ -34,6 +37,8 @@ export interface ViewerState {
   showAutoFiles: boolean;
   /** How many rows of a file list are rendered. */
   fileLimit: number;
+  /** Branches folded on the canvas in this session. */
+  collapsed: Set<string>;
 }
 
 /** File lists are rendered this many rows at a time: a session can have thousands. */
@@ -42,6 +47,7 @@ export const FILE_PAGE = 50;
 export const state: ViewerState = {
   currentId: sessionIdFromHash(location.hash),
   currentDoc: null,
+  localFile: null,
   selectedNodeId: ROOT,
   highlightedFilePath: null,
   changeKindFilter: null,
@@ -56,6 +62,7 @@ export const state: ViewerState = {
   fileQuery: "",
   showAutoFiles: false,
   fileLimit: FILE_PAGE,
+  collapsed: new Set(),
 };
 
 /** Back to an unfiltered first page, for a different list of files. */
