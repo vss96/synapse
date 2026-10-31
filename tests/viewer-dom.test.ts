@@ -133,6 +133,10 @@ function plan(id: string) {
   return doc;
 }
 
+/** The sessions listed, top to bottom. */
+const order = (page: ReturnType<typeof openViewer>) => [...page.document.querySelectorAll(".session-item")].map((el) => el.getAttribute("data-session-id"));
+const inRepo = (name: string) => ({ repoPath: `/code/${name}`, workspacePath: `/code/${name}` });
+
 describe("viewer page", () => {
   it("opens the first session and marks its cards up for the keyboard", async () => {
     const page = openViewer({ docs: [plan("mm_one")] });
@@ -295,8 +299,6 @@ describe("viewer page", () => {
   });
 
   describe("flat session lists", () => {
-    const inRepo = (name: string) => ({ repoPath: `/code/${name}`, workspacePath: `/code/${name}` });
-    const order = (page: ReturnType<typeof openViewer>) => [...page.document.querySelectorAll(".session-item")].map((el) => el.getAttribute("data-session-id"));
 
     /** Newest first across two repositories, so grouping pulls mm_c up beside mm_a, above the newer mm_b. */
     function twoRepos() {
@@ -351,7 +353,6 @@ describe("viewer page", () => {
   });
 
   describe("holding the list still", () => {
-    const order = (page: ReturnType<typeof openViewer>) => [...page.document.querySelectorAll(".session-item")].map((el) => el.getAttribute("data-session-id"));
     const list = (page: ReturnType<typeof openViewer>) => {
       const el = page.document.querySelector("#session-list");
       if (!el) throw new Error("No list");
@@ -361,7 +362,6 @@ describe("viewer page", () => {
     /** An update that makes `id` the newest session, under a new title. */
     const touch = (page: ReturnType<typeof openViewer>, doc: MindmapDocument) =>
       page.emit({ type: "mindmap_updated", id: doc.id, item: listItem(doc, { title: "Touched", updatedAt: new Date(Date.now() + 60_000).toISOString() }) });
-    const inRepo = (name: string) => ({ repoPath: `/code/${name}`, workspacePath: `/code/${name}` });
 
     it("keeps rows where they are while the pointer is over the list, then applies the order", async () => {
       const [one, two, three] = [plan("mm_one"), plan("mm_two"), plan("mm_three")];
