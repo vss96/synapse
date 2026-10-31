@@ -350,6 +350,94 @@ describe("viewer page", () => {
     });
   });
 
+  describe("holding the list still", () => {
+    const order = (page: ReturnType<typeof openViewer>) => [...page.document.querySelectorAll(".session-item")].map((el) => el.getAttribute("data-session-id"));
+    const list = (page: ReturnType<typeof openViewer>) => {
+      const el = page.document.querySelector("#session-list");
+      if (!el) throw new Error("No list");
+      return el;
+    };
+    const point = (page: ReturnType<typeof openViewer>, type: "pointerenter" | "pointerleave") => list(page).dispatchEvent(new page.window.Event(type));
+    /** An update that makes `id` the newest session, under a new title. */
+    const touch = (page: ReturnType<typeof openViewer>, doc: MindmapDocument) =>
+      page.emit({ type: "mindmap_updated", id: doc.id, item: listItem(doc, { title: "Touched", updatedAt: new Date(Date.now() + 60_000).toISOString() }) });
+    const inRepo = (name: string) => ({ repoPath: `/code/${name}`, workspacePath: `/code/${name}` });
+
+    it("keeps rows where they are while the pointer is over the list, then applies the order", async () => {
+      const [one, two, three] = [plan("mm_one"), plan("mm_two"), plan("mm_three")];
+      const page = openViewer({ docs: [one, two, three] });
+      await page.settle();
+      point(page, "pointerenter");
+      touch(page, three);
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two", "mm_three"]);
+      expect(page.row("mm_three")?.textContent).toContain("Touched");
+
+      point(page, "pointerleave");
+      expect(order(page)).toEqual(["mm_three", "mm_one", "mm_two"]);
+    });
+
+    it("keeps groups in place too", async () => {
+      const [one, two] = [plan("mm_one"), plan("mm_two")];
+      const page = openViewer({ docs: [one, two], items: [listItem(one, inRepo("a")), listItem(two, inRepo("b"))] });
+      await page.settle();
+      point(page, "pointerenter");
+      page.emit({ type: "mindmap_updated", id: "mm_two", item: listItem(two, { ...inRepo("b"), updatedAt: new Date(Date.now() + 60_000).toISOString() }) });
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two"]);
+      point(page, "pointerleave");
+      expect(order(page)).toEqual(["mm_two", "mm_one"]);
+    });
+
+    it("holds the Recent view and adds a new session at the end", async () => {
+      const [one, two] = [plan("mm_one"), plan("mm_two")];
+      const page = openViewer({ docs: [one, two] });
+      await page.settle();
+      page.click("#recent-toggle");
+      point(page, "pointerenter");
+      const added = plan("mm_new");
+      page.server.docs.push(added);
+      touch(page, two);
+      page.emit({ type: "mindmap_updated", id: "mm_new", item: listItem(added, { updatedAt: new Date(Date.now() + 120_000).toISOString() }) });
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two", "mm_new"]);
+
+      point(page, "pointerleave");
+      expect(order(page)).toEqual(["mm_new", "mm_two", "mm_one"]);
+    });
+
+    it("keeps holding after the sessions are read again, as they are after archiving a row", async () => {
+      const [one, two, three] = [plan("mm_one"), plan("mm_two"), plan("mm_three")];
+      const page = openViewer({ docs: [one, two, three] });
+      await page.settle();
+      point(page, "pointerenter");
+      page.server.items = [listItem(three), listItem(one), listItem(two)];
+      page.click("#refresh-btn");
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two", "mm_three"]);
+    });
+
+    it("holds while a row has keyboard focus, through redraws, until focus leaves the list", async () => {
+      const [one, two, three] = [plan("mm_one"), plan("mm_two"), plan("mm_three")];
+      const page = openViewer({ docs: [one, two, three] });
+      await page.settle();
+      const link = page.row("mm_two")?.querySelector("a");
+      if (!(link instanceof page.window.HTMLElement)) throw new Error("No link");
+      link.focus();
+      touch(page, three);
+      await page.settle();
+      touch(page, three);
+      await page.settle();
+      expect(order(page)).toEqual(["mm_one", "mm_two", "mm_three"]);
+
+      const search = page.document.querySelector("#session-search");
+      if (!(search instanceof page.window.HTMLElement)) throw new Error("No search box");
+      search.focus();
+      await page.settle();
+      expect(order(page)).toEqual(["mm_three", "mm_one", "mm_two"]);
+    });
+  });
+
   it("clears a file highlight when another card is picked", async () => {
     const doc = plan("mm_one");
     const worked = addChild(doc, { type: "task", label: "With a file", id: "mm_one_file" });

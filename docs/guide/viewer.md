@@ -43,6 +43,8 @@ The file count is the files an agent logged, followed by the ones found only by 
 
 When an agent updates a session you aren't viewing, only its row changes. The canvas keeps showing the session you picked.
 
+Live updates move the most recently updated sessions to the top, but not while you're aiming at a row. While the pointer is over the list, or a row has keyboard focus, sessions stay in their places and only their contents update. A new session joins at the end. The list sorts itself as soon as you move away.
+
 ## Views
 
 Use the view switcher in the header to pick what the canvas shows:

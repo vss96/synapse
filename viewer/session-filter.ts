@@ -54,6 +54,13 @@ export function sessionsInView(items: readonly MindmapListItem[], { query, archi
   return items.filter((s) => Boolean(s.archivedAt) === archived);
 }
 
+/** `items` in the order `ids` gives them; any it doesn't list go last, in the order they came. */
+export function inOrder(items: readonly MindmapListItem[], ids: readonly string[]): MindmapListItem[] {
+  const rank = new Map(ids.map((id, i) => [id, i]));
+  const place = (s: MindmapListItem) => rank.get(s.id) ?? ids.length;
+  return [...items].sort((a, b) => place(a) - place(b));
+}
+
 /** The sessions the list shows. */
 export function visibleSessions(items: readonly MindmapListItem[], view: SessionView): MindmapListItem[] {
   return sessionsInView(items, view).filter((s) => hasStatus(s, view.status) && matchesSessionQuery(s, view.query));

@@ -7,7 +7,7 @@ import { fileCountText } from "./display.js";
 import { byId, errorMessage, escXml, serverJson, setHtml } from "./dom.js";
 import { ROOT } from "./layout.js";
 import { closeDrawer, remember, remembered } from "./panels.js";
-import { STATUS_FILTERS, isFinished, isIdle, sessionsInView, visibleSessions, type SessionView } from "./session-filter.js";
+import { STATUS_FILTERS, inOrder, isFinished, isIdle, sessionsInView, visibleSessions, type SessionView } from "./session-filter.js";
 import { ARCHIVED_GROUP, groupSessions, repoName, worktreeName } from "./session-groups.js";
 import { sessionHash, sessionIdFromHash } from "./session-link.js";
 import { nodeById, render, resetSelection, state } from "./state.js";
@@ -247,9 +247,29 @@ function renderSessionControls(visible: number) {
   });
 }
 
+/** The order the rows had when someone started aiming at one, kept until they stop. */
+let heldOrder: string[] | null = null;
+let pointerOverList = false;
+
+/**
+ * Whether someone is aiming at a row, which a re-sort could swap for another under them. A mouse click
+ * can leave focus on a row for as long as the session stays open, so only keyboard focus counts.
+ */
+const aiming = () => pointerOverList || sessionList.querySelector(":focus-visible") !== null;
+
+function holdOrder() {
+  heldOrder ??= state.sessions.map((s) => s.id);
+}
+
+function releaseOrder() {
+  if (!heldOrder || aiming()) return;
+  heldOrder = null;
+  renderSessions();
+}
+
 export function renderSessions(): void {
   const list = sessionList;
-  const visible = visibleSessions(state.sessions, sessionView());
+  const visible = visibleSessions(heldOrder ? inOrder(state.sessions, heldOrder) : state.sessions, sessionView());
   renderSessionControls(visible.length);
 
   const unreadable = byId("sessions-unreadable");
@@ -327,6 +347,23 @@ function onSessionClick(e: MouseEvent) {
 }
 
 byId("sessions").addEventListener("click", onSessionClick);
+
+sessionList.addEventListener("pointerenter", () => {
+  pointerOverList = true;
+  holdOrder();
+});
+
+sessionList.addEventListener("pointerleave", () => {
+  pointerOverList = false;
+  releaseOrder();
+});
+
+sessionList.addEventListener("focusin", () => {
+  if (aiming()) holdOrder();
+});
+
+// Not straight away: Tab moves focus from row to row, and a redraw takes it away and gives it back.
+sessionList.addEventListener("focusout", () => setTimeout(releaseOrder));
 
 archivedToggle.addEventListener("click", () => {
   state.showArchived = !state.showArchived;
