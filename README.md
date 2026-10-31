@@ -62,16 +62,17 @@ Sessions are grouped by repository. Hover over a finished session and click **Ar
 | `create_mindmap` | Create a new mindmap with `title`, `workspacePath`, and optional `initialPlan` steps |
 | `map_architecture` | Batch-record the agent's mental model / HLD (`component`, `data_flow`, `decision`, `hypothesis`, `risk` nodes + directed `links`) |
 | `link_nodes` | Create a directed conceptual or data/control-flow arrow between two nodes (`solid`, `dashed`, or `animated`) |
+| `unlink_nodes` | Remove links by `linkId`, or by `from` + `to` + optional `label` |
 | `update_plan_status` | Mark a task node `planned`, `in_progress`, `completed`, or `blocked`, and optionally start `nextNodeId` |
 | `log_file_touch` | Attach a touched file (`path`, `action` incl. `rename` + `previousPath`, `lines`, `summary`) and symbol-level `changes` (`add`, `modify`, `fix`, `refactor`, `rename`, `remove`, `test`) to the active task or component node |
 | `sync_git_status` | Inspect `git status` & `git diff` in the workspace and auto-attach changed files (including staged renames) to the mindmap |
 | `get_plan_summary` | Render a Markdown dashboard of task progress (%), HLD concept count, and all touched files |
 | `add_node` | Add a child task, plan step, HLD concept, file, or note node |
-| `update_node` | Update a node's label, status, semantic type, notes, or files |
+| `update_node` | Update a node's label, status, semantic type, notes, or files (`files`, `removeFiles`), or move it under another parent (`parentId`) |
 | `remove_node` | Remove a node and all its descendants |
-| `list_mindmaps` | List all stored mindmaps sorted by most recently updated |
+| `list_mindmaps` | List stored mindmaps sorted by most recently updated, optionally by `workspacePath` or without archived ones (`includeArchived: false`) |
 | `get_mindmap` | Get full mindmap data as JSON |
-| `render_mindmap` | Render as `mermaid`, indented `text`, or `json` |
+| `render_mindmap` | Render as `mermaid` (a mindmap, without links), `mermaid-flowchart` (with links), indented `text`, or `json` |
 | `delete_mindmap` | Delete an entire mindmap |
 
 ## Connect to Any Agent

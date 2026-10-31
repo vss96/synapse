@@ -1,6 +1,6 @@
 # MCP Tools
 
-The Synapse server provides 14 tools. Agents normally only need the first five. The rest are for inspecting and editing mindmaps.
+The Synapse server provides 15 tools. Agents normally only need the first five. The rest are for inspecting and editing mindmaps.
 
 | Tool | Purpose |
 |---|---|
@@ -10,16 +10,17 @@ The Synapse server provides 14 tools. Agents normally only need the first five. 
 | [`update_plan_status`](#update-plan-status) | Move a task forward and start the next one |
 | [`sync_git_status`](#sync-git-status) | Attach all uncommitted git changes |
 | [`link_nodes`](#link-nodes) | Draw a labeled arrow between two nodes |
+| [`unlink_nodes`](#unlink-nodes) | Remove links between two nodes |
 | [`add_node`](#add-node) | Add a task, concept, or note |
-| [`update_node`](#update-node) | Edit a node |
+| [`update_node`](#update-node) | Edit a node, move it, or remove its file touches |
 | [`remove_node`](#remove-node) | Delete a node and its subtree |
 | [`get_plan_summary`](#get-plan-summary) | Progress report in Markdown |
 | [`list_mindmaps`](#list-mindmaps) | List stored mindmaps |
 | [`get_mindmap`](#get-mindmap) | Full mindmap JSON |
-| [`render_mindmap`](#render-mindmap) | Render as Mermaid, text, or JSON |
+| [`render_mindmap`](#render-mindmap) | Render as a Mermaid mindmap or flowchart, text, or JSON |
 | [`delete_mindmap`](#delete-mindmap) | Delete a mindmap |
 
-**Return values.** Tools that modify a mindmap return a short JSON acknowledgement, not the whole document (which soon outgrows MCP clients' output limits): `mindmapId`, a one-line `summary`, and the nodes the call created or changed as `{ id, label, type, parent, status? }`, so the agent can read back generated node IDs. `create_mindmap` lists every plan node under `nodes`, `map_architecture` lists each `key` with its node, and `update_plan_status` adds `next`, and `log_file_touch` adds `fileNode` when `createChildNode` is set. `delete_mindmap` returns just `mindmapId` and `summary`. Use [`get_mindmap`](#get-mindmap) for the full document. Every input is validated before anything changes. Invalid input (an unknown enum value, a rename without `previousPath`, an ID with characters outside `[A-Za-z0-9_-]`) and impossible requests (an unknown or unreadable mindmap, an unknown node, a status on a node that isn't a task) come back as MCP tool errors (`isError: true`) with a message saying what to fix, and nothing is saved.
+**Return values.** Tools that modify a mindmap return a short JSON acknowledgement, not the whole document (which soon outgrows MCP clients' output limits): `mindmapId`, a one-line `summary`, and the nodes the call created or changed as `{ id, label, type, parent, status? }`, so the agent can read back generated node IDs. `create_mindmap` lists every plan node under `nodes`, `map_architecture` lists each `key` with its node, and `update_plan_status` adds `next`, and `log_file_touch` adds `fileNode` when `createChildNode` is set. `link_nodes`, `unlink_nodes`, `remove_node` and `delete_mindmap` return just `mindmapId` and `summary`. Use [`get_mindmap`](#get-mindmap) for the full document. Every input is validated before anything changes. Invalid input (an unknown enum value, a rename without `previousPath`, an ID with characters outside `[A-Za-z0-9_-]`) and impossible requests (an unknown or unreadable mindmap, an unknown node, a status on a node that isn't a task, a link that doesn't exist, a move under the node's own subtree) come back as MCP tool errors (`isError: true`) with a message saying what to fix, and nothing is saved.
 
 **Enums used below**
 
@@ -75,7 +76,7 @@ Batch-record the agent's mental model & High-Level Design (HLD) of the codebase:
 | `label` | string | ✓ | Name of the component, flow, hypothesis, or decision |
 | `type` | string | | One of `component` (default), `data_flow`, `hypothesis`, `decision`, `risk`, `code`, `note` |
 | `status` | TaskStatus | | Task types only |
-| `notes` | string | | How the agent thinks about this piece, why it matters, trade-offs |
+| `notes` | string | | How the agent thinks about this piece, why it matters, trade-offs. On an existing node, this replaces its notes (an empty string clears them), and leaving it out keeps them. |
 | `parentKey` | string | | Key from this call, or an existing node ID, to nest this node under |
 | `files` | FileTouch[] | | Files that implement this concept (same fields as [`log_file_touch`](#log-file-touch); `path` required) |
 
@@ -171,7 +172,25 @@ Create a directed conceptual or data/control-flow link between two nodes, such a
 | `style` | LinkStyle | | `animated` suits live streams and events. `dashed` suits hypotheses and dependencies. Defaults to `solid`. |
 | `notes` | string | | Details about the relationship |
 
-A link with the same `from`, `to`, and `label` as an existing one updates that link.
+A link with the same `from`, `to`, and `label` as an existing one updates that link. A link with a different `label` is a second link between the same nodes, so to relabel one, remove it with [`unlink_nodes`](#unlink-nodes) first.
+
+## `unlink_nodes`
+
+Remove directed links, without touching the nodes they connect. Say which links either with `linkId`, or with `from` and `to` and an optional `label`.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `mindmapId` | string | ✓ | Mindmap ID |
+| `linkId` | string | | ID of one link to remove, from `links` in [`get_mindmap`](#get-mindmap). Can't be combined with the parameters below. |
+| `from` | string | | Source node ID. Needs `to`. |
+| `to` | string | | Target node ID. Needs `from`. |
+| `label` | string | | Only remove the link with exactly this label. Without it, every link from `from` to `to` is removed. Links going the other way are never removed. |
+
+It's an error if no link matches, and the activity log records the links that were removed.
+
+```json
+{ "mindmapId": "mm_Ab12Cd34", "from": "n_a1b2c3", "to": "n_d4e5f6", "label": "calls?" }
+```
 
 ## `add_node`
 
@@ -185,10 +204,11 @@ Add a child node under a parent. This works for plan nodes (`plan`, `task`, `fil
 | `type` | NodeType | | Defaults to `task` |
 | `status` | TaskStatus | | Task types only; defaults to `planned` |
 | `notes` | string | | Notes, rationale, hypothesis details, or trade-offs |
+| `files` | FileTouch[] | | Files to attach to the node (same fields as [`log_file_touch`](#log-file-touch); `path` required) |
 
 ## `update_node`
 
-Update a node's label, status, type, or notes.
+Update a node's label, status, type, notes, or attached files, or move it under a different parent. The root can't be changed this way.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -198,6 +218,11 @@ Update a node's label, status, type, or notes.
 | `type` | NodeType | | New type |
 | `status` | TaskStatus | | New status |
 | `notes` | string | | New notes |
+| `files` | FileTouch[] | | File touches to record on the node (same fields as [`log_file_touch`](#log-file-touch); `path` required). A path the node already has is merged into its entry. |
+| `removeFiles` | string[] | | Paths to remove from the node's file touches. They go before `files` is applied, so a path in both starts a new entry. A path the node doesn't have is an error. Child `file` nodes aren't affected. |
+| `parentId` | string | | Move the node and its subtree under this parent. Its current parent changes nothing, and the node keeps its place among its siblings. The node itself or one of its descendants is an error. |
+
+Removing a file touch doesn't stop the [workspace watcher](../guide/how-it-works#workspace-watcher): if the file changes again, it's attached to the active task.
 
 ## `remove_node`
 
@@ -218,7 +243,14 @@ Get a Markdown status report: completion percentage, a status breakdown, the num
 
 ## `list_mindmaps`
 
-List all stored mindmaps with their IDs, titles, node counts, and last-updated timestamps, most recent first. Sessions archived in the viewer are marked `archived`, and mindmap files that can't be read are listed with the reason. No parameters.
+List stored mindmaps with their IDs, titles, node counts, and last-updated timestamps, most recent first. Sessions archived in the viewer are marked `archived`, and mindmap files that can't be read are listed with the reason.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `workspacePath` | string | | Only list mindmaps whose `workspacePath` or `repoPath` is this path. A repository's main checkout therefore also lists the mindmaps of its worktrees. |
+| `includeArchived` | boolean | | Set to `false` to leave out archived mindmaps. Defaults to `true`. |
+
+Files that can't be read are listed whatever the filters, because nothing shows which workspace they belong to.
 
 ## `get_mindmap`
 
@@ -235,7 +267,16 @@ Render a mindmap as text.
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `mindmapId` | string | ✓ | Mindmap ID |
-| `format` | string | ✓ | `mermaid` (Mermaid `mindmap` syntax), `text` (an indented outline with status badges, files, change glyphs, and links), or `json` |
+| `format` | string | ✓ | `mermaid`, `mermaid-flowchart`, `text`, or `json` (see below) |
+
+| Format | Output |
+|---|---|
+| `mermaid` | Mermaid `mindmap` syntax: the tree with status glyphs (`○ ◐ ✔ ✖`, as in the viewer) and file nodes. `mindmap` diagrams can't draw links, so they're left out. |
+| `mermaid-flowchart` | Mermaid `flowchart LR` syntax: the same nodes, joined by plain lines, plus links as labeled arrows. `solid` links are `-->`, `dashed` are `-.->`, and `animated` are the thick `==>`. |
+| `text` | An indented outline with status badges, notes, files, change glyphs, and links. |
+| `json` | The full document, as in [`get_mindmap`](#get-mindmap). |
+
+Neither Mermaid format includes notes or symbol-level changes. Labels are quoted, and the characters a quoted Mermaid label can't hold are written as entities, such as `#34;` for a double quote. Mermaid turns them back when it draws the diagram.
 
 ## `delete_mindmap`
 
