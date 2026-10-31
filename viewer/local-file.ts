@@ -18,6 +18,7 @@ function isChange(value: unknown): boolean {
 function isTouch(value: unknown): boolean {
   if (!isObject(value) || !isString(value.path) || !isString(value.action) || !isString(value.timestamp)) return false;
   if (!isFileAction(value.action)) return false;
+  if (value.symbols !== undefined && !(Array.isArray(value.symbols) && value.symbols.every(isString))) return false;
   if (value.action === "read") return true;
   if (value.action === "rename" && !isString(value.previousPath)) return false;
   return Array.isArray(value.changes) && value.changes.every(isChange);
@@ -25,6 +26,7 @@ function isTouch(value: unknown): boolean {
 
 function isNode(value: unknown, id: string): boolean {
   if (!isObject(value) || value.id !== id || !isString(value.type) || !isString(value.label) || !isString(value.updatedAt)) return false;
+  if (value.notes !== undefined && !isString(value.notes)) return false;
   if (!isNodeType(value.type) || (isTaskType(value.type) && !(isString(value.status) && isTaskStatus(value.status)))) return false;
   return Array.isArray(value.children) && value.children.every(isString) && Array.isArray(value.files) && value.files.every(isTouch);
 }

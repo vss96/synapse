@@ -26,7 +26,10 @@ describe("viewer local files", () => {
       (_, task) => Reflect.deleteProperty(task, "status"),
       (_, task) => Reflect.set(task, "status", "nonsense"),
       (_, task) => Reflect.set(task, "type", 'x"><image onerror="alert(1)"/><g class="'),
+      (_, task) => Reflect.set(task, "notes", 42),
       (_, task) => Reflect.set(task, "files", [null]),
+      (_, task) => Reflect.set(task, "files", [{ path: "a.ts", action: "read", symbols: "parse", timestamp }]),
+      (_, task) => Reflect.set(task, "files", [{ path: "a.ts", action: "read", symbols: [42], timestamp }]),
       (_, task) => Reflect.set(task, "files", [{ path: "a.ts", action: "explode", changes: [], timestamp }]),
       (_, task) => Reflect.set(task, "files", [{ path: "a.ts", action: "modify", changes: [null], timestamp }]),
       (_, task) => Reflect.set(task, "files", [{ path: "a.ts", action: "rename", changes: [], timestamp }]),
@@ -35,6 +38,15 @@ describe("viewer local files", () => {
       (doc) => Reflect.set(doc, "activityLog", [null]),
     ];
     for (const breakIt of badNodes) expect(isMindmapDocument(tweaked(breakIt))).toBe(false);
+  });
+
+  it("accepts a file that leaves out the optional fields", () => {
+    const withOptionals = tweaked((_, task) => {
+      task.notes = "Why";
+      task.files.push({ path: "a.ts", action: "read", symbols: ["parse"], timestamp });
+    });
+    expect(isMindmapDocument(withOptionals)).toBe(true);
+    expect(isMindmapDocument(tweaked(() => {}))).toBe(true);
   });
 
   it("rejects a file whose tree doesn't end, which would hang the page", () => {
