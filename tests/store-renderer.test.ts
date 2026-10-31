@@ -1,4 +1,4 @@
-import { describe, it, beforeAll, afterAll, spyOn } from "bun:test";
+import { describe, it, beforeAll, afterAll, setSystemTime, spyOn } from "bun:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readdir, rm, unlink, utimes, writeFile } from "node:fs/promises";
@@ -206,6 +206,24 @@ describe("store & renderer", () => {
     await store.update(doc.id, (d) => void (d.title = "Changed"));
     assert.equal((await store.load(doc.id))?.title, "Changed");
     assert.ok(!(await readdir(tmpDir)).some((f) => f.endsWith(".break")), "nothing is left behind");
+    await store.remove(doc.id);
+  });
+
+  it("gives up on a lock its owner won't let go of, and says who holds it", async () => {
+    const doc = emptyDoc("mm_stuck", "Stuck");
+    await store.save(doc);
+    const lock = path.join(tmpDir, "mm_stuck.json.lock");
+    await writeFile(lock, String(process.pid));
+    const update = store.update(doc.id, (d) => void (d.title = "Changed"));
+    await new Promise((r) => setTimeout(r, 50));
+    setSystemTime(new Date(Date.now() + 60_000));
+    try {
+      await assert.rejects(update, new RegExp(`waiting for process ${process.pid} to finish with mm_stuck\\.json.*delete ${lock}`));
+    } finally {
+      setSystemTime();
+      await unlink(lock);
+    }
+    assert.equal((await store.load(doc.id))?.title, "Stuck");
     await store.remove(doc.id);
   });
 

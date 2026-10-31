@@ -142,6 +142,8 @@ export async function setArchived(id: MindmapId, archived: boolean): Promise<Min
 const STALE_LOCK_MS = 5000;
 /** No live holder takes this long: its owner died and another process now has its pid. */
 const MAX_LOCK_MS = 5 * 60_000;
+/** How long to wait for a lock before giving up, well inside what MCP clients allow a tool call. */
+const LOCK_WAIT_MS = 15_000;
 
 function isRunning(pid: number): boolean {
   try {
@@ -152,6 +154,9 @@ function isRunning(pid: number): boolean {
   }
 }
 
+/** The pid in a lock file; 0 if there isn't one. */
+const lockOwner = async (lock: string): Promise<number> => Number(await readFile(lock, "utf-8").catch(() => ""));
+
 /**
  * Whether `lock` can be taken over. A big mindmap can hold its lock for several seconds and block the
  * event loop while it does, so age alone can't tell a busy holder from a dead one: the holder's pid does.
@@ -160,7 +165,7 @@ async function isStaleLock(lock: string): Promise<boolean> {
   const held = await stat(lock).catch(() => null);
   if (!held) return false;
   const age = Date.now() - held.mtimeMs;
-  const pid = Number(await readFile(lock, "utf-8").catch(() => ""));
+  const pid = await lockOwner(lock);
   return pid ? age > MAX_LOCK_MS || !isRunning(pid) : age > STALE_LOCK_MS;
 }
 
@@ -194,6 +199,7 @@ async function breakLock(lock: string): Promise<void> {
 async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
   await ensureDataDir();
   const lock = `${file}.lock`;
+  const giveUpAt = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
       const handle = await open(lock, "wx");
@@ -203,6 +209,10 @@ async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
     } catch (err) {
       if (errorCode(err) !== "EEXIST") throw err;
       if (await isStaleLock(lock)) await breakLock(lock);
+      if (Date.now() >= giveUpAt) {
+        const pid = await lockOwner(lock);
+        throw new Error(`Gave up after ${LOCK_WAIT_MS / 1000}s waiting for ${pid ? `process ${pid}` : "another process"} to finish with ${path.basename(file)}. If it's stuck, stop it or delete ${lock}.`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }

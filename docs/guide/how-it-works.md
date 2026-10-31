@@ -20,6 +20,7 @@
 
 - **The MCP server** (`synapse-mindmap mcp`) is a stdio process that the client starts. Each tool call loads a mindmap document, changes it, and writes it back as `<mindmapId>.json` in the data directory.
 - **The data directory** (`SYNAPSE_DATA_DIR`, default `~/.synapse/data`) is the only shared state. There is no database. The server and the viewer only share these files, so they can start and stop independently, and several agents or sessions can write to the same directory at once.
+- **Writes take a lock.** A process writing a mindmap holds `<mindmapId>.json.lock`, which records its process ID, so a write can't overwrite another process's change. A lock left by a process that has died is taken over. If a live process keeps the lock for more than 15 seconds, the tool call or viewer action waiting for it fails with an error that names the process.
 - **The viewer** (`synapse-mindmap viewer`) is a small HTTP server on `127.0.0.1` that reads the same store and watches the data directory. When a file changes, it pushes a `mindmap_updated` event to the browser over Server-Sent Events. Updates are debounced per file, so concurrent writes from different sessions don't hide each other. The browser then fetches that mindmap again.
 - **Mindmap IDs** must match `[A-Za-z0-9_-]+`. Every lookup by the MCP tools and the viewer checks this, so an ID can't point outside the data directory.
 
