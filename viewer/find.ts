@@ -20,7 +20,7 @@ function mapMatches(doc: MindmapDocument | null): string[] {
   });
 }
 
-export function updateMapSearchCount(doc: MindmapDocument | null) {
+export function updateMapSearchCount(doc: MindmapDocument | null): void {
   const matches = mapMatches(doc);
   const i = matches.indexOf(state.selectedNodeId);
   mapSearchCount.textContent = !state.mapQuery.trim()

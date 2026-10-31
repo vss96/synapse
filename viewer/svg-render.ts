@@ -120,7 +120,7 @@ export function renderMap(doc: MindmapDocument | null): void {
   viewEmpty.textContent = emptyView;
   viewEmpty.hidden = !emptyView;
   // Tab reaches the map at one card, the selected one; the arrow keys go from there.
-  const focusable = positions.has(state.selectedNodeId as NodeId) ? state.selectedNodeId : ROOT;
+  const focusable = [...positions.keys()].find((id) => id === state.selectedNodeId) ?? ROOT;
   // Cards in a grid share one edge to its frame, and the tasks in it are numbered in reading order.
   const inGrid = new Set<NodeId>(grids.flatMap((g) => g.members));
   const stepNumbers = new Map<NodeId, number>();

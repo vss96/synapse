@@ -22,7 +22,7 @@ export type ViewerEvent =
 
 type SessionEvent = Exclude<ViewerEvent, { type: "connected" }>;
 
-export function loadMindmap(doc: MindmapDocument) {
+export function loadMindmap(doc: MindmapDocument): void {
   if (doc.id !== state.currentDoc?.id) {
     requestFreshView();
     state.collapsed = loadCollapsed(doc.id);
@@ -35,7 +35,7 @@ export function loadMindmap(doc: MindmapDocument) {
 
 let latestFetch = 0;
 
-export async function fetchMindmapById(id: string) {
+export async function fetchMindmapById(id: string): Promise<void> {
   if (!id) return;
   const fetchId = ++latestFetch;
   const res = await fetch(`/api/mindmaps/${encodeURIComponent(id)}`, { cache: "no-store" });
@@ -234,7 +234,7 @@ function renderSessionControls(visible: number) {
   });
 }
 
-export function renderSessions() {
+export function renderSessions(): void {
   const list = sessionList;
   const visible = visibleSessions(state.sessions, sessionView());
   renderSessionControls(visible.length);
@@ -332,7 +332,7 @@ async function showSession(id: string) {
  * `replace`, for a session nobody picked, it doesn't, so Back leaves the viewer instead of landing
  * on a URL with no session in it.
  */
-export async function selectSession(id: string | undefined, { replace = false } = {}) {
+export async function selectSession(id: string | undefined, { replace = false } = {}): Promise<void> {
   if (!id || id === state.currentId) return;
   if (replace) history.replaceState(null, "", sessionHash(id));
   else history.pushState(null, "", sessionHash(id));
@@ -361,7 +361,7 @@ window.addEventListener("hashchange", followUrl);
 let listsLoading = 0;
 const eventsSinceList: SessionEvent[] = [];
 
-export async function refreshSessions() {
+export async function refreshSessions(): Promise<void> {
   listsLoading++;
   try {
     const res = await fetch("/api/mindmaps", { cache: "no-store" });
@@ -380,7 +380,7 @@ export async function refreshSessions() {
 }
 
 /** Catch up when events may have been missed: the list, and the open session, which may be gone by now. */
-export async function reloadSessions() {
+export async function reloadSessions(): Promise<void> {
   await refreshSessions();
   if (!state.currentId) return;
   if (state.sessions.some((s) => s.id === state.currentId)) await fetchMindmapById(state.currentId);
@@ -388,7 +388,7 @@ export async function reloadSessions() {
 }
 
 /** The open session is gone: open another, or show that nothing is open. */
-export async function leaveDeletedSession() {
+export async function leaveDeletedSession(): Promise<void> {
   state.currentId = "";
   state.currentDoc = null;
   render();
@@ -401,7 +401,7 @@ export async function leaveDeletedSession() {
  * View a mindmap file from disk. It isn't one of the server's sessions, so nothing about it goes to
  * the server: the URL names no session, and Sync Git has nothing to act on.
  */
-export function openLocalFile(doc: MindmapDocument, fileName: string) {
+export function openLocalFile(doc: MindmapDocument, fileName: string): void {
   requestFreshView();
   state.localFile = fileName;
   state.currentDoc = doc;
@@ -426,13 +426,13 @@ function applyEvent(event: SessionEvent) {
 }
 
 /** Apply a live event to the session list; the list stays newest first, like the server sends it. */
-export function applyToSessions(event: SessionEvent) {
+export function applyToSessions(event: SessionEvent): void {
   if (listsLoading > 0) eventsSinceList.push(event);
   applyEvent(event);
   renderSessions();
 }
 
-export async function init() {
+export async function init(): Promise<void> {
   await refreshSessions();
   if (state.currentId && state.sessions.some((s) => s.id === state.currentId)) {
     await fetchMindmapById(state.currentId);

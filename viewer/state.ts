@@ -106,7 +106,7 @@ export function nodeById(doc: MindmapDocument, id: string): MindmapNode | undefi
 }
 
 /** Whether the node touched the file or logged the change kind picked in the sidebar, or matches the find box. */
-export function isHighlighted(node: MindmapNode) {
+export function isHighlighted(node: MindmapNode): boolean {
   return (
     (state.highlightedFilePath !== null && node.files.some((f) => f.path === state.highlightedFilePath)) ||
     (state.changeKindFilter !== null && nodeChanges(node).some((c) => kindOf(c) === state.changeKindFilter)) ||

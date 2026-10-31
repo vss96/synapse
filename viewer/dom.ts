@@ -28,12 +28,12 @@ export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function truncate(str: string | undefined, max: number) {
+export function truncate(str: string | undefined, max: number): string {
   if (!str) return "";
   return str.length > max ? str.slice(0, max - 1) + "…" : str;
 }
 
-export function escXml(s: unknown) {
+export function escXml(s: unknown): string {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

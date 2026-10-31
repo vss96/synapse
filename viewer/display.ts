@@ -22,7 +22,7 @@ export const TYPE_BADGES: Partial<Record<NodeType, string>> = {
 
 // Colors live in index.html: a `tone-<key>` class (task status, concept type, change kind or
 // file action) sets the --c color that badges, tallies and cards use, in light and dark mode.
-export const toneClass = (key: TaskStatus | NodeType | ChangeKind | FileAction) => `tone-${escXml(key)}`;
+export const toneClass = (key: TaskStatus | NodeType | ChangeKind | FileAction): string => `tone-${escXml(key)}`;
 
 // Symbol-level change kinds, shown in KIND_ORDER (kinds.ts's CHANGE_KINDS).
 export const CHANGE_KINDS: Record<ChangeKind, { glyph: string; label: string }> = {
@@ -51,13 +51,13 @@ export function tallyChanges(changes: readonly CodeChange[]): Array<[ChangeKind,
   return KIND_ORDER.filter((k) => counts[k]).map((k): [ChangeKind, number] => [k, counts[k] ?? 0]);
 }
 
-export function tallySvg(changes: readonly CodeChange[]) {
+export function tallySvg(changes: readonly CodeChange[]): string {
   return tallyChanges(changes)
     .map(([k, n]) => `<tspan class="svg-tone ${toneClass(k)}" font-weight="700">${CHANGE_KINDS[k].glyph}${n} </tspan>`)
     .join("");
 }
 
-export function tallyHtml(changes: readonly CodeChange[]) {
+export function tallyHtml(changes: readonly CodeChange[]): string {
   return tallyChanges(changes)
     .map(([k, n]) => `<span class="kind-tally ${toneClass(k)}" title="${CHANGE_KINDS[k].label}">${CHANGE_KINDS[k].glyph}${n}</span>`)
     .join("");

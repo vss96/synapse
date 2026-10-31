@@ -274,7 +274,7 @@ function sidebarHtml(doc: MindmapDocument): string {
 /** What the panel showed last time: the scroll position only means something for the same thing. */
 let shownView = "";
 
-export function renderSidebar(doc: MindmapDocument | null) {
+export function renderSidebar(doc: MindmapDocument | null): void {
   if (!doc) {
     content.innerHTML = `<div style="color:var(--muted);font-size:13px;">Load or create a mindmap to inspect plan tasks, HLD concepts, and touched code.</div>`;
     return;
@@ -343,7 +343,7 @@ function onFileFilter(e: Event) {
 content.addEventListener("input", onFileFilter);
 content.addEventListener("compositionend", onFileFilter);
 
-export function updateTabUI() {
+export function updateTabUI(): void {
   document.querySelectorAll<HTMLElement>(".sidebar-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.tab === state.activeTab);
     btn.setAttribute("aria-selected", String(btn.dataset.tab === state.activeTab));

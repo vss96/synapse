@@ -21,7 +21,7 @@ import { ROOT, ancestors, latestActiveTask, type ViewMode } from "./layout.js";
 import { isHighlighted, nodeById, render, selectNode, state } from "./state.js";
 
 // View Mode Switcher (Split / Plan / HLD)
-export function setViewMode(mode: ViewMode) {
+export function setViewMode(mode: ViewMode): void {
   state.viewMode = mode;
   document.querySelectorAll<HTMLElement>("#view-switcher button").forEach((b) => {
     b.classList.toggle("active", b.dataset.mode === state.viewMode);
@@ -32,7 +32,7 @@ export function setViewMode(mode: ViewMode) {
 }
 
 /** Select a node picked in the sidebar and bring it into view, switching to the split view if this view hides it. */
-export function showNode(id: string) {
+export function showNode(id: string): void {
   selectNode(id);
   const node = state.currentDoc && nodeById(state.currentDoc, id);
   if (state.currentDoc && node) expandTo(state.currentDoc, node);
@@ -121,7 +121,7 @@ function initialView() {
 }
 
 /** Move the camera, if needed, to show these cards (the ones drawn in the current view). */
-export function revealNodes(ids: readonly string[]) {
+export function revealNodes(ids: readonly string[]): void {
   const boxes = ids.flatMap((id) => nodeBoxes.get(id) ?? []);
   if (boxes.length === 0) return;
   const x = Math.min(...boxes.map((b) => b.x));
@@ -132,7 +132,7 @@ export function revealNodes(ids: readonly string[]) {
   applyTransform();
 }
 
-export function revealHighlighted() {
+export function revealHighlighted(): void {
   if (state.currentDoc) revealNodes(Object.values(state.currentDoc.nodes).filter(isHighlighted).map((n) => n.id));
 }
 
