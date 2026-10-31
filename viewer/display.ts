@@ -62,3 +62,9 @@ export function tallyHtml(changes: readonly CodeChange[]) {
     .map(([k, n]) => `<span class="kind-tally ${toneClass(k)}" title="${CHANGE_KINDS[k].label}">${CHANGE_KINDS[k].glyph}${n}</span>`)
     .join("");
 }
+
+/** "6 files", or "6 files · 240 auto" when the watcher picked up others that no agent logged. */
+export function fileCountText(logged: number, total: number): string {
+  const auto = total - logged;
+  return `${logged} file${logged === 1 ? "" : "s"}${auto > 0 ? ` · ${auto} auto` : ""}`;
+}

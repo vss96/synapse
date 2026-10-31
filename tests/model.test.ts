@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { aggregateFiles, isAutoDetected } from "../src/model/file-stats.js";
 import { combineTouches, fileTouchTarget, isFinished, mergeChanges, upsertFileTouch, upsertFileTouches } from "../src/model/file-touch.js";
 import { isTask } from "../src/model/kinds.js";
 import { reparent, retype } from "../src/model/node.js";
@@ -100,6 +101,39 @@ describe("model: file touches", () => {
     expect(combineTouches(touch("create"), touch("modify")).action).toBe("create");
     expect(combineTouches(touch("rename"), touch("modify"))).toMatchObject({ action: "rename", previousPath: "old.ts" });
     expect(combineTouches(touch("create"), touch("delete")).action).toBe("delete");
+  });
+
+  it("lets what an agent logged outrank what the watcher saw", () => {
+    const auto = { ...touch("modify"), summary: "Auto-detected file modify", source: "watcher" } as const;
+    const logged = { ...touch("modify"), summary: "Fixed the retry" };
+
+    expect(combineTouches(auto, auto)).toMatchObject({ summary: "Auto-detected file modify", source: "watcher" });
+    expect(combineTouches(logged, auto)).toMatchObject({ summary: "Fixed the retry", source: undefined });
+    expect(combineTouches(auto, logged)).toMatchObject({ summary: "Fixed the retry", source: undefined });
+    const unsummarized = combineTouches(auto, touch("modify"));
+    expect(unsummarized.summary).toBeUndefined();
+    expect(isAutoDetected(unsummarized)).toBe(false);
+  });
+
+  it("recognises auto-detected touches on mindmaps saved before they were marked", () => {
+    expect(isAutoDetected({ ...touch("modify"), summary: "Auto-detected file create" })).toBe(true);
+    expect(isAutoDetected({ ...touch("modify"), source: "watcher" })).toBe(true);
+    expect(isAutoDetected({ ...touch("modify"), summary: "Auto-detected a race by hand" })).toBe(false);
+    expect(isAutoDetected(touch("modify"))).toBe(false);
+  });
+
+  it("aggregates a file across nodes, counting it as logged if any agent logged it", () => {
+    const doc = emptyDoc();
+    const a = addChild(doc, { type: "task", label: "A" });
+    const b = addChild(doc, { type: "task", label: "B" });
+    const auto = { ...touch("modify"), summary: "Auto-detected file modify" };
+    a.files.push(auto, { ...auto, path: "only-auto.ts" });
+    b.files.push({ ...touch("modify", "a.ts", [fix]), summary: "By hand" });
+
+    const files = aggregateFiles([a, b]);
+    expect(files.get("a.ts")).toMatchObject({ autoDetected: false, changes: [{ ...fix, via: ["B"] }] });
+    expect(files.get("a.ts")?.nodes.map((n) => n.label)).toEqual(["A", "B"]);
+    expect(files.get("only-auto.ts")?.autoDetected).toBe(true);
   });
 
   it("merges changes on kind + symbol, keeping the latest detail", () => {

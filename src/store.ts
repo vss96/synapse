@@ -3,6 +3,7 @@ import { readdir, readFile, writeFile, mkdir, unlink, rename, open, stat } from 
 import os from "node:os";
 import path from "node:path";
 import { errorCode } from "./errors.js";
+import { aggregateFiles } from "./model/file-stats.js";
 import { isTask } from "./model/kinds.js";
 import { MindmapDocument, now, type MindmapId, type MindmapList, type MindmapListItem, type NodeId, type UnreadableMindmap } from "./model/schema.js";
 
@@ -197,9 +198,13 @@ async function write(doc: MindmapDocument, text?: string): Promise<void> {
   }
 }
 
+/** Every page gets this text for every session, so it's bounded. Most maps fit well within it. */
+const MAX_SEARCH_TEXT = 8000;
+
 function summarize(doc: MindmapDocument): MindmapListItem {
   const nodes = Object.values(doc.nodes);
   const tasks = nodes.filter(isTask);
+  const files = [...aggregateFiles(nodes).values()];
   const activeTask = tasks
     .filter((n) => n.status === "in_progress")
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
@@ -214,8 +219,12 @@ function summarize(doc: MindmapDocument): MindmapListItem {
     nodeCount: nodes.length,
     completedTasks: tasks.filter((n) => n.status === "completed").length,
     totalTasks: tasks.length,
+    blockedTasks: tasks.filter((n) => n.status === "blocked").length,
     activeTask: activeTask?.label,
-    fileCount: new Set(nodes.flatMap((n) => n.files.map((f) => f.path))).size,
+    fileCount: files.length,
+    loggedFileCount: files.filter((f) => !f.autoDetected).length,
+    // Labels first: they're short and they're what people remember, so long notes can't crowd them out.
+    searchText: [...nodes.map((n) => n.label), ...nodes.flatMap((n) => n.notes ?? [])].join("\n").slice(0, MAX_SEARCH_TEXT),
   };
 }
 

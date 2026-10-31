@@ -79,6 +79,18 @@ describe("viewer server", () => {
     }
   });
 
+  it("deletes an unreadable file, which a page can't open but can still clear away", async () => {
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await writeFile(path.join(tmpDir, "mm_junk.json"), "{ junk");
+      expect(JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body).unreadable).toMatchObject([{ id: "mm_junk" }]);
+      expect((await call(viewer.port, { method: "DELETE", path: "/api/mindmaps/mm_junk" })).status).toBe(200);
+      expect(JSON.parse((await call(viewer.port, { path: "/api/mindmaps" })).body).unreadable).toEqual([]);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("serves the session list and single mindmaps", async () => {
     const list = await call(viewer.port, { path: "/api/mindmaps" });
     expect(list.status).toBe(200);
@@ -190,6 +202,19 @@ describe("viewer server", () => {
     } finally {
       await reader.cancel();
     }
+  });
+
+  it("deletes sessions, refusing cross-site and invalid requests", async () => {
+    await store.save(emptyDoc("mm_doomed", "Doomed"));
+    const del = (id: string, headers: Record<string, string> = {}) => call(viewer.port, { method: "DELETE", path: `/api/mindmaps/${id}`, headers });
+
+    expect((await del("mm_doomed", { origin: "https://attacker.example" })).status).toBe(403);
+    expect(await store.load(MindmapId.parse("mm_doomed"))).not.toBeNull();
+    expect((await del("..%2F..%2Fsecret")).status).toBe(404);
+    expect((await del("mm_nope")).status).toBe(404);
+
+    expect((await del("mm_doomed", { origin: `http://localhost:${viewer.port}` })).status).toBe(200);
+    expect(await store.load(MindmapId.parse("mm_doomed"))).toBeNull();
   });
 
   it("logs requests that fail with a 500", async () => {

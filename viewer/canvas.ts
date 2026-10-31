@@ -16,7 +16,7 @@ import {
 } from "./camera.js";
 import { byId, query } from "./dom.js";
 import { ROOT, type ViewMode } from "./layout.js";
-import { isHighlighted, render, state } from "./state.js";
+import { isHighlighted, render, selectNode, state } from "./state.js";
 
 // View Mode Switcher (Split / Plan / HLD)
 export function setViewMode(mode: ViewMode) {
@@ -30,7 +30,7 @@ export function setViewMode(mode: ViewMode) {
 
 /** Select a node picked in the sidebar and bring it into view, switching to the split view if this view hides it. */
 export function showNode(id: string) {
-  state.selectedNodeId = id;
+  selectNode(id);
   if (nodeBoxes.has(id) || state.viewMode === "all") render();
   else setViewMode("all");
   revealNodes([id]);

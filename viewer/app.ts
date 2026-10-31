@@ -4,11 +4,11 @@ import { isTask, CHANGE_KINDS as KIND_ORDER } from "../src/model/kinds.js";
 import { aggregateFiles } from "../src/model/file-stats.js";
 import type { MindmapDocument } from "../src/model/schema.js";
 import { setViewMode } from "./canvas.js";
-import { CHANGE_KINDS, toneClass } from "./display.js";
+import { CHANGE_KINDS, fileCountText, toneClass } from "./display.js";
 import { byId, errorMessage, serverJson } from "./dom.js";
 import { updateMapSearchCount } from "./find.js";
 import { VIEW_MODES } from "./layout.js";
-import { applyToSessions, fetchMindmapById, init, loadMindmap, refreshSessions, renderSessions, selectSession, type ViewerEvent } from "./sessions.js";
+import { applyToSessions, fetchMindmapById, init, leaveDeletedSession, loadMindmap, refreshSessions, renderSessions, selectSession, type ViewerEvent } from "./sessions.js";
 import { renderSidebar } from "./sidebar.js";
 import { onRender, state } from "./state.js";
 import { renderMap } from "./svg-render.js";
@@ -43,13 +43,16 @@ function updateHeaderProgress(doc: MindmapDocument | null) {
 
   const tasks = Object.values(doc.nodes).filter(isTask);
   const completed = tasks.filter((n) => n.status === "completed");
-  const fileMap = aggregateFiles(Object.values(doc.nodes));
-  const changedFiles = [...fileMap.values()].filter((f) => f.touch.action !== "read").length;
+  const files = [...aggregateFiles(Object.values(doc.nodes)).values()];
+  const logged = files.filter((f) => !f.autoDetected).length;
+  const changed = files.filter((f) => f.touch.action !== "read");
+  const changedAuto = changed.filter((f) => f.autoDetected).length;
   wrap.style.display = "flex";
   const pct = tasks.length > 0 ? Math.round((completed.length / tasks.length) * 100) : 0;
   fill.style.width = `${pct}%`;
-  txt.textContent = `${completed.length}/${tasks.length} tasks (${pct}%) · ${fileMap.size} files`;
-  filesTabBtn.textContent = `Changes (${changedFiles})`;
+  txt.textContent = `${completed.length}/${tasks.length} tasks (${pct}%) · ${fileCountText(logged, files.length)}`;
+  filesTabBtn.textContent = `Changes (${changed.length - changedAuto}${changedAuto ? ` +${changedAuto}` : ""})`;
+  filesTabBtn.title = `${changed.length - changedAuto} logged by an agent, ${changedAuto} auto-detected`;
 }
 
 onRender(() => {
@@ -142,6 +145,7 @@ function connectSSE() {
         return;
       }
       applyToSessions(payload);
+      if (payload.type === "mindmap_deleted" && payload.id === state.currentId) await leaveDeletedSession();
       // Only reload the canvas for the session being viewed; a file that can't be read isn't opened.
       if (payload.type !== "mindmap_updated") return;
       if (!state.currentId) await selectSession(payload.id, { replace: true });

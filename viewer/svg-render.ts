@@ -8,7 +8,7 @@ import { touchChanges } from "../src/model/file-stats.js";
 import { byId, escXml, truncate } from "./dom.js";
 import { ROOT, layoutTree } from "./layout.js";
 import { updateTabUI } from "./sidebar.js";
-import { isHighlighted, render, state } from "./state.js";
+import { isHighlighted, render, selectNode, state } from "./state.js";
 
 // ── Card size (layout.ts places the cards; render() draws these rows) ──
 function getNodeSize(node: MindmapNode) {
@@ -277,7 +277,7 @@ export function renderMap(doc: MindmapDocument | null): void {
   document.querySelectorAll<SVGGElement>(".node-group").forEach((el) => {
     el.addEventListener("click", (e) => {
       e.stopPropagation();
-      state.selectedNodeId = el.dataset.nodeId ?? ROOT;
+      selectNode(el.dataset.nodeId ?? ROOT);
       state.activeTab = "inspector";
       state.changeKindFilter = null;
       updateTabUI();

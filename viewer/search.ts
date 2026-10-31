@@ -10,12 +10,24 @@ function touchTerms(f: FileTouch): string[] {
   return [f.path, f.action === "rename" ? f.previousPath : "", ...(f.symbols ?? []), ...changes];
 }
 
+const contains = (terms: readonly string[], query: string) => terms.some((term) => term.toLowerCase().includes(query));
+
 /**
- * Whether a card matches the map search: its label, its ID, or a path or symbol of a file it
- * touched contains `query`, ignoring case. An empty query matches nothing.
+ * Whether a card matches the map search: its label, ID or notes, or a path or symbol of a file it
+ * touched, contains `query`, ignoring case. An empty query matches nothing.
  */
 export function matchesQuery(node: MindmapNode, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return false;
-  return [node.label, node.id, ...node.files.flatMap(touchTerms)].some((term) => term.toLowerCase().includes(q));
+  return contains([node.label, node.id, node.notes ?? ""], q) || node.files.some((f) => contains(touchTerms(f), q));
+}
+
+/**
+ * The file that explains why a card matches, so it can be shown: the first file matching `query`.
+ * Undefined when the card's own text matches, since the card itself then explains the match.
+ */
+export function matchingFile(node: MindmapNode, query: string): string | undefined {
+  const q = query.trim().toLowerCase();
+  if (!q || contains([node.label, node.id, node.notes ?? ""], q)) return undefined;
+  return node.files.find((f) => contains(touchTerms(f), q))?.path;
 }

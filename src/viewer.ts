@@ -272,6 +272,11 @@ export async function startViewer(options: ViewerOptions = {}): Promise<RunningV
         const doc = id.success ? await store.load(id.data) : null;
         return doc ? sendJson(res, 200, doc) : sendJson(res, 404, { error: "Mindmap not found" });
       }
+      if (pathname.startsWith("/api/mindmaps/") && req.method === "DELETE") {
+        const id = MindmapId.safeParse(decodeURIComponent(pathname.slice("/api/mindmaps/".length)));
+        const removed = id.success && (await store.remove(id.data));
+        return removed ? sendJson(res, 200, { id: id.data, deleted: true }) : sendJson(res, 404, { error: "Mindmap not found" });
+      }
       if (pathname === "/api/sync-git" && req.method === "POST") {
         return await handleGitSync(req, res);
       }

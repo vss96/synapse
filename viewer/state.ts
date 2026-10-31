@@ -5,6 +5,7 @@ import type { MindmapDocument, MindmapListItem, MindmapNode, NodeId, UnreadableM
 import { kindOf, nodeChanges } from "./display.js";
 import { ROOT, type ViewMode } from "./layout.js";
 import { matchesQuery } from "./search.js";
+import type { StatusFilter } from "./session-filter.js";
 import { sessionIdFromHash } from "./session-link.js";
 
 export const SIDEBAR_TABS = ["inspector", "files", "activity"] as const;
@@ -22,9 +23,21 @@ export interface ViewerState {
   sessions: MindmapListItem[];
   unreadableSessions: UnreadableMindmap[];
   sessionQuery: string;
+  sessionStatus: StatusFilter;
+  /** The session list shows the archive instead of the working sessions. */
+  showArchived: boolean;
   /** The text in the canvas's find box; matching cards are highlighted. */
   mapQuery: string;
+  /** The path filter over the file list in the sidebar. */
+  fileQuery: string;
+  /** Whether auto-detected files are expanded in the sidebar. */
+  showAutoFiles: boolean;
+  /** How many rows of a file list are rendered. */
+  fileLimit: number;
 }
+
+/** File lists are rendered this many rows at a time: a session can have thousands. */
+export const FILE_PAGE = 50;
 
 export const state: ViewerState = {
   currentId: sessionIdFromHash(location.hash),
@@ -37,8 +50,27 @@ export const state: ViewerState = {
   sessions: [],
   unreadableSessions: [],
   sessionQuery: "",
+  sessionStatus: "all",
+  showArchived: false,
   mapQuery: "",
+  fileQuery: "",
+  showAutoFiles: false,
+  fileLimit: FILE_PAGE,
 };
+
+/** Back to an unfiltered first page, for a different list of files. */
+export function resetFileList(): void {
+  state.fileQuery = "";
+  state.showAutoFiles = false;
+  state.fileLimit = FILE_PAGE;
+}
+
+/** Select a card. A file highlight belongs to the card it was picked on, so it ends here. */
+export function selectNode(id: string): void {
+  if (id !== state.selectedNodeId) resetFileList();
+  state.selectedNodeId = id;
+  state.highlightedFilePath = null;
+}
 
 let draw = () => {};
 

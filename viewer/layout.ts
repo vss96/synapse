@@ -44,6 +44,23 @@ const GRID_GAP = 24;
 /** Space between a grid's frame and its cards. */
 const GRID_PAD = 14;
 
+/** The nodes above `node`, starting at the root. */
+export function ancestors(doc: MindmapDocument, node: MindmapNode): MindmapNode[] {
+  const path: MindmapNode[] = [];
+  for (let cur = node.parent === null ? undefined : doc.nodes[node.parent]; cur; cur = cur.parent === null ? undefined : doc.nodes[cur.parent]) {
+    path.unshift(cur);
+  }
+  return path;
+}
+
+/** `node` and everything below it. */
+export function subtree(doc: MindmapDocument, node: MindmapNode): MindmapNode[] {
+  return [node, ...node.children.flatMap((id) => {
+    const child = doc.nodes[id];
+    return child ? subtree(doc, child) : [];
+  })];
+}
+
 function isHldBranchNode(doc: MindmapDocument, node: MindmapNode) {
   let cur: MindmapNode | undefined = node;
   while (cur) {

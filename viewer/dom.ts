@@ -40,3 +40,20 @@ export function escXml(s: unknown) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+/**
+ * Set an element's content without losing the user's place: the element's scroll position, and keyboard
+ * focus (with the caret), for controls marked `data-focus` with a key that stays the same between renders.
+ */
+export function setHtml(el: Element, html: string): void {
+  const active = document.activeElement;
+  const key = active && el.contains(active) ? active.getAttribute("data-focus") : null;
+  const caret = active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
+  const { scrollTop } = el;
+  el.innerHTML = html;
+  el.scrollTop = scrollTop;
+  if (key === null) return;
+  const next = el.querySelector(`[data-focus="${CSS.escape(key)}"]`);
+  if (next instanceof HTMLElement || next instanceof SVGElement) next.focus({ preventScroll: true });
+  if (next instanceof HTMLInputElement && caret) next.setSelectionRange(caret[0] ?? null, caret[1] ?? null);
+}

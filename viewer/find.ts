@@ -3,7 +3,8 @@
 import type { MindmapDocument } from "../src/model/schema.js";
 import { nodeBoxes, showNode } from "./canvas.js";
 import { byId } from "./dom.js";
-import { matchesQuery } from "./search.js";
+import { matchesQuery, matchingFile } from "./search.js";
+import { updateTabUI } from "./sidebar.js";
 import { nodeById, render, state } from "./state.js";
 
 const mapSearch = byId("map-search", HTMLInputElement);
@@ -31,6 +32,18 @@ export function updateMapSearchCount(doc: MindmapDocument | null) {
         : `${matches.length} found`;
 }
 
+/** Show a card found by the box. When a file is what matched, open the Inspector at that file. */
+function goToMatch(id: string) {
+  const node = state.currentDoc && nodeById(state.currentDoc, id);
+  const byFile = node ? matchingFile(node, state.mapQuery) !== undefined : false;
+  if (byFile) {
+    state.activeTab = "inspector";
+    updateTabUI();
+  }
+  showNode(id);
+  if (byFile) document.querySelector(".file-item.find-hit")?.scrollIntoView({ block: "nearest" });
+}
+
 /** Select the match after (or before) the selected card, wrapping around. */
 function stepMatch(delta: 1 | -1) {
   const matches = mapMatches(state.currentDoc);
@@ -38,15 +51,15 @@ function stepMatch(delta: 1 | -1) {
   const i = matches.indexOf(state.selectedNodeId);
   const next = i < 0 ? (delta === 1 ? 0 : matches.length - 1) : (i + delta + matches.length) % matches.length;
   const id = matches[next];
-  if (id) showNode(id);
+  if (id) goToMatch(id);
 }
 
 mapSearch.addEventListener("input", () => {
   state.mapQuery = mapSearch.value;
   // Find as you type: keep the selected card while it still matches, else go to the first match.
   const matches = mapMatches(state.currentDoc);
-  const first = matches[0];
-  if (first && !matches.includes(state.selectedNodeId)) showNode(first);
+  const target = matches.includes(state.selectedNodeId) ? state.selectedNodeId : matches[0];
+  if (target) goToMatch(target);
   else render();
 });
 
