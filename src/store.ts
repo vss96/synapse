@@ -1,11 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { readdir, readFile, writeFile, mkdir, unlink, rename, open, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { errorCode } from "./errors.js";
 import { aggregateFiles, isFileEvent } from "./model/file-stats.js";
 import { isTask } from "./model/kinds.js";
-import { MindmapDocument, now, type MindmapId, type MindmapList, type MindmapListItem, type NodeId, type UnreadableMindmap } from "./model/schema.js";
+import { MindmapDocument, MindmapId, now, type MindmapList, type MindmapListItem, type NodeId, type UnreadableMindmap } from "./model/schema.js";
 
 /** Where mindmaps are stored: $SYNAPSE_DATA_DIR, or ~/.synapse/data (shared by the MCP server and the viewer). */
 export function getDataDir(): string {
@@ -238,6 +239,28 @@ async function write(doc: MindmapDocument, text?: string): Promise<void> {
     await unlink(tmp).catch(() => {});
     throw err;
   }
+}
+
+/** One small file per workspace, so a claim needs no lock. Not `.json`, which would make it a mindmap to the listing and the viewer. */
+const claimFile = (workspacePath: string): string => path.join(getDataDir(), `${createHash("sha256").update(workspacePath).digest("hex").slice(0, 32)}.claim`);
+
+/**
+ * Send file changes in `workspacePath` to `id` from now on, in every process watching it. Each MCP client
+ * runs its own server, so this is what tells them which one's watcher records a change. Synchronous, so that
+ * the last tool call wins. If it fails, watchers carry on as they would with nobody claiming the workspace.
+ */
+export function claimWorkspace(workspacePath: string, id: MindmapId): void {
+  try {
+    writeFileSync(claimFile(workspacePath), id);
+  } catch (err) {
+    console.error(`[synapse] can't claim ${workspacePath}: ${err}`);
+  }
+}
+
+/** The mindmap that claimed `workspacePath` last, if any. */
+export async function workspaceClaim(workspacePath: string): Promise<MindmapId | undefined> {
+  const id = MindmapId.safeParse(await readFile(claimFile(workspacePath), "utf-8").catch(() => ""));
+  return id.success ? id.data : undefined;
 }
 
 /** Every page gets this text for every session, so it's bounded. Most maps fit well within it. */

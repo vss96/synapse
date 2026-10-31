@@ -225,11 +225,13 @@ export function stopWorkspaceWatcher(mindmapId: MindmapId): void {
 /**
  * Record file changes in `workspacePath` into `mindmapId`. A directory has one watcher, so when it is
  * already watched its changes go to `mindmapId` from now on: the mindmap last used for that workspace.
+ * Another process's watcher gives way at its next change, since the claim says so.
  * It stops at the next change after every task in the mindmap is completed, until a tool reopens it.
  */
 export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: string): void {
   if (!workspacePath || !existsSync(workspacePath)) return;
   const resolved = path.resolve(workspacePath);
+  store.claimWorkspace(resolved, mindmapId);
   // A mindmap gets one directory's changes: if its workspacePath moved, stop watching the old one.
   for (const [dir, watched] of activeWatchers) {
     if (dir !== resolved && watched.mindmapId === mindmapId) stopWatching(dir);
@@ -282,11 +284,23 @@ export function ensureWorkspaceWatcher(mindmapId: MindmapId, workspacePath?: str
   // Whether this watcher still owns the directory: once stopped (and maybe replaced), its batches are dropped.
   const current = () => activeWatchers.get(resolved) === entry;
 
+  // Whether a mindmap in another process claimed the directory since, and is still collecting: its watcher has this batch.
+  const takenOver = async () => {
+    const claim = await store.workspaceClaim(resolved);
+    if (!claim || claim === entry.mindmapId) return false;
+    const claimant = await ifReadable(store.load(claim));
+    return claimant !== null && collectsWorkspaceChanges(claimant);
+  };
+
   const flushBatch = async () => {
     const batch = new Map(pendingFiles);
     const startedAt = batchStart;
     pendingFiles.clear();
     if (batch.size === 0 || !current()) return;
+    if (await takenOver()) {
+      if (current()) stopWatching(resolved);
+      return;
+    }
     const { mindmapId } = entry;
 
     // Archived (in the viewer, another process), deleted, finished or unreadable mindmaps stop collecting this workspace's changes.

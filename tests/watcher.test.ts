@@ -711,6 +711,64 @@ describe("workspace watcher", () => {
     await deleted;
   });
 
+  describe("a workspace shared with another process", () => {
+    const edit = { title: "Ours", initialPlan: [{ label: "Edit", status: "in_progress" }] };
+
+    /** A mindmap as another MCP server process would have it, and that process's claim on the workspace. */
+    async function claimedByAnotherProcess(id: string, repoDir: string, status: "in_progress" | "completed") {
+      const doc = emptyDoc(id, "Theirs");
+      addChild(doc, { type: "task", label: "Theirs", status });
+      await store.save(doc);
+      store.claimWorkspace(repoDir, doc.id);
+      return doc.id;
+    }
+
+    const stoppedWatching = async (repoDir: string) => {
+      for (let i = 0; i < 40 && watchedMindmap(repoDir) !== undefined; i++) await new Promise((r) => setTimeout(r, 100));
+      assert.equal(watchedMindmap(repoDir), undefined, "the watcher should have stopped");
+    };
+
+    it("leaves it to the mindmap that took it over, and records nothing more", async () => {
+      const { repoDir } = await makeRepo("taken-over");
+      const id = await createMindmap({ ...edit, workspacePath: repoDir });
+      await settle();
+      await claimedByAnotherProcess("mm_taker", repoDir, "in_progress");
+      await writeFile(path.join(repoDir, "theirs.ts"), "edit\n");
+      await stoppedWatching(repoDir);
+      assert.deepEqual(touched((await store.load(id))!), []);
+    }, 15000);
+
+    it("takes it back the next time a tool changes the mindmap", async () => {
+      const { repoDir } = await makeRepo("taken-back");
+      const id = await createMindmap({ ...edit, workspacePath: repoDir });
+      await settle();
+      await claimedByAnotherProcess("mm_lender", repoDir, "in_progress");
+      await writeFile(path.join(repoDir, "theirs.ts"), "edit\n");
+      await stoppedWatching(repoDir);
+
+      await callTool("add_node", { mindmapId: id, parentId: "root", label: "Back", type: "note" });
+      assert.equal(watchedMindmap(repoDir), id);
+      assert.equal(await store.workspaceClaim(repoDir), id);
+      await settle();
+      await writeFile(path.join(repoDir, "ours.ts"), "edit\n");
+      await eventually(id, (d) => assert.deepEqual(touched(d), ["create:ours.ts"]));
+    }, 15000);
+
+    it("ignores a claim whose mindmap has finished or gone", async () => {
+      const { repoDir } = await makeRepo("claim-over");
+      const id = await createMindmap({ ...edit, workspacePath: repoDir });
+      await settle();
+      await claimedByAnotherProcess("mm_finished", repoDir, "completed");
+      await writeFile(path.join(repoDir, "one.ts"), "edit\n");
+      await eventually(id, (d) => assert.deepEqual(touched(d), ["create:one.ts"]));
+
+      store.claimWorkspace(repoDir, MindmapId.parse("mm_never_existed"));
+      await writeFile(path.join(repoDir, "two.ts"), "edit\n");
+      await eventually(id, (d) => assert.deepEqual(touched(d), ["create:one.ts", "create:two.ts"]));
+      assert.equal(watchedMindmap(repoDir), id);
+    }, 15000);
+  });
+
   it("stops recording into a mindmap that can't be read, leaving the file as it is", async () => {
     const { repoDir } = await makeRepo("damaged");
     const id = await createMindmap({ title: "Damaged", workspacePath: repoDir, initialPlan: [{ label: "Edit", status: "in_progress" }] });
